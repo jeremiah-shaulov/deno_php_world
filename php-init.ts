@@ -6,22 +6,20 @@ class _PhpDenoBridge extends Exception
 	private const REC_CONST = 0;
 	private const REC_GET = 1;
 	private const REC_SET = 2;
-	private const REC_CLASSSTATIC_CONST = 3;
-	private const REC_CLASSSTATIC_GET = 4;
-	private const REC_CLASSSTATIC_SET = 5;
-	private const REC_CLASSSTATIC_CALL = 6;
-	private const REC_CONSTRUCT = 7;
-	private const REC_DESTRUCT = 8;
-	private const REC_CLASS_GET = 9;
-	private const REC_CLASS_SET = 10;
-	private const REC_CLASS_CALL = 11;
-	private const REC_CALL = 12;
-	private const REC_CALL_EVAL = 13;
-	private const REC_CALL_ECHO = 14;
-	private const REC_CALL_INCLUDE = 15;
-	private const REC_CALL_INCLUDE_ONCE = 16;
-	private const REC_CALL_REQUIRE = 17;
-	private const REC_CALL_REQUIRE_ONCE = 18;
+	private const REC_CLASSSTATIC_GET = 3;
+	private const REC_CLASSSTATIC_SET = 4;
+	private const REC_CONSTRUCT = 5;
+	private const REC_DESTRUCT = 6;
+	private const REC_CLASS_GET = 7;
+	private const REC_CLASS_SET = 8;
+	private const REC_CLASS_CALL = 9;
+	private const REC_CALL = 10;
+	private const REC_CALL_EVAL = 11;
+	private const REC_CALL_ECHO = 12;
+	private const REC_CALL_INCLUDE = 13;
+	private const REC_CALL_INCLUDE_ONCE = 14;
+	private const REC_CALL_REQUIRE = 15;
+	private const REC_CALL_REQUIRE_ONCE = 16;
 
 	private static ?int $error_reporting = null;
 	private static array $insts = [];
@@ -52,14 +50,6 @@ class _PhpDenoBridge extends Exception
 	{	static $cache = [];
 		if (!isset($cache[$class_name]))
 		{	$cache[$class_name] = array_keys(self::get_reflection($class_name)->getStaticProperties());
-		}
-		return in_array($prop_name, $cache[$class_name]);
-	}
-
-	private static function has_constant($class_name, $prop_name)
-	{	static $cache = [];
-		if (!isset($cache[$class_name]))
-		{	$cache[$class_name] = array_keys(self::get_reflection($class_name)->getConstants());
 		}
 		return in_array($prop_name, $cache[$class_name]);
 	}
@@ -174,16 +164,6 @@ class _PhpDenoBridge extends Exception
 						$data = self::decode_ident_value($data, $prop_name);
 						$GLOBALS[$prop_name] = $data;
 						break;
-					case self::REC_CLASSSTATIC_CONST:
-						$prop_name = self::decode_ident_ident($data, $class_name);
-						$data = self::get_reflection($class_name)->getConstant($prop_name);
-						if ($data===false and !self::has_constant($class_name, $prop_name))
-						{	fwrite($output, "\xFF\xFF\xFF\xFF"); // undefined
-						}
-						else
-						{	fwrite($output, self::encode_value($data));
-						}
-						break;
 					case self::REC_CLASSSTATIC_GET:
 						$prop_name = self::decode_ident_ident($data, $class_name);
 						try
@@ -200,11 +180,6 @@ class _PhpDenoBridge extends Exception
 					case self::REC_CLASSSTATIC_SET:
 						$data = self::decode_ident_ident_value($data, $class_name, $prop_name);
 						self::get_reflection($class_name)->setStaticPropertyValue($prop_name, $data);
-						break;
-					case self::REC_CLASSSTATIC_CALL:
-						$data = self::decode_ident_ident_value($data, $class_name, $prop_name);
-						$data = $data===null ? call_user_func([$class_name, $prop_name]) : call_user_func_array([$class_name, $prop_name], $data);
-						fwrite($output, self::encode_value($data));
 						break;
 					case self::REC_CONSTRUCT:
 						$data = self::decode_ident_value($data, $class_name);

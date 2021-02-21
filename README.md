@@ -21,25 +21,24 @@ PHP CLI must be installed on your system, and the `php` command must correspond 
 ### Usage
 
 ```ts
-import {f, g, c} from './mod.ts';
+import {g, c} from 'https://deno.land/x/php_world/mod.ts';
 // ...
 // and at last, terminate the interpreter
-await f.exit();
+await g.exit();
 ```
 
-There are 3 logical namespaces:
+There are 2 logical namespaces:
 
-1. `f` contains all the PHP functions.
-2. `g` contains global constants and variables.
-3. `c` contains classes.
+1. `g` contains all the PHP functions, global constants and variables.
+2. `c` contains classes.
 
 ### Calling functions
 
 Each function becomes async, because calling it involves IPC (interprocess communication) with the background PHP interpreter.
 
 ```ts
-import {f} from './mod.ts';
-const {eval: php_eval, phpversion, class_exists, exit} = f;
+import {g} from 'https://deno.land/x/php_world/mod.ts';
+const {eval: php_eval, phpversion, class_exists, exit} = g;
 
 console.log(await phpversion());
 await php_eval('class Hello {}');
@@ -54,7 +53,7 @@ At the end of Deno script, it's nice to call `exit()`. This function terminates 
 Constant's value must be awaited-for.
 
 ```ts
-import {f, g, c} from './mod.ts';
+import {g, c} from 'https://deno.land/x/php_world/mod.ts';
 
 console.log(await g.PHP_VERSION);
 console.log((await g.FAKE) === undefined); // unexisting constants have "undefined" value
@@ -67,7 +66,7 @@ Like constants, variables are present in the `g` namespace, but their names must
 Variable's value must be awaited-for. But setting new value returns immediately (and doesn't imply synchronous operations - the value will be set in the background, and there's no result that we need to await for).
 
 ```ts
-import {f, g, c} from './mod.ts';
+import {g, c} from 'https://deno.land/x/php_world/mod.ts';
 
 console.log((await g.$ten) === undefined); // unexisting variables have "undefined" value
 g.$ten = 10;
@@ -81,8 +80,8 @@ Classes are present in the `c` namespace.
 ### Class-static constants
 
 ```ts
-import {f, g, c} from './mod.ts';
-const {eval: php_eval} = f;
+import {g, c} from 'https://deno.land/x/php_world/mod.ts';
+const {eval: php_eval} = g;
 const {Value} = c;
 
 await php_eval('class Value {const TEN = 10;}');
@@ -93,8 +92,8 @@ console.log(await Value.TEN);
 ### Class-static variables
 
 ```ts
-import {f, g, c} from './mod.ts';
-const {eval: php_eval} = f;
+import {g, c} from 'https://deno.land/x/php_world/mod.ts';
+const {eval: php_eval} = g;
 const {Value} = c;
 
 await php_eval('class Value {static $ten = 10;}');
@@ -105,8 +104,8 @@ console.log(await Value.$ten);
 ### Class-static methods
 
 ```ts
-import {f, g, c} from './mod.ts';
-const {eval: php_eval} = f;
+import {g, c} from 'https://deno.land/x/php_world/mod.ts';
+const {eval: php_eval} = g;
 const {Value} = c;
 
 await php_eval
@@ -125,8 +124,8 @@ console.log(await Value.get_ten());
 To create a class instance, call the constructor, and await the result. It returns handler to remote PHP object.
 
 ```ts
-import {f, g, c} from './mod.ts';
-const {eval: php_eval} = f;
+import {g, c} from 'https://deno.land/x/php_world/mod.ts';
+const {eval: php_eval} = g;
 const {Value} = c;
 
 await php_eval('class Value {}');
@@ -142,8 +141,8 @@ delete value.this;
 ### Instance variables
 
 ```ts
-import {f, g, c} from './mod.ts';
-const {eval: php_eval} = f;
+import {g, c} from 'https://deno.land/x/php_world/mod.ts';
+const {eval: php_eval} = g;
 const {Value} = c;
 
 await php_eval('class Value {public $ten;}');
@@ -156,8 +155,8 @@ delete value.this;
 ### Instance methods
 
 ```ts
-import {f, g, c} from './mod.ts';
-const {eval: php_eval} = f;
+import {g, c} from 'https://deno.land/x/php_world/mod.ts';
+const {eval: php_eval} = g;
 const {Value} = c;
 
 await php_eval
@@ -179,8 +178,8 @@ delete value.this;
 ### Namespaces
 
 ```ts
-import {f, g, c} from './mod.ts';
-const {eval: php_eval} = f;
+import {g, c} from 'https://deno.land/x/php_world/mod.ts';
+const {eval: php_eval} = g;
 const {MainNs} = c;
 
 await php_eval
@@ -204,18 +203,18 @@ delete value.this;
 ### Running several PHP interpreters in parallel
 
 ```ts
-import {f, g, c, PhpInterpreter} from './mod.ts';
+import {g, c, PhpInterpreter} from 'https://deno.land/x/php_world/mod.ts';
 
 let int_1 = new PhpInterpreter;
 let int_2 = new PhpInterpreter;
 
-let pid_0 = await f.posix_getpid();
-let pid_1 = await int_1.f.posix_getpid();
-let pid_2 = await int_2.f.posix_getpid();
+let pid_0 = await g.posix_getpid();
+let pid_1 = await int_1.g.posix_getpid();
+let pid_2 = await int_2.g.posix_getpid();
 
 console.log(`${pid_0}, ${pid_1}, ${pid_2}`);
 
-await f.exit();
-await int_1.f.exit();
-await int_2.f.exit();
+await g.exit();
+await int_1.g.exit();
+await int_2.g.exit();
 ```

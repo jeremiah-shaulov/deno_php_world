@@ -1,7 +1,7 @@
 import {assert, assertEquals} from "https://deno.land/std@0.87.0/testing/asserts.ts";
-import {g, f, c, PhpInterpreter} from './mod.ts';
+import {g, c, PhpInterpreter} from './mod.ts';
 
-const {eval: php_eval, ob_start, ob_get_clean, echo, json_encode, exit} = f;
+const {eval: php_eval, ob_start, ob_get_clean, echo, json_encode, exit} = g;
 const {MainNs, C} = c;
 
 Deno.test
@@ -18,10 +18,10 @@ Deno.test
 (	'Global',
 	async () =>
 	{	assertEquals(await g.FAKE_CONSTANT, undefined);
-		assertEquals(await f.defined('FAKE_CONSTANT'), false);
-		await f.define('FAKE_CONSTANT', 'hello');
+		assertEquals(await g.defined('FAKE_CONSTANT'), false);
+		await g.define('FAKE_CONSTANT', 'hello');
 		assertEquals(await g.FAKE_CONSTANT, 'hello');
-		assertEquals(await f.defined('FAKE_CONSTANT'), true);
+		assertEquals(await g.defined('FAKE_CONSTANT'), true);
 
 		assertEquals(await g.$fake_var, undefined);
 		g.$fake_var = 'hello';
@@ -183,9 +183,9 @@ Deno.test
 	{	let int_1 = new PhpInterpreter;
 		let int_2 = new PhpInterpreter;
 
-		let pid_0 = await f.posix_getpid();
-		let pid_1 = await int_1.f.posix_getpid();
-		let pid_2 = await int_2.f.posix_getpid();
+		let pid_0 = await g.posix_getpid();
+		let pid_1 = await int_1.g.posix_getpid();
+		let pid_2 = await int_2.g.posix_getpid();
 
 		assert(pid_0 > 0);
 		assert(pid_1 > 0);
@@ -193,8 +193,8 @@ Deno.test
 		assert(pid_0 != pid_1);
 		assert(pid_1 != pid_2);
 
-		await f.exit();
-		await int_1.f.exit();
-		await int_2.f.exit();
+		await g.exit();
+		await int_1.g.exit();
+		await int_2.g.exit();
 	}
 );
