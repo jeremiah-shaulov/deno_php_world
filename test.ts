@@ -1,5 +1,5 @@
 import {assert, assertEquals} from "https://deno.land/std@0.87.0/testing/asserts.ts";
-import {g, f, c, InterpreterError} from './mod.ts';
+import {g, f, c, PhpInterpreter} from './mod.ts';
 
 const {eval: php_eval, ob_start, ob_get_clean, echo, json_encode, exit} = f;
 const {MainNs, C} = c;
@@ -174,5 +174,27 @@ Deno.test
 		delete c.this;
 
 		await exit();
+	}
+);
+
+Deno.test
+(	'Many interpreters',
+	async () =>
+	{	let int_1 = new PhpInterpreter;
+		let int_2 = new PhpInterpreter;
+
+		let pid_0 = await f.posix_getpid();
+		let pid_1 = await int_1.f.posix_getpid();
+		let pid_2 = await int_2.f.posix_getpid();
+
+		assert(pid_0 > 0);
+		assert(pid_1 > 0);
+		assert(pid_2 > 0);
+		assert(pid_0 != pid_1);
+		assert(pid_1 != pid_2);
+
+		await f.exit();
+		await int_1.f.exit();
+		await int_2.f.exit();
 	}
 );

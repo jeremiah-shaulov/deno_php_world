@@ -175,3 +175,47 @@ value.var = 10;
 console.log(await value.get_twice_var());
 delete value.this;
 ```
+
+### Namespaces
+
+```ts
+import {f, g, c} from './mod.ts';
+const {eval: php_eval} = f;
+let {MainNs} = c;
+
+await php_eval
+(	`	namespace MainNs;
+
+		class Value
+		{	public $var;
+
+			function get_twice_var()
+			{	return $this->var * 2;
+			}
+		}
+	`
+);
+let value = await new MainNs.Value;
+value.var = 10;
+console.log(await value.get_twice_var());
+delete value.this;
+```
+
+### Running several PHP interpreters in parallel
+
+```ts
+import {f, g, c, PhpInterpreter} from './mod.ts';
+
+let int_1 = new PhpInterpreter;
+let int_2 = new PhpInterpreter;
+
+let pid_0 = await f.posix_getpid();
+let pid_1 = await int_1.f.posix_getpid();
+let pid_2 = await int_2.f.posix_getpid();
+
+console.log(`${pid_0}, ${pid_1}, ${pid_2}`);
+
+await f.exit();
+await int_1.f.exit();
+await int_2.f.exit();
+```
