@@ -83,7 +83,7 @@ Classes are present in the `c` namespace.
 ```ts
 import {f, g, c} from './mod.ts';
 const {eval: php_eval} = f;
-let {Value} = c;
+const {Value} = c;
 
 await php_eval('class Value {const TEN = 10;}');
 console.log((await Value.NINE) === undefined); // unexisting constants have "undefined" value
@@ -95,7 +95,7 @@ console.log(await Value.TEN);
 ```ts
 import {f, g, c} from './mod.ts';
 const {eval: php_eval} = f;
-let {Value} = c;
+const {Value} = c;
 
 await php_eval('class Value {static $ten = 10;}');
 console.log((await Value.$nine) === undefined); // unexisting variables have "undefined" value
@@ -107,7 +107,7 @@ console.log(await Value.$ten);
 ```ts
 import {f, g, c} from './mod.ts';
 const {eval: php_eval} = f;
-let {Value} = c;
+const {Value} = c;
 
 await php_eval
 (	`	class Value
@@ -127,7 +127,7 @@ To create a class instance, call the constructor, and await the result. It retur
 ```ts
 import {f, g, c} from './mod.ts';
 const {eval: php_eval} = f;
-let {Value} = c;
+const {Value} = c;
 
 await php_eval('class Value {}');
 let value = await new Value;
@@ -144,7 +144,7 @@ delete value.this;
 ```ts
 import {f, g, c} from './mod.ts';
 const {eval: php_eval} = f;
-let {Value} = c;
+const {Value} = c;
 
 await php_eval('class Value {public $ten;}');
 let value = await new Value;
@@ -158,7 +158,7 @@ delete value.this;
 ```ts
 import {f, g, c} from './mod.ts';
 const {eval: php_eval} = f;
-let {Value} = c;
+const {Value} = c;
 
 await php_eval
 (	`	class Value
@@ -181,7 +181,7 @@ delete value.this;
 ```ts
 import {f, g, c} from './mod.ts';
 const {eval: php_eval} = f;
-let {MainNs} = c;
+const {MainNs} = c;
 
 await php_eval
 (	`	namespace MainNs;

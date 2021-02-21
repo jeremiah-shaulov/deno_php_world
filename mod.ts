@@ -306,13 +306,11 @@ export class PhpInterpreter
 	{	if (!this.commands_io)
 		{	this.socket = Deno.listen({path: SOCKET_NAME, transport: 'unix'});
 			await sleep(0);
-			this.proc = Deno.run
-			(	{	cmd: DEBUG_PHP_INIT ? [PHP_CLI_NAME, 'php-init.ts'] : [PHP_CLI_NAME, '-r', PHP_INIT.slice('<?php\n\n'.length)],
-					stdin: 'piped',
-					stdout: 'inherit',
-					stderr: 'inherit'
-				}
-			);
+			let cmd = DEBUG_PHP_INIT ? [PHP_CLI_NAME, 'php-init.ts'] : [PHP_CLI_NAME, '-r', PHP_INIT.slice('<?php\n\n'.length)];
+			if (Deno.args.length)
+			{	cmd.splice(cmd.length, 0, '--', ...Deno.args);
+			}
+			this.proc = Deno.run({cmd, stdin: 'piped', stdout: 'inherit', stderr: 'inherit'});
 			this.commands_io = await this.socket.accept();
 		}
 		else if (this.ongoing)
