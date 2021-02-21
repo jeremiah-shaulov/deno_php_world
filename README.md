@@ -64,7 +64,7 @@ console.log((await g.FAKE) === undefined); // unexisting constants have "undefin
 
 Like constants, variables are present in the `g` namespace, but their names must begin with a '$'.
 
-Variable's value must be awaited-for. But setting new value returns immediately.
+Variable's value must be awaited-for. But setting new value returns immediately (and doesn't imply synchronous operations - the value will be set in the background, and there's no result that we need to await for).
 
 ```ts
 import {f, g, c} from './mod.ts';
