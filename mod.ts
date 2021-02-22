@@ -11,23 +11,25 @@ const REC_CONST = 0;
 const REC_GET = 1;
 const REC_SET = 2;
 const REC_SET_PATH = 3;
-const REC_CLASSSTATIC_GET = 4;
-const REC_CLASSSTATIC_SET = 5;
-const REC_CLASSSTATIC_SET_PATH = 6;
-const REC_CONSTRUCT = 7;
-const REC_DESTRUCT = 8;
-const REC_CLASS_GET = 9;
-const REC_CLASS_SET = 10;
-const REC_CLASS_CALL = 11;
-const REC_CALL = 12;
-const REC_CALL_THIS = 13;
-const REC_CALL_EVAL = 14;
-const REC_CALL_EVAL_THIS = 15;
-const REC_CALL_ECHO = 16;
-const REC_CALL_INCLUDE = 17;
-const REC_CALL_INCLUDE_ONCE = 18;
-const REC_CALL_REQUIRE = 19;
-const REC_CALL_REQUIRE_ONCE = 20;
+const REC_UNSET = 4;
+const REC_CLASSSTATIC_GET = 5;
+const REC_CLASSSTATIC_SET = 6;
+const REC_CLASSSTATIC_SET_PATH = 7;
+const REC_CLASSSTATIC_UNSET = 8;
+const REC_CONSTRUCT = 9;
+const REC_DESTRUCT = 10;
+const REC_CLASS_GET = 11;
+const REC_CLASS_SET = 12;
+const REC_CLASS_CALL = 13;
+const REC_CALL = 14;
+const REC_CALL_THIS = 15;
+const REC_CALL_EVAL = 16;
+const REC_CALL_EVAL_THIS = 17;
+const REC_CALL_ECHO = 18;
+const REC_CALL_INCLUDE = 19;
+const REC_CALL_INCLUDE_ONCE = 20;
+const REC_CALL_REQUIRE = 21;
+const REC_CALL_REQUIRE_ONCE = 22;
 
 const RE_BAD_CLASSNAME_FOR_EVAL = /[^\w\\]/;
 
@@ -172,6 +174,43 @@ export class PhpInterpreter
 								return true;
 							},
 
+							// deleteProperty
+							path =>
+							{	assert(path.length > 1);
+								let path_str;
+								let record_type;
+								if (!is_class)
+								{	// case: $var['a']['b']
+									if (path[0].charAt(0) != '$')
+									{	throw new Error(`Cannot set this object: ${path.join('.')}`);
+									}
+									path_str = path[0].slice(1); // cut '$'
+									if (path_str.indexOf(' ') != -1)
+									{	throw new Error(`Variable name must not contain spaces: $${path_str}`);
+									}
+									path_str += ' '+JSON.stringify(path.slice(1));
+									record_type = REC_UNSET;
+								}
+								else
+								{	// case: A\B::$c['d']['e']
+									let var_i = path.findIndex(p => p.charAt(0) == '$');
+									if (var_i<=0 || var_i==path.length-1)
+									{	throw new Error(`Cannot unset this object: ${path.join('.')}`);
+									}
+									path_str = path.slice(0, var_i).join('\\');
+									if (RE_BAD_CLASSNAME_FOR_EVAL.test(path_str))
+									{	throw new Error(`Cannot use such class name: ${path_str}`);
+									}
+									if (path[var_i].indexOf(' ') != -1)
+									{	throw new Error(`Variable name must not contain spaces: ${path[var_i]}`);
+									}
+									path_str += ' '+path[var_i].slice(1); // cut '$'
+									record_type = REC_CLASSSTATIC_UNSET;
+								}
+								php.write(record_type, path_str);
+								return true;
+							},
+
 							// apply
 							(path, args) =>
 							{	// case: function
@@ -289,18 +328,40 @@ export class PhpInterpreter
 							}
 						);
 					},
+
 					set(php, prop_name, value)
 					{	if (typeof(prop_name) != 'string')
-						{	throw new Error('Cannot use such object like this');
+						{	throw new Error('Cannot assign to this object');
 						}
 						if (is_class)
-						{	throw new Error(`Invalid class name: ${prop_name}`);
+						{	throw new Error(`Cannot assign to class: ${prop_name}`);
 						}
 						if (prop_name.charAt(0) != '$')
 						{	throw new Error(`Invalid global variable name: ${prop_name}`);
 						}
 						prop_name = prop_name.slice(1); // cut '$'
+						if (prop_name.indexOf(' ') != -1)
+						{	throw new Error(`Variable name must not contain spaces: $${prop_name}`);
+						}
 						php.write(REC_SET, value==null ? prop_name : prop_name+' '+JSON.stringify(value));
+						return true;
+					},
+
+					deleteProperty(php, prop_name)
+					{	if (typeof(prop_name) != 'string')
+						{	throw new Error('Cannot delete this object');
+						}
+						if (is_class)
+						{	throw new Error(`Cannot delete a class: ${prop_name}`);
+						}
+						if (prop_name.charAt(0) != '$')
+						{	throw new Error(`Invalid global variable name: ${prop_name}`);
+						}
+						prop_name = prop_name.slice(1); // cut '$'
+						if (prop_name.indexOf(' ') != -1)
+						{	throw new Error(`Variable name must not contain spaces: $${prop_name}`);
+						}
+						php.write(REC_UNSET, prop_name);
 						return true;
 					}
 				}
@@ -458,6 +519,7 @@ function get_proxy
 (	path: string[],
 	get: (path: string[]) => Promise<any>,
 	set: (path: string[], value: any) => boolean,
+	deleteProperty: (path: string[]) => boolean,
 	apply: (path: string[], args: IArguments) => any,
 	construct: (path: string[], args: IArguments) => Promise<any>
 ): any
@@ -486,7 +548,7 @@ function get_proxy
 				}
 				else
 				{	// case: path.prop_name
-					return get_proxy(path.concat([prop_name]), get, set, apply, construct);
+					return get_proxy(path.concat([prop_name]), get, set, deleteProperty, apply, construct);
 				}
 			},
 			set(_, prop_name, value) // set static class variable
@@ -495,6 +557,12 @@ function get_proxy
 				{	throw new Error('Cannot use such object like this');
 				}
 				return set(path.concat([prop_name]), value);
+			},
+			deleteProperty(_, prop_name)
+			{	if (typeof(prop_name) != 'string')
+				{	throw new Error('Cannot use such object like this');
+				}
+				return deleteProperty(path.concat([prop_name]));
 			},
 			apply(_, proxy, args)
 			{	// case: path(args)

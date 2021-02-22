@@ -141,7 +141,7 @@ await php_eval('class Value {}');
 let value = await new Value;
 ```
 
-Each instance created with `new`, must be destroyed with `delete`.
+Each instance created with `new`, must be destroyed with `delete`. Special property `this` must be deleted (because just `delete obj` is invalid syntax in strict mode).
 
 ```ts
 delete value.this;

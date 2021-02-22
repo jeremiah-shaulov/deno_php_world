@@ -32,6 +32,10 @@ Deno.test
 		assertEquals(await g.$_SERVER['hello'], {world: true});
 		assert(await g.$_SERVER['argc'] > 0);
 
+		delete g.$_SERVER['hello'];
+		assertEquals(await g.$_SERVER['hello'], undefined);
+		assert(await g.$_SERVER['argc'] > 0);
+
 		await exit();
 	}
 );
@@ -234,6 +238,10 @@ Deno.test
 		);
 
 		let ex = await g.get_ex('The message').this;
+		assertEquals(await ex.getMessage(), 'The message');
+		delete ex.this;
+
+		ex = await g.eval('return get_ex("The message");').this;
 		assertEquals(await ex.getMessage(), 'The message');
 		delete ex.this;
 
