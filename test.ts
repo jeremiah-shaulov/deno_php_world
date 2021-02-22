@@ -26,6 +26,12 @@ Deno.test
 		assertEquals(await g.$fake_var, undefined);
 		g.$fake_var = 'hello';
 		assertEquals(await g.$fake_var, 'hello');
+
+		g.$_SERVER['hello']['world'] = true;
+		assertEquals(await g.$_SERVER['hello']['world'], true);
+		assertEquals(await g.$_SERVER['hello'], {world: true});
+		assert(await g.$_SERVER['argc'] > 0);
+
 		await exit();
 	}
 );
@@ -172,6 +178,24 @@ Deno.test
 		assertEquals(await c.var, 10);
 		assertEquals(await c.get_twice_var(), 20);
 		delete c.this;
+
+		await exit();
+	}
+);
+
+Deno.test
+(	'Function in namespace',
+	async () =>
+	{	await php_eval
+		(	`	namespace MainNs\\SubNs;
+
+				function repeat($str, $times)
+				{	return str_repeat($str, $times);
+				}
+			`
+		);
+
+		assertEquals(await g.MainNs.SubNs.repeat('a', 3), 'aaa');
 
 		await exit();
 	}

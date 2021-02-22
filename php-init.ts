@@ -6,20 +6,22 @@ class _PhpDenoBridge extends Exception
 	private const REC_CONST = 0;
 	private const REC_GET = 1;
 	private const REC_SET = 2;
-	private const REC_CLASSSTATIC_GET = 3;
-	private const REC_CLASSSTATIC_SET = 4;
-	private const REC_CONSTRUCT = 5;
-	private const REC_DESTRUCT = 6;
-	private const REC_CLASS_GET = 7;
-	private const REC_CLASS_SET = 8;
-	private const REC_CLASS_CALL = 9;
-	private const REC_CALL = 10;
-	private const REC_CALL_EVAL = 11;
-	private const REC_CALL_ECHO = 12;
-	private const REC_CALL_INCLUDE = 13;
-	private const REC_CALL_INCLUDE_ONCE = 14;
-	private const REC_CALL_REQUIRE = 15;
-	private const REC_CALL_REQUIRE_ONCE = 16;
+	private const REC_SET_PATH = 3;
+	private const REC_CLASSSTATIC_GET = 4;
+	private const REC_CLASSSTATIC_SET = 5;
+	private const REC_CLASSSTATIC_SET_PATH = 6;
+	private const REC_CONSTRUCT = 7;
+	private const REC_DESTRUCT = 8;
+	private const REC_CLASS_GET = 9;
+	private const REC_CLASS_SET = 10;
+	private const REC_CLASS_CALL = 11;
+	private const REC_CALL = 12;
+	private const REC_CALL_EVAL = 13;
+	private const REC_CALL_ECHO = 14;
+	private const REC_CALL_INCLUDE = 15;
+	private const REC_CALL_INCLUDE_ONCE = 16;
+	private const REC_CALL_REQUIRE = 17;
+	private const REC_CALL_REQUIRE_ONCE = 18;
 
 	private static ?int $error_reporting = null;
 	private static array $insts = [];
@@ -56,6 +58,46 @@ class _PhpDenoBridge extends Exception
 
 	private static function eval($code)
 	{	return eval($code);
+	}
+
+	private static function follow_path(&$value, $path)
+	{	foreach ($path as $p)
+		{	if (is_array($value))
+			{	if (array_key_exists($p, $value))
+				{	$value = $value[$p];
+					continue;
+				}
+			}
+			else if (is_object($value))
+			{	if (isset($value->$p) or property_exists($value, $p))
+				{	$value = $value->$p;
+					continue;
+				}
+			}
+			return false;
+		}
+		return true;
+	}
+
+	private static function follow_path_set(&$value, array $path, $new_value)
+	{	foreach ($path as $p)
+		{	if (is_object($value))
+			{	if (isset($value->$p))
+				{	$value = &$value->$p;
+				}
+				else
+				{	$value->$p = new stdClass;
+					$value = &$value->$p;
+				}
+			}
+			else
+			{	if (!is_array($value))
+				{	$value = [];
+				}
+				$value = &$value[$p];
+			}
+		}
+		$value = $new_value;
 	}
 
 	private static function decode_value($data)
@@ -101,17 +143,6 @@ class _PhpDenoBridge extends Exception
 		}
 	}
 
-	private static function encode_value($value)
-	{	if ($value !== null)
-		{	$value = json_encode($value);
-			return pack('l', strlen($value)).$value;
-		}
-		else
-		{	// optimization for null case
-			return "\0\0\0\0";
-		}
-	}
-
 	public static function main()
 	{	global $argc, $argv;
 		$argc = $_SERVER['argc'];
@@ -127,7 +158,8 @@ class _PhpDenoBridge extends Exception
 		}
 		while (!feof($stdin))
 		{	try
-			{	$len = fread($stdin, 8);
+			{	// 1. Read the request
+				$len = fread($stdin, 8);
 				if (strlen($len) != 8)
 				{	if (strlen($len)==0 or $len=="\n" or $len=="\r" or $len=="\r\n")
 					{	continue;
@@ -141,110 +173,138 @@ class _PhpDenoBridge extends Exception
 					$data .= $read;
 					$len -= strlen($read);
 				}
+
+				// 2. Process the request
+				$result = null;
+				$result_is_set = false;
 				switch ($record_type)
 				{	case self::REC_CONST:
-						if (!defined($data))
-						{	fwrite($output, "\xFF\xFF\xFF\xFF"); // undefined
-						}
-						else
-						{	$data = constant($data);
-							fwrite($output, self::encode_value($data));
+						if (defined($data))
+						{	$result = constant($data);
+							$result_is_set = true;
 						}
 						break;
 					case self::REC_GET:
-						if (!array_key_exists($data, $GLOBALS))
-						{	fwrite($output, "\xFF\xFF\xFF\xFF"); // undefined
-						}
-						else
-						{	$data = $GLOBALS[$data];
-							fwrite($output, self::encode_value($data));
+						$data = self::decode_ident_value($data, $prop_name);
+						$result_is_set = array_key_exists($prop_name, $GLOBALS);
+						if ($result_is_set)
+						{	$result = $GLOBALS[$prop_name];
+							if ($data !== null)
+							{	$result_is_set = self::follow_path($result, $data);
+							}
 						}
 						break;
 					case self::REC_SET:
 						$data = self::decode_ident_value($data, $prop_name);
 						$GLOBALS[$prop_name] = $data;
-						break;
+						continue 2;
+					case self::REC_SET_PATH:
+						list($data, $result) = self::decode_ident_value($data, $prop_name);
+						self::follow_path_set($GLOBALS[$prop_name], $data, $result);
+						continue 2;
 					case self::REC_CLASSSTATIC_GET:
-						$prop_name = self::decode_ident_ident($data, $class_name);
+						$data = self::decode_ident_ident_value($data, $class_name, $prop_name);
 						try
-						{	$data = self::get_reflection($class_name)->getStaticPropertyValue($prop_name);
-							fwrite($output, self::encode_value($data));
+						{	$result = self::get_reflection($class_name)->getStaticPropertyValue($prop_name);
+							$result_is_set = true;
 						}
 						catch (Throwable $e)
 						{	if (self::has_static_property($class_name, $prop_name))
 							{	throw $e;
 							}
-							fwrite($output, "\xFF\xFF\xFF\xFF"); // undefined
+						}
+						if ($result_is_set and $data!==null)
+						{	$result_is_set = self::follow_path($result, $data);
 						}
 						break;
 					case self::REC_CLASSSTATIC_SET:
 						$data = self::decode_ident_ident_value($data, $class_name, $prop_name);
 						self::get_reflection($class_name)->setStaticPropertyValue($prop_name, $data);
-						break;
+						continue 2;
+					case self::REC_CLASSSTATIC_SET_PATH:
+						list($data, $result) = self::decode_ident_ident_value($data, $class_name, $prop_name);
+						eval('self::follow_path_set('.$class_name.'::$'.'{$prop_name}, $data, $result);');
+						continue 2;
 					case self::REC_CONSTRUCT:
 						$data = self::decode_ident_value($data, $class_name);
 						$data = $data===null ? self::get_reflection($class_name)->newInstance() : self::get_reflection($class_name)->newInstanceArgs($data);
 						self::$insts[self::$inst_id_enum] = $data;
-						fwrite($output, self::encode_value(self::$inst_id_enum++));
+						$result_is_set = true;
+						$result = self::$inst_id_enum++;
 						break;
 					case self::REC_DESTRUCT:
 						unset(self::$insts[$data]);
-						break;
+						continue 2;
 					case self::REC_CLASS_GET:
 						$prop_name = self::decode_ident_ident($data, $inst_id);
-						$data = self::$insts[$inst_id]->$prop_name;
-						fwrite($output, self::encode_value($data));
+						$result = self::$insts[$inst_id];
+						$result_is_set = isset($result->$prop_name) || property_exists($result, $prop_name);
+						if ($result_is_set)
+						{	$result = $result->$prop_name;
+						}
 						break;
 					case self::REC_CLASS_SET:
 						$data = self::decode_ident_ident_value($data, $inst_id, $prop_name);
 						self::$insts[$inst_id]->$prop_name = $data;
-						break;
+						continue 2;
 					case self::REC_CLASS_CALL:
 						$data = self::decode_ident_ident_value($data, $inst_id, $prop_name);
-						$data = $data===null ? call_user_func([self::$insts[$inst_id], $prop_name]) : call_user_func_array([self::$insts[$inst_id], $prop_name], $data);
-						fwrite($output, self::encode_value($data));
+						$result = $data===null ? call_user_func([self::$insts[$inst_id], $prop_name]) : call_user_func_array([self::$insts[$inst_id], $prop_name], $data);
+						$result_is_set = true;
 						break;
 					case self::REC_CALL:
 						$data = self::decode_ident_value($data, $prop_name);
-						$data = $data===null ? call_user_func($prop_name) : call_user_func_array($prop_name, $data);
-						fwrite($output, self::encode_value($data));
+						$result = $data===null ? call_user_func($prop_name) : call_user_func_array($prop_name, $data);
+						$result_is_set = true;
 						break;
 					case self::REC_CALL_EVAL:
 						$data = self::decode_value($data);
-						$data = self::eval($data);
-						fwrite($output, self::encode_value($data));
+						$result = self::eval($data);
+						$result_is_set = true;
 						break;
 					case self::REC_CALL_ECHO:
 						$data = self::decode_value($data);
 						foreach ($data as $arg)
 						{	echo $arg;
 						}
-						fwrite($output, "\0\0\0\0");
 						break;
 					case self::REC_CALL_INCLUDE:
 						$data = self::decode_value($data);
-						$data = include($data);
-						fwrite($output, self::encode_value($data));
+						$result = include($data);
+						$result_is_set = true;
 						break;
 					case self::REC_CALL_INCLUDE_ONCE:
 						$data = self::decode_value($data);
-						$data = include_once($data);
-						fwrite($output, self::encode_value($data));
+						$result = include_once($data);
+						$result_is_set = true;
 						break;
 					case self::REC_CALL_REQUIRE:
 						$data = self::decode_value($data);
-						$data = require($data);
-						fwrite($output, self::encode_value($data));
+						$result = require($data);
+						$result_is_set = true;
 						break;
 					case self::REC_CALL_REQUIRE_ONCE:
 						$data = self::decode_value($data);
-						$data = require_once($data);
-						fwrite($output, self::encode_value($data));
+						$result = require_once($data);
+						$result_is_set = true;
 						break;
+				}
+
+				// 3. Send the result
+				if (!$result_is_set)
+				{	fwrite($output, "\xFF\xFF\xFF\xFF"); // undefined
+				}
+				else if ($result === null)
+				{	fwrite($output, "\0\0\0\0");
+				}
+				else
+				{	$data = json_encode($result);
+					fwrite($output, pack('l', strlen($data)).$data);
 				}
 			}
 			catch (Throwable $e)
-			{	$data = json_encode([$e->getFile(), $e->getLine(), $e->getMessage(), $e->getTraceAsString()]);
+			{	// 4. Error: send the exception
+				$data = json_encode([$e->getFile(), $e->getLine(), $e->getMessage(), $e->getTraceAsString()]);
 				fwrite($output, pack('l', -strlen($data)).$data);
 			}
 			fflush($output);

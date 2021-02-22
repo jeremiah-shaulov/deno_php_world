@@ -73,6 +73,15 @@ g.$ten = 10;
 console.log(await g.$ten);
 ```
 
+Individual keys can be accessed.
+
+```ts
+import {g, c} from 'https://deno.land/x/php_world/mod.ts';
+
+g.$_SERVER['hello']['world'] = true;
+console.log(await g.$_SERVER['hello']);
+```
+
 ### Classes
 
 Classes are present in the `c` namespace.
@@ -179,24 +188,29 @@ delete value.this;
 
 ```ts
 import {g, c} from 'https://deno.land/x/php_world/mod.ts';
-const {eval: php_eval} = g;
-const {MainNs} = c;
 
-await php_eval
+await g.eval
 (	`	namespace MainNs;
+
+		function get_twice($value)
+		{	return $value * 2;
+		}
 
 		class Value
 		{	public $var;
 
-			function get_twice_var()
-			{	return $this->var * 2;
+			function get_triple_var()
+			{	return $this->var * 3;
 			}
 		}
 	`
 );
-let value = await new MainNs.Value;
+
+console.log(await g.MainNs.get_twice(10));
+
+let value = await new c.MainNs.Value;
 value.var = 10;
-console.log(await value.get_twice_var());
+console.log(await value.get_triple_var());
 delete value.this;
 ```
 
