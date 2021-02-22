@@ -1,35 +1,35 @@
 import {PHP_INIT} from './php-init.ts';
 import {exists} from "https://deno.land/std/fs/mod.ts";
-import {sleep} from "https://deno.land/x/sleep/mod.ts";
 
-const PHP_CLI_NAME = 'php';
-const SOCKET_NAME = '/tmp/deno-php-commands-io';
+const PHP_CLI_NAME_DEFAULT = 'php';
+const SOCKET_NAME_DEFAULT = '/tmp/deno-php-commands-io';
 const ASSERTIONS_ENABLED = true;
 const DEBUG_PHP_INIT = false;
 
-const REC_CONST = 0;
-const REC_GET = 1;
-const REC_SET = 2;
-const REC_SET_PATH = 3;
-const REC_UNSET = 4;
-const REC_CLASSSTATIC_GET = 5;
-const REC_CLASSSTATIC_SET = 6;
-const REC_CLASSSTATIC_SET_PATH = 7;
-const REC_CLASSSTATIC_UNSET = 8;
-const REC_CONSTRUCT = 9;
-const REC_DESTRUCT = 10;
-const REC_CLASS_GET = 11;
-const REC_CLASS_SET = 12;
-const REC_CLASS_CALL = 13;
-const REC_CALL = 14;
-const REC_CALL_THIS = 15;
-const REC_CALL_EVAL = 16;
-const REC_CALL_EVAL_THIS = 17;
-const REC_CALL_ECHO = 18;
-const REC_CALL_INCLUDE = 19;
-const REC_CALL_INCLUDE_ONCE = 20;
-const REC_CALL_REQUIRE = 21;
-const REC_CALL_REQUIRE_ONCE = 22;
+const REC_HELO = 0;
+const REC_CONST = 1;
+const REC_GET = 2;
+const REC_SET = 3;
+const REC_SET_PATH = 4;
+const REC_UNSET = 5;
+const REC_CLASSSTATIC_GET = 6;
+const REC_CLASSSTATIC_SET = 7;
+const REC_CLASSSTATIC_SET_PATH = 8;
+const REC_CLASSSTATIC_UNSET = 9;
+const REC_CONSTRUCT = 10;
+const REC_DESTRUCT = 11;
+const REC_CLASS_GET = 12;
+const REC_CLASS_SET = 13;
+const REC_CLASS_CALL = 14;
+const REC_CALL = 15;
+const REC_CALL_THIS = 16;
+const REC_CALL_EVAL = 17;
+const REC_CALL_EVAL_THIS = 18;
+const REC_CALL_ECHO = 19;
+const REC_CALL_INCLUDE = 20;
+const REC_CALL_INCLUDE_ONCE = 21;
+const REC_CALL_REQUIRE = 22;
+const REC_CALL_REQUIRE_ONCE = 23;
 
 const RE_BAD_CLASSNAME_FOR_EVAL = /[^\w\\]/;
 
@@ -37,6 +37,25 @@ function assert(expr: unknown): asserts expr
 {	if (ASSERTIONS_ENABLED && !expr)
 	{	throw new Error('Assertion failed');
 	}
+}
+
+async function get_random_key(): Promise<string>
+{	if (await exists('/dev/urandom'))
+	{	let fh = await Deno.open('/dev/urandom', {read: true});
+		let buffer = new Uint8Array(32);
+		try
+		{	let pos = 0;
+			while (pos < 32)
+			{	let n_read = await fh.read(buffer.subarray(pos));
+				pos += n_read!;
+			}
+		}
+		finally
+		{	fh.close();
+		}
+		return btoa(String.fromCharCode.apply(null, buffer as any));
+	}
+	return String(Math.random());
 }
 
 export class InterpreterError extends Error
@@ -48,11 +67,13 @@ export class InterpreterError extends Error
 export class PhpInterpreter
 {	public g: any;
 	public c: any;
+	public settings = {php_cli_name: PHP_CLI_NAME_DEFAULT, socket: SOCKET_NAME_DEFAULT};
 
 	private proc: Deno.Process|undefined;
 	private socket: Deno.Listener|undefined;
 	private commands_io: Deno.Conn|undefined;
 	private is_initing = false;
+	private using_unix_socket = '';
 	private ongoing: Promise<unknown> = Promise.resolve();
 	private encoder = new TextEncoder;
 	private decoder = new TextDecoder;
@@ -205,6 +226,7 @@ export class PhpInterpreter
 									{	throw new Error(`Variable name must not contain spaces: ${path[var_i]}`);
 									}
 									path_str += ' '+path[var_i].slice(1); // cut '$'
+									path_str += ' '+JSON.stringify(path.slice(var_i+1));
 									record_type = REC_CLASSSTATIC_UNSET;
 								}
 								php.write(record_type, path_str);
@@ -434,20 +456,52 @@ export class PhpInterpreter
 	}
 
 	private async init()
-	{	this.socket = Deno.listen({path: SOCKET_NAME, transport: 'unix'});
-		await sleep(0);
-		let cmd = DEBUG_PHP_INIT ? [PHP_CLI_NAME, 'php-init.ts'] : [PHP_CLI_NAME, '-r', PHP_INIT.slice('<?php\n\n'.length)];
+	{	// 1. Open a socket, and start listening
+		let php_socket;
+		if (Deno.build.os != 'windows')
+		{	this.using_unix_socket = this.settings.socket;
+			this.socket = Deno.listen({transport: 'unix', path: this.settings.socket});
+			php_socket = 'unix://'+this.settings.socket;
+		}
+		else
+		{	this.using_unix_socket = '';
+			this.socket = Deno.listen({transport: 'tcp', hostname: '127.0.0.1', port: 0});
+			php_socket = 'tcp://127.0.0.1:'+(this.socket.addr as Deno.NetAddr).port;
+		}
+		// 2. Run the PHP interpreter
+		let cmd = DEBUG_PHP_INIT ? [this.settings.php_cli_name, 'php-init.ts'] : [this.settings.php_cli_name, '-r', PHP_INIT.slice('<?php\n\n'.length)];
 		if (Deno.args.length)
 		{	cmd.splice(cmd.length, 0, '--', ...Deno.args);
 		}
 		this.proc = Deno.run({cmd, stdin: 'piped', stdout: 'inherit', stderr: 'inherit'});
-		this.commands_io = await this.socket.accept();
+		// 3. Generate random key
+		let key = await get_random_key();
+		// 4. Send the HELO packet with opened socket address and the key
+		let helo = this.encoder.encode('01230123'+JSON.stringify([php_socket, key]));
+		let len = new DataView(helo.buffer);
+		len.setInt32(0, REC_HELO);
+		len.setInt32(4, helo.length - 8);
+		await Deno.writeAll(this.proc!.stdin!, helo);
+		// 5. Accept connection from the interpreter. Identify it by the key.
+		while (true)
+		{	this.commands_io = await this.socket.accept();
+			try
+			{	let helo = await this.do_read();
+				if (helo == key)
+				{	break;
+				}
+			}
+			catch (e)
+			{	console.error(e);
+			}
+			this.commands_io.close();
+		}
+		// 6. Done
 		this.is_initing = false;
 	}
 
 	private write(record_type: number, str: string)
-	{	str = '01230123'+str;
-		let body = this.encoder.encode(str);
+	{	let body = this.encoder.encode('01230123'+str);
 		let len = new DataView(body.buffer);
 		len.setInt32(0, record_type);
 		len.setInt32(4, body.length - 8);
@@ -505,9 +559,11 @@ export class PhpInterpreter
 		this.proc?.close();
 		this.commands_io?.close();
 		this.socket?.close();
-		let yes = await exists(SOCKET_NAME);
-		if (yes)
-		{	await Deno.remove(SOCKET_NAME);
+		if (this.using_unix_socket)
+		{	let yes = await exists(this.using_unix_socket);
+			if (yes)
+			{	await Deno.remove(this.using_unix_socket);
+			}
 		}
 		this.proc = undefined;
 		this.socket = undefined;
@@ -576,6 +632,7 @@ function get_proxy
 	);
 }
 
-const php_singleton = new PhpInterpreter;
-export const g = php_singleton.g;
-export const c = php_singleton.c;
+const php = new PhpInterpreter;
+export const g = php.g;
+export const c = php.c;
+export const settings = php.settings;

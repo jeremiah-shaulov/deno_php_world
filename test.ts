@@ -222,6 +222,19 @@ Deno.test
 		assert(pid_1 != pid_2);
 
 		await g.exit();
+
+		let pid_0_new = await g.posix_getpid();
+		assert(pid_0_new != pid_0);
+
+		let pid_1_new = await int_1.g.posix_getpid();
+		assert(pid_1_new == pid_1);
+
+		await int_1.g.exit();
+
+		pid_1_new = await int_1.g.posix_getpid();
+		assert(pid_1_new != pid_1);
+
+		await g.exit();
 		await int_1.g.exit();
 		await int_2.g.exit();
 	}
@@ -244,6 +257,29 @@ Deno.test
 		ex = await g.eval('return get_ex("The message");').this;
 		assertEquals(await ex.getMessage(), 'The message');
 		delete ex.this;
+
+		await g.exit();
+	}
+);
+
+Deno.test
+(	'Unset',
+	async () =>
+	{	await php_eval
+		(	`	namespace MainNs\\SubNs;
+
+				class C
+				{	static $var = ['one' => 1, 'two' => ['three' => 3]];
+				}
+			`
+		);
+
+		delete c.MainNs.SubNs.C.$var['two']['three'];
+		assertEquals(await c.MainNs.SubNs.C.$var, {one: 1, two: {}});
+		c.MainNs.SubNs.C.$var['two']['three'] = 3;
+		assertEquals(await c.MainNs.SubNs.C.$var, {one: 1, two: {three: 3}});
+		delete c.MainNs.SubNs.C.$var['two'];
+		assertEquals(await c.MainNs.SubNs.C.$var, {one: 1});
 
 		await g.exit();
 	}

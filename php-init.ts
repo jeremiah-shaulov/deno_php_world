@@ -2,30 +2,30 @@ export var PHP_INIT = String.raw
 `<?php
 
 class _PhpDenoBridge extends Exception
-{	private const SOCK_NAME = 'unix:///tmp/deno-php-commands-io';
-	private const REC_CONST = 0;
-	private const REC_GET = 1;
-	private const REC_SET = 2;
-	private const REC_SET_PATH = 3;
-	private const REC_UNSET = 4;
-	private const REC_CLASSSTATIC_GET = 5;
-	private const REC_CLASSSTATIC_SET = 6;
-	private const REC_CLASSSTATIC_SET_PATH = 7;
-	private const REC_CLASSSTATIC_UNSET = 8;
-	private const REC_CONSTRUCT = 9;
-	private const REC_DESTRUCT = 10;
-	private const REC_CLASS_GET = 11;
-	private const REC_CLASS_SET = 12;
-	private const REC_CLASS_CALL = 13;
-	private const REC_CALL = 14;
-	private const REC_CALL_THIS = 15;
-	private const REC_CALL_EVAL = 16;
-	private const REC_CALL_EVAL_THIS = 17;
-	private const REC_CALL_ECHO = 18;
-	private const REC_CALL_INCLUDE = 19;
-	private const REC_CALL_INCLUDE_ONCE = 20;
-	private const REC_CALL_REQUIRE = 21;
-	private const REC_CALL_REQUIRE_ONCE = 22;
+{	private const REC_HELO = 0;
+	private const REC_CONST = 1;
+	private const REC_GET = 2;
+	private const REC_SET = 3;
+	private const REC_SET_PATH = 4;
+	private const REC_UNSET = 5;
+	private const REC_CLASSSTATIC_GET = 6;
+	private const REC_CLASSSTATIC_SET = 7;
+	private const REC_CLASSSTATIC_SET_PATH = 8;
+	private const REC_CLASSSTATIC_UNSET = 9;
+	private const REC_CONSTRUCT = 10;
+	private const REC_DESTRUCT = 11;
+	private const REC_CLASS_GET = 12;
+	private const REC_CLASS_SET = 13;
+	private const REC_CLASS_CALL = 14;
+	private const REC_CALL = 15;
+	private const REC_CALL_THIS = 16;
+	private const REC_CALL_EVAL = 17;
+	private const REC_CALL_EVAL_THIS = 18;
+	private const REC_CALL_ECHO = 19;
+	private const REC_CALL_INCLUDE = 20;
+	private const REC_CALL_INCLUDE_ONCE = 21;
+	private const REC_CALL_REQUIRE = 22;
+	private const REC_CALL_REQUIRE_ONCE = 23;
 
 	private static ?int $error_reporting = null;
 	private static array $insts = [];
@@ -176,10 +176,6 @@ class _PhpDenoBridge extends Exception
 		set_error_handler(__CLASS__.'::error_handler', self::$error_reporting);
 		// Proceed
 		$stdin = fopen('php://stdin', 'r');
-		$output = stream_socket_client(self::SOCK_NAME, $errno, $errstr);
-		if ($output === false)
-		{	exit("stream_socket_client(): errno=$errno $errstr");
-		}
 		while (!feof($stdin))
 		{	try
 			{	// 1. Read the request
@@ -202,7 +198,16 @@ class _PhpDenoBridge extends Exception
 				$result = null;
 				$result_is_set = false;
 				switch ($record_type)
-				{	case self::REC_CONST:
+				{	case self::REC_HELO:
+						$data = json_decode($data, true);
+						$output = stream_socket_client($data[0], $errno, $errstr);
+						if ($output === false)
+						{	exit("stream_socket_client(): errno=$errno $errstr");
+						}
+						$result = $data[1];
+						$result_is_set = true;
+						break;
+					case self::REC_CONST:
 						if (defined($data))
 						{	$result = constant($data);
 							$result_is_set = true;
@@ -257,6 +262,10 @@ class _PhpDenoBridge extends Exception
 					case self::REC_CLASSSTATIC_SET_PATH:
 						list($data, $result) = self::decode_ident_ident_value($data, $class_name, $prop_name);
 						eval('self::follow_path_set('.$class_name.'::$'.'{$prop_name}, $data, $result);');
+						continue 2;
+					case self::REC_CLASSSTATIC_UNSET:
+						$data = self::decode_ident_ident_value($data, $class_name, $prop_name);
+						eval('self::follow_path_unset('.$class_name.'::$'.'{$prop_name}, $data);');
 						continue 2;
 					case self::REC_CONSTRUCT:
 						$data = self::decode_ident_value($data, $class_name);

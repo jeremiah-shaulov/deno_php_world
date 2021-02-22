@@ -9,12 +9,12 @@ There are several possible reasons to use the `php_world`:
 
 ## Requirements
 
-PHP CLI must be installed on your system, and the `php` command must correspond to the PHP interpreter.
+PHP CLI must be installed on your system.
 
 ## Limitations
 
 1. Unfortunately it's impossible to automatically garbage-collect PHP object handles, so `delete` must be used explicitly (see below).
-2. Requires `--unstable` flag, like `deno run --unstable --allow-run --allow-read --allow-write ...`.
+2. On non-Windows, it uses unix-domain socket to communicate with the interpreter, so requires `--unstable` flag.
 
 ## Examples
 
@@ -26,6 +26,26 @@ import {g, c} from 'https://deno.land/x/php_world/mod.ts';
 // and at last, terminate the interpreter
 await g.exit();
 ```
+
+Run the script like this:
+
+```bash
+deno run --unstable --allow-run --allow-read --allow-write --allow-net main.ts
+```
+
+`php_world` will execute the `php` CLI command. If in your system the interpreter appears under different name, you need to set it's name before accessing `php_world` interfaces.
+
+```ts
+import {g, c, settings} from 'https://deno.land/x/php_world/mod.ts';
+
+settings.php_cli_name = 'php7.4';
+// now access php_world interfaces
+// ...
+// and at last, terminate the interpreter
+await g.exit();
+```
+
+### Interface
 
 There are 2 logical namespaces:
 
@@ -80,6 +100,16 @@ import {g, c} from 'https://deno.land/x/php_world/mod.ts';
 
 g.$_SERVER['hello']['world'] = true;
 console.log(await g.$_SERVER['hello']);
+```
+
+It's possible to unset a key.
+
+```ts
+import {g, c} from 'https://deno.land/x/php_world/mod.ts';
+
+console.log(await g.$_SERVER['argc']); // likely to print '1'
+delete g.$_SERVER['argc'];
+console.log((await g.$_SERVER['argc']) === undefined); // prints "true"
 ```
 
 ### Classes
