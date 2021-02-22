@@ -16,12 +16,14 @@ class _PhpDenoBridge extends Exception
 	private const REC_CLASS_SET = 10;
 	private const REC_CLASS_CALL = 11;
 	private const REC_CALL = 12;
-	private const REC_CALL_EVAL = 13;
-	private const REC_CALL_ECHO = 14;
-	private const REC_CALL_INCLUDE = 15;
-	private const REC_CALL_INCLUDE_ONCE = 16;
-	private const REC_CALL_REQUIRE = 17;
-	private const REC_CALL_REQUIRE_ONCE = 18;
+	private const REC_CALL_THIS = 13;
+	private const REC_CALL_EVAL = 14;
+	private const REC_CALL_EVAL_THIS = 15;
+	private const REC_CALL_ECHO = 16;
+	private const REC_CALL_INCLUDE = 17;
+	private const REC_CALL_INCLUDE_ONCE = 18;
+	private const REC_CALL_REQUIRE = 19;
+	private const REC_CALL_REQUIRE_ONCE = 20;
 
 	private static ?int $error_reporting = null;
 	private static array $insts = [];
@@ -229,8 +231,8 @@ class _PhpDenoBridge extends Exception
 						$data = self::decode_ident_value($data, $class_name);
 						$data = $data===null ? self::get_reflection($class_name)->newInstance() : self::get_reflection($class_name)->newInstanceArgs($data);
 						self::$insts[self::$inst_id_enum] = $data;
-						$result_is_set = true;
 						$result = self::$inst_id_enum++;
+						$result_is_set = true;
 						break;
 					case self::REC_DESTRUCT:
 						unset(self::$insts[$data]);
@@ -256,6 +258,14 @@ class _PhpDenoBridge extends Exception
 						$data = self::decode_ident_value($data, $prop_name);
 						$result = $data===null ? call_user_func($prop_name) : call_user_func_array($prop_name, $data);
 						$result_is_set = true;
+						break;
+					case self::REC_CALL_THIS:
+						$data = self::decode_ident_value($data, $prop_name);
+						$data = $data===null ? call_user_func($prop_name) : call_user_func_array($prop_name, $data);
+						self::$insts[self::$inst_id_enum] = $data;
+						$result = self::$inst_id_enum++;
+						$result_is_set = true;
+						//
 						break;
 					case self::REC_CALL_EVAL:
 						$data = self::decode_value($data);

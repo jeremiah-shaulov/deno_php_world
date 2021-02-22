@@ -184,6 +184,30 @@ console.log(await value.get_twice_var());
 delete value.this;
 ```
 
+### Objects returned from functions
+
+When a function is called, and returned a value, this value is JSON-serialized on PHP side, and JSON-parsed in the Deno world.
+Objects returned from functions are dumb default objects, without methods.
+
+However it's possible to get object handler as in example with instance construction. To do so need to get special property called `this` from the object, before awaiting for the result.
+
+```ts
+import {g, c} from 'https://deno.land/x/php_world/mod.ts';
+
+await g.eval
+(	`	function get_ex($msg)
+		{	return new Exception($msg);
+		}
+	`
+);
+
+let ex = await g.get_ex('The message').this;
+console.log(await ex.getMessage()); // prints 'The message'
+delete ex.this;
+```
+
+At last, the object must be deleted. This doesn't necessarily destroys the object on PHP side, but it stops holding the handler to the object.
+
 ### Namespaces
 
 ```ts

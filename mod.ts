@@ -20,12 +20,14 @@ const REC_CLASS_GET = 9;
 const REC_CLASS_SET = 10;
 const REC_CLASS_CALL = 11;
 const REC_CALL = 12;
-const REC_CALL_EVAL = 13;
-const REC_CALL_ECHO = 14;
-const REC_CALL_INCLUDE = 15;
-const REC_CALL_INCLUDE_ONCE = 16;
-const REC_CALL_REQUIRE = 17;
-const REC_CALL_REQUIRE_ONCE = 18;
+const REC_CALL_THIS = 13;
+const REC_CALL_EVAL = 14;
+const REC_CALL_EVAL_THIS = 15;
+const REC_CALL_ECHO = 16;
+const REC_CALL_INCLUDE = 17;
+const REC_CALL_INCLUDE_ONCE = 18;
+const REC_CALL_REQUIRE = 19;
+const REC_CALL_REQUIRE_ONCE = 20;
 
 const RE_BAD_CLASSNAME_FOR_EVAL = /[^\w\\]/;
 
@@ -171,9 +173,9 @@ export class PhpInterpreter
 							},
 
 							// apply
-							async (path, args) =>
+							(path, args) =>
 							{	// case: function
-								let path_str;
+								let path_str = '';
 								let record_type = REC_CALL;
 								if (!is_class)
 								{	if (path.length == 1)
@@ -181,7 +183,7 @@ export class PhpInterpreter
 										path_str = path[0];
 										switch (path_str.toLowerCase())
 										{	case 'exit':
-												return await php.exit();
+												return php.exit();
 											case 'eval':
 												if (args.length != 1)
 												{	throw new Error('Invalid number of arguments to eval()');
@@ -246,8 +248,36 @@ export class PhpInterpreter
 								{	// case: ClassName
 									throw new Error(`Invalid class name usage: ${path[0]}`);
 								}
-								await php.write(record_type, path_str);
-								return await php.read();
+								if (record_type!=REC_CALL && record_type!=REC_CALL_EVAL)
+								{	return php.write(record_type, path_str).then(() => php.read());
+								}
+								else
+								{	let promise: Promise<any>|undefined;
+									return new Proxy
+									(	php,
+										{	get(php, prop_name)
+											{	if (prop_name == 'this')
+												{	return php.write(record_type==REC_CALL_EVAL ? REC_CALL_EVAL_THIS : REC_CALL_THIS, path_str).then(() => php.read()).then(h_inst => construct(php, h_inst|0));
+												}
+												else if (prop_name == 'then')
+												{	if (!promise) promise = php.write(record_type, path_str).then(() => php.read());
+													return (y: any, n: any) => promise!.then(y, n);
+												}
+												else if (prop_name == 'catch')
+												{	if (!promise) promise = php.write(record_type, path_str).then(() => php.read());
+													return (n: any) => promise!.catch(n);
+												}
+												else if (prop_name == 'finally')
+												{	if (!promise) promise = php.write(record_type, path_str).then(() => php.read());
+													return (y: any) => promise!.finally(y);
+												}
+												else
+												{	throw new Error(`Result of function call must be awaited-for`);
+												}
+											}
+										}
+									);
+								}
 							},
 
 							// construct
@@ -255,67 +285,7 @@ export class PhpInterpreter
 							{	let class_name = path.join('\\');
 								await php.write(REC_CONSTRUCT, args.length==0 ? class_name : class_name+' '+JSON.stringify([...args]));
 								let h_inst = (await php.read())|0;
-								return new Proxy
-								(	php,
-									{	has(php, prop_name)
-										{	return prop_name != 'then'; // so "await new Class" will finish awaiting
-										},
-										get(php, prop_name) // set class variable or function to call
-										{	if (typeof(prop_name)!='string' || prop_name.length==0 || prop_name.length>128 || prop_name.indexOf(' ')!=-1)
-											{	throw new Error('Invalid property name');
-											}
-											if (prop_name == 'then')
-											{	return; // undefined
-											}
-											let promise: Promise<any>|undefined;
-											return new Proxy
-											(	() => {},
-												{	get(_, prop_name_2)
-													{	if (!promise)
-														{	promise = php.write(REC_CLASS_GET, h_inst+' '+prop_name).then(() => php.read());
-														}
-														if (prop_name_2 == 'then')
-														{	return (y: any, n: any) => promise!.then(y, n);
-														}
-														else if (prop_name_2 == 'catch')
-														{	return (n: any) => promise!.catch(n);
-														}
-														else if (prop_name_2 == 'finally')
-														{	return (y: any) => promise!.finally(y);
-														}
-														else
-														{	throw new Error(`Instance property "${prop_name}": value must be awaited`);
-														}
-													},
-													set(_, prop_name_2, val)
-													{	return false
-													},
-													async apply(_, proxy, args)
-													{	await php.write(REC_CLASS_CALL, args.length==0 ? h_inst+' '+prop_name : h_inst+' '+prop_name+' '+JSON.stringify([...args]));
-														return await php.read();
-													}
-												}
-											)
-										},
-										set(php, prop_name, value) // set class variable
-										{	if (typeof(prop_name)!='string' || prop_name.length==0 || prop_name.length>128 || prop_name.indexOf(' ')!=-1)
-											{	throw new Error('Invalid property name');
-											}
-											php.write(REC_CLASS_SET, value==null ? h_inst+' '+prop_name : h_inst+' '+prop_name+' '+JSON.stringify(value));
-											return true;
-										},
-										deleteProperty(_, prop_name)
-										{	if (typeof(prop_name)!='string' || prop_name.length==0 || prop_name.length>128 || prop_name.indexOf(' ')!=-1)
-											{	return false;
-											}
-											if (prop_name == 'this')
-											{	php.write(REC_DESTRUCT, h_inst+'');
-												return true;
-											}
-											return false;
-										}
-									}
-								);
+								return construct(php, h_inst);
 							}
 						);
 					},
@@ -332,6 +302,70 @@ export class PhpInterpreter
 						prop_name = prop_name.slice(1); // cut '$'
 						php.write(REC_SET, value==null ? prop_name : prop_name+' '+JSON.stringify(value));
 						return true;
+					}
+				}
+			);
+		}
+
+		function construct(php: PhpInterpreter, h_inst: number)
+		{	return new Proxy
+			(	php,
+				{	has(php, prop_name)
+					{	return prop_name != 'then'; // so "await new Class" will finish awaiting
+					},
+					get(php, prop_name) // set class variable or function to call
+					{	if (typeof(prop_name)!='string' || prop_name.length==0 || prop_name.length>128 || prop_name.indexOf(' ')!=-1)
+						{	throw new Error('Invalid property name');
+						}
+						if (prop_name == 'then')
+						{	return; // undefined
+						}
+						let promise: Promise<any>|undefined;
+						return new Proxy
+						(	() => {},
+							{	get(_, prop_name_2)
+								{	if (!promise)
+									{	promise = php.write(REC_CLASS_GET, h_inst+' '+prop_name).then(() => php.read());
+									}
+									if (prop_name_2 == 'then')
+									{	return (y: any, n: any) => promise!.then(y, n);
+									}
+									else if (prop_name_2 == 'catch')
+									{	return (n: any) => promise!.catch(n);
+									}
+									else if (prop_name_2 == 'finally')
+									{	return (y: any) => promise!.finally(y);
+									}
+									else
+									{	throw new Error(`Instance property "${prop_name}": value must be awaited-for`);
+									}
+								},
+								set(_, prop_name_2, val)
+								{	return false
+								},
+								async apply(_, proxy, args)
+								{	await php.write(REC_CLASS_CALL, args.length==0 ? h_inst+' '+prop_name : h_inst+' '+prop_name+' '+JSON.stringify([...args]));
+									return await php.read();
+								}
+							}
+						)
+					},
+					set(php, prop_name, value) // set class variable
+					{	if (typeof(prop_name)!='string' || prop_name.length==0 || prop_name.length>128 || prop_name.indexOf(' ')!=-1)
+						{	throw new Error('Invalid property name');
+						}
+						php.write(REC_CLASS_SET, value==null ? h_inst+' '+prop_name : h_inst+' '+prop_name+' '+JSON.stringify(value));
+						return true;
+					},
+					deleteProperty(_, prop_name)
+					{	if (typeof(prop_name)!='string' || prop_name.length==0 || prop_name.length>128 || prop_name.indexOf(' ')!=-1)
+						{	return false;
+						}
+						if (prop_name == 'this')
+						{	php.write(REC_DESTRUCT, h_inst+'');
+							return true;
+						}
+						return false;
 					}
 				}
 			);
@@ -424,7 +458,7 @@ function get_proxy
 (	path: string[],
 	get: (path: string[]) => Promise<any>,
 	set: (path: string[], value: any) => boolean,
-	apply: (path: string[], args: IArguments) => Promise<any>,
+	apply: (path: string[], args: IArguments) => any,
 	construct: (path: string[], args: IArguments) => Promise<any>
 ): any
 {	return new Proxy
@@ -474,6 +508,6 @@ function get_proxy
 	);
 }
 
-var php_singleton = new PhpInterpreter;
-export var g = php_singleton.g;
-export var c = php_singleton.c;
+const php_singleton = new PhpInterpreter;
+export const g = php_singleton.g;
+export const c = php_singleton.c;

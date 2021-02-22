@@ -222,3 +222,21 @@ Deno.test
 		await int_2.g.exit();
 	}
 );
+
+Deno.test
+(	'Object returned from function',
+	async () =>
+	{	await php_eval
+		(	`	function get_ex($msg)
+				{	return new Exception($msg);
+				}
+			`
+		);
+
+		let ex = await g.get_ex('The message').this;
+		assertEquals(await ex.getMessage(), 'The message');
+		delete ex.this;
+
+		await g.exit();
+	}
+);
