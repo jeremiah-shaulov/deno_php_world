@@ -68,7 +68,7 @@ await exit();
 
 At the end of Deno script, it's nice to call `exit()`. This function terminates the interpreter, and frees all the resources. After this function called, the `php_world` can be used again, and a new instance of the interpreter will be spawned. It's OK to call `exit()` several times.
 
-If function's result is not awaited-for, the function will work in the background, and if it throws exception, this exception will come out on next operation awaiting.
+If function's result is not awaited-for, the function will work in the background, and if it throws exception, this exception will come out on next operation awaiting. After exception occures, all further operations in current microtask iteration will be skipped (see below).
 
 ### Global constants
 
@@ -268,6 +268,87 @@ let value = await new c.MainNs.Value;
 value.var = 10;
 console.log(await value.get_triple_var());
 delete value.this;
+```
+
+### Exceptions
+
+PHP exceptions are propagated to Deno as instances of InterpreterError class.
+
+```ts
+import {g, c, InterpreterError} from 'https://deno.land/x/php_world/mod.ts';
+
+await g.eval
+(	`	function failure($msg)
+		{	throw new Exception($msg);
+		}
+	`
+);
+
+try
+{	await g.failure('Test');
+}
+catch (e)
+{	console.log(e instanceof InterpreterError);
+	console.log(e.message);
+}
+```
+
+The InterpreterError class has the following fields: `message`, `fileName`, `lineNumber`, `trace` (string).
+
+If a function throws exception, and you don't await for the result, it's error will be returned to the next awaited operation within current microtask iteration.
+
+```ts
+import {g, c} from 'https://deno.land/x/php_world/mod.ts';
+
+await g.eval
+(	`	function failure($msg)
+		{	global $n;
+			$n++;
+			throw new Exception($msg);
+		}
+	`
+);
+
+g.failure('Test 1'); // $n gets the value of 1
+g.failure('Test 2'); // this will no be executed, so $n will remain 1
+g.failure('Test 3'); // not executed
+try
+{	await g.$n; // throws error 'Test 1'
+}
+catch (e)
+{	console.log(e.message); // prints 'Test 1'
+}
+console.log(await g.$n); // prints 1
+```
+
+But if you don't await any other `php_world` operation within the current microtask iteration, the exception will be lost.
+
+```ts
+import {g, c} from 'https://deno.land/x/php_world/mod.ts';
+
+await g.eval
+(	`	function failure($msg)
+		{	global $n;
+			$n++;
+			throw new Exception($msg);
+		}
+	`
+);
+
+g.failure('Test 1'); // $n gets the value of 1
+queueMicrotask
+(	async () =>
+	{	g.failure('Test 2'); // $n gets the value of 2
+		g.failure('Test 3'); // this will no be executed, so $n remains 2
+		try
+		{	await g.$n; // throws error 'Test 2'
+		}
+		catch (e)
+		{	console.log(e.message); // prints 'Test 2'
+		}
+		console.log(await g.$n); // prints 2
+	}
+);
 ```
 
 ### Running several PHP interpreters in parallel

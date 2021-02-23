@@ -59,7 +59,7 @@ async function get_random_key(): Promise<string>
 }
 
 export class InterpreterError extends Error
-{	constructor(public message: string, public file: string, public line: number, public trace: string)
+{	constructor(public message: string, public fileName: string, public lineNumber: number, public trace: string)
 	{	super(message);
 	}
 }
@@ -528,17 +528,12 @@ export class PhpInterpreter
 	}
 
 	private schedule(callback: () => any)
-	{	this.ongoing = this.ongoing.then
-		(	callback,
-			error =>
-			{	try
-				{	callback();
-				}
-				catch (e)
-				{	throw error; // TODO: ...
-				}
-			}
-		);
+	{	if (!this.commands_io && !this.is_initing)
+		{	this.is_initing = true;
+			this.schedule(() => this.init());
+		}
+		this.ongoing = this.ongoing.then(callback);
+		queueMicrotask(() => {this.ongoing = this.ongoing.catch(() => {})});
 		return this.ongoing;
 	}
 
@@ -559,10 +554,6 @@ export class PhpInterpreter
 		let len = new DataView(body.buffer);
 		len.setInt32(0, record_type);
 		len.setInt32(4, body.length - 8);
-		if (!this.commands_io && !this.is_initing)
-		{	this.is_initing = true;
-			await this.init();
-		}
 		await Deno.writeAll(this.proc!.stdin!, body);
 	}
 
@@ -589,8 +580,7 @@ export class PhpInterpreter
 		}
 		if (is_error)
 		{	let [file, line, message, trace] = JSON.parse(this.decoder.decode(buffer));
-			line |= 0;
-			throw new InterpreterError(message, file, line, trace);
+			throw new InterpreterError(message, file, Number(line), trace);
 		}
 		return JSON.parse(this.decoder.decode(buffer));
 	}

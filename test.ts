@@ -1,4 +1,5 @@
 import {assert, assertEquals} from "https://deno.land/std@0.87.0/testing/asserts.ts";
+import {sleep} from "https://deno.land/x/sleep/mod.ts";
 import {g, c, PhpInterpreter} from './mod.ts';
 
 const {eval: php_eval, ob_start, ob_get_clean, echo, json_encode, exit} = g;
@@ -308,6 +309,76 @@ Deno.test
 		C.$v2 = 4;
 		assertEquals(await C.$v, 17);
 		assertEquals(await C.$v2, 4);
+
+		await g.exit();
+	}
+);
+
+Deno.test
+(	'Async errors',
+	async () =>
+	{	await php_eval
+		(	`	class C
+				{	static $n = 0;
+
+					static function failure(string $msg)
+					{	self::$n++;
+						throw new Exception($msg);
+					}
+				}
+			`
+		);
+
+		// async
+		C.failure("Failure 1");
+		C.failure("Failure 2");
+		C.failure("Failure 3");
+		let error = null;
+		try
+		{	console.log(await g.$argc);
+		}
+		catch (e)
+		{	error = e;
+		}
+		assert(error?.message, 'Failure 1');
+		assertEquals(await C.$n, 1);
+
+		// async with sleep
+		C.failure("Failure 1");
+		C.failure("Failure 2");
+		await sleep(0);
+		C.failure("Failure 3");
+		error = null;
+		try
+		{	console.log(await g.$argc);
+		}
+		catch (e)
+		{	error = e;
+		}
+		assert(error?.message, 'Failure 3');
+		assertEquals(await C.$n, 3);
+
+		// await 1
+		error = null;
+		try
+		{	await C.failure("Second failure 1");
+		}
+		catch (e)
+		{	error = e;
+		}
+		assertEquals(error?.message, 'Second failure 1');
+		assertEquals(await C.$n, 4);
+
+		// await 2
+		error = null;
+		try
+		{	await C.failure("Second failure 2");
+		}
+		catch (e)
+		{	error = e;
+		}
+		assertEquals(error?.message, 'Second failure 2');
+		assertEquals(await C.$n, 5);
 
 		await g.exit();
 	}
