@@ -16,16 +16,18 @@ class _PhpDenoBridge extends Exception
 	private const REC_DESTRUCT = 11;
 	private const REC_CLASS_GET = 12;
 	private const REC_CLASS_SET = 13;
-	private const REC_CLASS_CALL = 14;
-	private const REC_CALL = 15;
-	private const REC_CALL_THIS = 16;
-	private const REC_CALL_EVAL = 17;
-	private const REC_CALL_EVAL_THIS = 18;
-	private const REC_CALL_ECHO = 19;
-	private const REC_CALL_INCLUDE = 20;
-	private const REC_CALL_INCLUDE_ONCE = 21;
-	private const REC_CALL_REQUIRE = 22;
-	private const REC_CALL_REQUIRE_ONCE = 23;
+	private const REC_CLASS_SET_PATH = 14;
+	private const REC_CLASS_CALL = 15;
+	private const REC_CLASS_CALL_PATH = 16;
+	private const REC_CALL = 17;
+	private const REC_CALL_THIS = 18;
+	private const REC_CALL_EVAL = 19;
+	private const REC_CALL_EVAL_THIS = 20;
+	private const REC_CALL_ECHO = 21;
+	private const REC_CALL_INCLUDE = 22;
+	private const REC_CALL_INCLUDE_ONCE = 23;
+	private const REC_CALL_REQUIRE = 24;
+	private const REC_CALL_REQUIRE_ONCE = 25;
 
 	private static ?int $error_reporting = null;
 	private static array $insts = [];
@@ -287,9 +289,21 @@ class _PhpDenoBridge extends Exception
 						$data = self::decode_ident_ident_value($data, $inst_id, $prop_name);
 						self::$insts[$inst_id]->$prop_name = $data;
 						continue 2;
+					case self::REC_CLASS_SET_PATH:
+						list($data, $result) = self::decode_ident_ident_value($data, $inst_id, $prop_name);
+						self::follow_path_set(self::$insts[$inst_id]->$prop_name, $data, $result);
+						continue 2;
 					case self::REC_CLASS_CALL:
 						$data = self::decode_ident_ident_value($data, $inst_id, $prop_name);
 						$result = $data===null ? call_user_func([self::$insts[$inst_id], $prop_name]) : call_user_func_array([self::$insts[$inst_id], $prop_name], $data);
+						$result_is_set = true;
+						break;
+					case self::REC_CLASS_CALL_PATH:
+						list($data, $result) = self::decode_ident_ident_value($data, $inst_id, $prop_name);
+						$inst = self::$insts[$inst_id];
+						self::follow_path($inst, $data);
+						$result = call_user_func_array([$inst, $prop_name], $result);
+						$inst = null;
 						$result_is_set = true;
 						break;
 					case self::REC_CALL:

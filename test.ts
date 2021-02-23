@@ -148,18 +148,41 @@ Deno.test
 	{	await php_eval
 		(	`	class C
 				{	public $var = 10;
+					public $for_c2;
+
+					function __construct()
+					{	$this->for_c2 = ['key' => new C2];
+					}
+
 					public function get_twice_var()
 					{	return $this->var * 2;
+					}
+				}
+
+				class C2
+				{	public function twice($n)
+					{	return $n * 2;
 					}
 				}
 			`
 		);
 
 		let c = await new C;
+
 		assertEquals(await c.var, 10);
 		assertEquals(await c.get_twice_var(), 20);
-		delete c.this;
 
+		c.var = 12;
+		assertEquals(await c.var, 12);
+		assertEquals(await c.get_twice_var(), 24);
+
+		c.a.b.cc = [true];
+		c.a.bb = [true];
+		assertEquals(await c.a, {b: {cc: [true]}, bb: [true]});
+
+		assertEquals(await c.for_c2.key.twice(3), 6);
+
+		delete c.this;
 		await exit();
 	}
 );
