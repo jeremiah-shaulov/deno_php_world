@@ -68,6 +68,8 @@ await exit();
 
 At the end of Deno script, it's nice to call `exit()`. This function terminates the interpreter, and frees all the resources. After this function called, the `php_world` can be used again, and a new instance of the interpreter will be spawned. It's OK to call `exit()` several times.
 
+If function's result is not awaited-for, the function will work in the background, and if it throws exception, this exception will come out on next operation awaiting.
+
 ### Global constants
 
 Constant's value must be awaited-for.

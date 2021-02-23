@@ -265,36 +265,28 @@ export class PhpInterpreter
 												{	if (args.length != 1)
 													{	throw new Error('Invalid number of arguments to eval()');
 													}
-													return Object.defineProperties
-													(	{	php,
-															promise: undefined as Promise<any>|undefined,
-															path_str: JSON.stringify(args[0])
-														},
-														{	this:
-															{	get()
-																{	return this.php.write(REC_CALL_EVAL_THIS, this.path_str).then(() => this.php.read()).then((h_inst: any) => construct(this.php, h_inst|0));
-																}
-															},
-															then:
-															{	get()
-																{	if (!this.promise) this.promise = this.php.write(REC_CALL_EVAL, this.path_str).then(() => this.php.read());
-																	return (y: any, n: any) => this.promise!.then(y, n);
-																}
-															},
-															catch:
-															{	get()
-																{	if (!this.promise) this.promise = this.php.write(REC_CALL_EVAL, this.path_str).then(() => this.php.read());
-																	return (y: any, n: any) => this.promise!.catch(y, n);
-																}
-															},
-															finally:
-															{	get()
-																{	if (!this.promise) this.promise = this.php.write(REC_CALL_EVAL, this.path_str).then(() => this.php.read());
-																	return (y: any, n: any) => this.promise!.finally(y, n);
-																}
+													let path_str = JSON.stringify(args[0]);
+													let is_this = false;
+													php.ongoing = php.ongoing.then
+													(	async () =>
+														{	if (!is_this)
+															{	await php.do_write(REC_CALL_EVAL, path_str);
+																return await php.do_read();
 															}
 														}
 													);
+													Object.defineProperty
+													(	php.ongoing,
+														'this',
+														{	async get()
+															{	is_this = true;
+																await php.write(REC_CALL_EVAL_THIS, path_str);
+																let h_inst = await php.read();
+																return construct(php, h_inst|0);
+															}
+														}
+													);
+													return php.ongoing;
 												};
 											case 'echo':
 												return async function(args)
@@ -336,53 +328,45 @@ export class PhpInterpreter
 										}
 									}
 								}
+								let path_str = '';
+								if (!is_class)
+								{	// case: A\B\c()
+									path_str = path.join('\\');
+								}
+								else if (path.length > 1)
+								{	// case: A\B::c()
+									path_str = path.slice(0, -1).join('\\')+'::'+path[path.length-1];
+								}
+								else
+								{	// case: ClassName
+									throw new Error(`Invalid class name usage: ${path[0]}`);
+								}
 								return function(args)
-								{	let path_str = '';
-									if (!is_class)
-									{	// case: A\B\c()
-										path_str = path.join('\\');
-									}
-									else if (path.length > 1)
-									{	// case: A\B::c()
-										path_str = path.slice(0, -1).join('\\')+'::'+path[path.length-1];
-									}
-									else
-									{	// case: ClassName
-										throw new Error(`Invalid class name usage: ${path[0]}`);
-									}
+								{	let path_str_2 = path_str;
 									if (args.length != 0)
-									{	path_str += ' '+JSON.stringify([...args]);
+									{	path_str_2 += ' '+JSON.stringify([...args]);
 									}
-									return Object.defineProperties
-									(	{	php,
-											promise: undefined as Promise<any>|undefined,
-											path_str
-										},
-										{	this:
-											{	get()
-												{	return this.php.write(REC_CALL_THIS, this.path_str).then(() => this.php.read()).then((h_inst: any) => construct(this.php, h_inst|0));
-												}
-											},
-											then:
-											{	get()
-												{	if (!this.promise) this.promise = this.php.write(REC_CALL, this.path_str).then(() => this.php.read());
-													return (y: any, n: any) => this.promise!.then(y, n);
-												}
-											},
-											catch:
-											{	get()
-												{	if (!this.promise) this.promise = this.php.write(REC_CALL, this.path_str).then(() => this.php.read());
-													return (n: any) => this.promise!.catch(n);
-												}
-											},
-											finally:
-											{	get()
-												{	if (!this.promise) this.promise = this.php.write(REC_CALL, this.path_str).then(() => this.php.read());
-													return (y: any) => this.promise!.finally(y);
-												}
+									let is_this = false;
+									php.ongoing = php.ongoing.then
+									(	async () =>
+										{	if (!is_this)
+											{	await php.do_write(REC_CALL, path_str_2);
+												return await php.do_read();
 											}
 										}
 									);
+									Object.defineProperty
+									(	php.ongoing,
+										'this',
+										{	async get()
+											{	is_this = true;
+												await php.write(REC_CALL_THIS, path_str_2);
+												let h_inst = await php.read();
+												return construct(php, h_inst|0);
+											}
+										}
+									);
+									return php.ongoing;
 								};
 							},
 
@@ -524,11 +508,7 @@ export class PhpInterpreter
 		// 3. Generate random key
 		let key = await get_random_key();
 		// 4. Send the HELO packet with opened socket address and the key
-		let helo = this.encoder.encode('01230123'+JSON.stringify([php_socket, key]));
-		let len = new DataView(helo.buffer);
-		len.setInt32(0, REC_HELO);
-		len.setInt32(4, helo.length - 8);
-		await Deno.writeAll(this.proc!.stdin!, helo);
+		this.do_write(REC_HELO, JSON.stringify([php_socket, key]));
 		// 5. Accept connection from the interpreter. Identify it by the key.
 		while (true)
 		{	this.commands_io = await this.socket.accept();
@@ -548,22 +528,30 @@ export class PhpInterpreter
 	}
 
 	private write(record_type: number, str: string)
-	{	let body = this.encoder.encode('01230123'+str);
-		let len = new DataView(body.buffer);
-		len.setInt32(0, record_type);
-		len.setInt32(4, body.length - 8);
-		if (!this.commands_io && !this.is_initing)
-		{	this.is_initing = true;
-			let ongoing = this.ongoing;
-			this.ongoing = this.init().then(() => ongoing);
-		}
-		this.ongoing = this.ongoing.then(() => Deno.writeAll(this.proc!.stdin!, body));
+	{	this.ongoing = this.ongoing.then(() => this.do_write(record_type, str));
 		return this.ongoing;
 	}
 
 	private read(): Promise<any>
 	{	this.ongoing = this.ongoing.then(() => this.do_read());
 		return this.ongoing;
+	}
+
+	exit()
+	{	this.ongoing = this.ongoing.then(() => this.do_exit());
+		return this.ongoing;
+	}
+
+	private async do_write(record_type: number, str: string)
+	{	let body = this.encoder.encode('01230123'+str);
+		let len = new DataView(body.buffer);
+		len.setInt32(0, record_type);
+		len.setInt32(4, body.length - 8);
+		if (!this.commands_io && !this.is_initing)
+		{	this.is_initing = true;
+			await this.init();
+		}
+		await Deno.writeAll(this.proc!.stdin!, body);
 	}
 
 	private async do_read(): Promise<any>
@@ -595,11 +583,6 @@ export class PhpInterpreter
 		return JSON.parse(this.decoder.decode(buffer));
 	}
 
-	exit()
-	{	this.ongoing = this.ongoing.then(() => this.do_exit());
-		return this.ongoing;
-	}
-
 	private async do_exit()
 	{	this.proc?.stdin!.close();
 		await this.proc?.status();
@@ -623,7 +606,7 @@ function get_proxy
 	get_getter: (path: string[]) => () => Promise<any>,
 	get_setter: (path: string[]) => (prop_name: string, value: any) => boolean,
 	get_deleter: (path: string[]) => (prop_name: string) => boolean,
-	get_applier: (path: string[]) => (args: IArguments) => any,
+	get_applier: (path: string[]) => (args: IArguments) => Promise<any>,
 	get_constructor: (path: string[]) => (args: IArguments) => Promise<any>
 ): any
 {	let promise: Promise<any> | undefined;

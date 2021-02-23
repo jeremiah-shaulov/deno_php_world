@@ -284,3 +284,31 @@ Deno.test
 		await g.exit();
 	}
 );
+
+Deno.test
+(	'Async',
+	async () =>
+	{	await php_eval
+		(	`	class C
+				{	static int $v = 1;
+					static int $v2 = 1;
+
+					static function mul_add(int $mul)
+					{	self::$v *= $mul;
+						self::$v += self::$v2;
+					}
+				}
+			`
+		);
+
+		C.$v2 = 3;
+		C.mul_add(2); // 1*2 + 3 = 5
+		C.$v2 = 2;
+		C.mul_add(3); // = 5*3 + 2 = 17
+		C.$v2 = 4;
+		assertEquals(await C.$v, 17);
+		assertEquals(await C.$v2, 4);
+
+		await g.exit();
+	}
+);
