@@ -169,8 +169,6 @@ class _PhpDenoBridge extends Exception
 
 	public static function main()
 	{	global $argc, $argv;
-		$argc = $_SERVER['argc'];
-		$argv = $_SERVER['argv'];
 		// Install error handler, that converts E_ERROR to Exception
 		self::$error_reporting = error_reporting(); // determine reporting level set by user
 		set_error_handler(__CLASS__.'::error_handler', self::$error_reporting);

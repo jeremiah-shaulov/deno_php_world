@@ -93,9 +93,9 @@ export class PhpInterpreter
 						(	[prop_name],
 
 							// get
-							async path =>
-							{	let path_str;
-								let record_type;
+							path =>
+							{	let path_str = '';
+								let record_type = 0;
 								if (!is_class)
 								{	// case: A\B\C
 									// or case: $var
@@ -144,62 +144,76 @@ export class PhpInterpreter
 										record_type = REC_CLASSSTATIC_GET;
 									}
 								}
-								await php.write(record_type, path_str);
-								return await php.read();
+								return async function()
+								{	await php.write(record_type, path_str);
+									return await php.read();
+								};
 							},
 
 							// set
-							(path, value) =>
-							{	assert(path.length > 1);
-								let path_str;
-								let record_type;
-								if (!is_class)
+							path =>
+							{	if (!is_class)
 								{	// case: $var['a']['b']
 									if (path[0].charAt(0) != '$')
 									{	throw new Error(`Cannot set this object: ${path.join('.')}`);
 									}
-									path_str = path[0].slice(1); // cut '$'
+									let path_str = path[0].slice(1); // cut '$'
 									if (path_str.indexOf(' ') != -1)
 									{	throw new Error(`Variable name must not contain spaces: $${path_str}`);
 									}
-									path_str += ' '+JSON.stringify([path.slice(1), value]);
-									record_type = REC_SET_PATH;
+									path_str += ' ';
+									let path_2 = path.slice(1).concat(['']);
+									return function(prop_name, value)
+									{	path_2[path_2.length-1] = prop_name;
+										php.write(REC_SET_PATH, path_str+JSON.stringify([path_2, value]));
+										return true;
+									};
 								}
 								else
 								{	// case: A\B::$c
 									// or case: A\B::$c['d']['e']
 									let var_i = path.findIndex(p => p.charAt(0) == '$');
-									if (var_i <= 0)
+									if (var_i == 0)
 									{	throw new Error(`Cannot set this object: ${path.join('.')}`);
 									}
-									path_str = path.slice(0, var_i).join('\\');
+									if (var_i == -1)
+									{	var_i = path.length; // prop_name (see below) must be a var name
+									}
+									let path_str = path.slice(0, var_i).join('\\');
 									if (RE_BAD_CLASSNAME_FOR_EVAL.test(path_str))
 									{	throw new Error(`Cannot use such class name: ${path_str}`);
 									}
-									if (path[var_i].indexOf(' ') != -1)
-									{	throw new Error(`Variable name must not contain spaces: ${path[var_i]}`);
-									}
-									path_str += ' '+path[var_i].slice(1); // cut '$'
-									if (var_i+1 >= path.length)
-									{	if (value != null)
-										{	path_str += ' '+JSON.stringify(value);
+									path_str += ' ';
+									let path_2 = path.concat(['']);
+									return function(prop_name, value)
+									{	path_2[path_2.length-1] = prop_name;
+										if (path_2[var_i].indexOf(' ') != -1)
+										{	throw new Error(`Variable name must not contain spaces: ${path_2[var_i]}`);
 										}
-										record_type = REC_CLASSSTATIC_SET;
-									}
-									else
-									{	path_str += ' '+JSON.stringify([path.slice(var_i+1), value]);
-										record_type = REC_CLASSSTATIC_SET_PATH;
-									}
+										let path_str_2 = path_str+path_2[var_i].slice(1); // cut '$'
+										if (var_i >= path_2.length-1)
+										{	if (prop_name.charAt(0) != '$')
+											{	throw new Error(`Cannot set this object: ${path_2.join('.')}`);
+											}
+											if (value != null)
+											{	path_str_2 += ' '+JSON.stringify(value);
+											}
+											php.write(REC_CLASSSTATIC_SET, path_str_2);
+										}
+										else
+										{	path_str_2 += ' '+JSON.stringify([path_2.slice(var_i+1), value]);
+											php.write(REC_CLASSSTATIC_SET_PATH, path_str_2);
+										}
+										return true;
+									};
 								}
-								php.write(record_type, path_str);
-								return true;
 							},
 
 							// deleteProperty
 							path =>
-							{	assert(path.length > 1);
-								let path_str;
-								let record_type;
+							{	let path_str = '';
+								let record_type = 0;
+								let var_i = 0;
 								if (!is_class)
 								{	// case: $var['a']['b']
 									if (path[0].charAt(0) != '$')
@@ -209,13 +223,12 @@ export class PhpInterpreter
 									if (path_str.indexOf(' ') != -1)
 									{	throw new Error(`Variable name must not contain spaces: $${path_str}`);
 									}
-									path_str += ' '+JSON.stringify(path.slice(1));
 									record_type = REC_UNSET;
 								}
 								else
 								{	// case: A\B::$c['d']['e']
-									let var_i = path.findIndex(p => p.charAt(0) == '$');
-									if (var_i<=0 || var_i==path.length-1)
+									var_i = path.findIndex(p => p.charAt(0) == '$');
+									if (var_i <= 0)
 									{	throw new Error(`Cannot unset this object: ${path.join('.')}`);
 									}
 									path_str = path.slice(0, var_i).join('\\');
@@ -226,127 +239,161 @@ export class PhpInterpreter
 									{	throw new Error(`Variable name must not contain spaces: ${path[var_i]}`);
 									}
 									path_str += ' '+path[var_i].slice(1); // cut '$'
-									path_str += ' '+JSON.stringify(path.slice(var_i+1));
 									record_type = REC_CLASSSTATIC_UNSET;
 								}
-								php.write(record_type, path_str);
-								return true;
+								path_str += ' ';
+								let path_2 = path.slice(var_i+1).concat(['']);
+								return function(prop_name)
+								{	path_2[path_2.length-1] = prop_name;
+									php.write(record_type, path_str+JSON.stringify(path_2));
+									return true;
+								};
 							},
 
 							// apply
-							(path, args) =>
-							{	// case: function
-								let path_str = '';
-								let record_type = REC_CALL;
-								if (!is_class)
+							path =>
+							{	if (!is_class)
 								{	if (path.length == 1)
 									{	// case: func_name()
-										path_str = path[0];
-										switch (path_str.toLowerCase())
+										switch (path[0].toLowerCase())
 										{	case 'exit':
-												return php.exit();
+												return async function()
+												{	return await php.exit();
+												};
 											case 'eval':
-												if (args.length != 1)
-												{	throw new Error('Invalid number of arguments to eval()');
-												}
-												path_str = JSON.stringify(args[0]);
-												record_type = REC_CALL_EVAL;
-												break;
+												return function(args)
+												{	if (args.length != 1)
+													{	throw new Error('Invalid number of arguments to eval()');
+													}
+													return Object.defineProperties
+													(	{	php,
+															promise: undefined as Promise<any>|undefined,
+															path_str: JSON.stringify(args[0])
+														},
+														{	this:
+															{	get()
+																{	return this.php.write(REC_CALL_EVAL_THIS, this.path_str).then(() => this.php.read()).then((h_inst: any) => construct(this.php, h_inst|0));
+																}
+															},
+															then:
+															{	get()
+																{	if (!this.promise) this.promise = this.php.write(REC_CALL_EVAL, this.path_str).then(() => this.php.read());
+																	return (y: any, n: any) => this.promise!.then(y, n);
+																}
+															},
+															catch:
+															{	get()
+																{	if (!this.promise) this.promise = this.php.write(REC_CALL_EVAL, this.path_str).then(() => this.php.read());
+																	return (y: any, n: any) => this.promise!.catch(y, n);
+																}
+															},
+															finally:
+															{	get()
+																{	if (!this.promise) this.promise = this.php.write(REC_CALL_EVAL, this.path_str).then(() => this.php.read());
+																	return (y: any, n: any) => this.promise!.finally(y, n);
+																}
+															}
+														}
+													);
+												};
 											case 'echo':
-												path_str = JSON.stringify([...args]);
-												record_type = REC_CALL_ECHO;
-												break;
+												return async function(args)
+												{	await php.write(REC_CALL_ECHO, JSON.stringify([...args]));
+													return await php.read();
+												};
 											case 'include':
-												if (args.length != 1)
-												{	throw new Error('Invalid number of arguments to include()');
-												}
-												path_str = JSON.stringify(args[0]);
-												record_type = REC_CALL_INCLUDE;
-												break;
+												return async function(args)
+												{	if (args.length != 1)
+													{	throw new Error('Invalid number of arguments to include()');
+													}
+													await php.write(REC_CALL_INCLUDE, JSON.stringify(args[0]));
+													return await php.read();
+												};
 											case 'include_once':
-												if (args.length != 1)
-												{	throw new Error('Invalid number of arguments to include_once()');
-												}
-												path_str = JSON.stringify(args[0]);
-												record_type = REC_CALL_INCLUDE_ONCE;
-												break;
+												return async function(args)
+												{	if (args.length != 1)
+													{	throw new Error('Invalid number of arguments to include_once()');
+													}
+													await php.write(REC_CALL_INCLUDE_ONCE, JSON.stringify(args[0]));
+													return await php.read();
+												};
 											case 'require':
-												if (args.length != 1)
-												{	throw new Error('Invalid number of arguments to require()');
-												}
-												path_str = JSON.stringify(args[0]);
-												record_type = REC_CALL_REQUIRE;
-												break;
+												return async function(args)
+												{	if (args.length != 1)
+													{	throw new Error('Invalid number of arguments to require()');
+													}
+													await php.write(REC_CALL_REQUIRE, JSON.stringify(args[0]));
+													return await php.read();
+												};
 											case 'require_once':
-												if (args.length != 1)
-												{	throw new Error('Invalid number of arguments to require_once()');
-												}
-												path_str = JSON.stringify(args[0]);
-												record_type = REC_CALL_REQUIRE_ONCE;
-												break;
-											default:
-												if (args.length != 0)
-												{	path_str += ' '+JSON.stringify([...args]);
-												}
-										}
-									}
-									else
-									{	// case: A\B\c()
-										path_str = path.join('\\');
-										if (args.length != 0)
-										{	path_str += ' '+JSON.stringify([...args]);
+												return async function(args)
+												{	if (args.length != 1)
+													{	throw new Error('Invalid number of arguments to require_once()');
+													}
+													await php.write(REC_CALL_REQUIRE_ONCE, JSON.stringify(args[0]));
+													return await php.read();
+												};
 										}
 									}
 								}
-								else if (path.length > 1)
-								{	// case: A\B::c()
-									path_str = path.slice(0, -1).join('\\')+'::'+path[path.length-1];
+								return function(args)
+								{	let path_str = '';
+									if (!is_class)
+									{	// case: A\B\c()
+										path_str = path.join('\\');
+									}
+									else if (path.length > 1)
+									{	// case: A\B::c()
+										path_str = path.slice(0, -1).join('\\')+'::'+path[path.length-1];
+									}
+									else
+									{	// case: ClassName
+										throw new Error(`Invalid class name usage: ${path[0]}`);
+									}
 									if (args.length != 0)
 									{	path_str += ' '+JSON.stringify([...args]);
 									}
-								}
-								else
-								{	// case: ClassName
-									throw new Error(`Invalid class name usage: ${path[0]}`);
-								}
-								if (record_type!=REC_CALL && record_type!=REC_CALL_EVAL)
-								{	return php.write(record_type, path_str).then(() => php.read());
-								}
-								else
-								{	let promise: Promise<any>|undefined;
-									return new Proxy
-									(	php,
-										{	get(php, prop_name)
-											{	if (prop_name == 'this')
-												{	return php.write(record_type==REC_CALL_EVAL ? REC_CALL_EVAL_THIS : REC_CALL_THIS, path_str).then(() => php.read()).then(h_inst => construct(php, h_inst|0));
+									return Object.defineProperties
+									(	{	php,
+											promise: undefined as Promise<any>|undefined,
+											path_str
+										},
+										{	this:
+											{	get()
+												{	return this.php.write(REC_CALL_THIS, this.path_str).then(() => this.php.read()).then((h_inst: any) => construct(this.php, h_inst|0));
 												}
-												else if (prop_name == 'then')
-												{	if (!promise) promise = php.write(record_type, path_str).then(() => php.read());
-													return (y: any, n: any) => promise!.then(y, n);
+											},
+											then:
+											{	get()
+												{	if (!this.promise) this.promise = this.php.write(REC_CALL, this.path_str).then(() => this.php.read());
+													return (y: any, n: any) => this.promise!.then(y, n);
 												}
-												else if (prop_name == 'catch')
-												{	if (!promise) promise = php.write(record_type, path_str).then(() => php.read());
-													return (n: any) => promise!.catch(n);
+											},
+											catch:
+											{	get()
+												{	if (!this.promise) this.promise = this.php.write(REC_CALL, this.path_str).then(() => this.php.read());
+													return (n: any) => this.promise!.catch(n);
 												}
-												else if (prop_name == 'finally')
-												{	if (!promise) promise = php.write(record_type, path_str).then(() => php.read());
-													return (y: any) => promise!.finally(y);
-												}
-												else
-												{	throw new Error(`Result of function call must be awaited-for`);
+											},
+											finally:
+											{	get()
+												{	if (!this.promise) this.promise = this.php.write(REC_CALL, this.path_str).then(() => this.php.read());
+													return (y: any) => this.promise!.finally(y);
 												}
 											}
 										}
 									);
-								}
+								};
 							},
 
 							// construct
-							async (path, args) =>
+							path =>
 							{	let class_name = path.join('\\');
-								await php.write(REC_CONSTRUCT, args.length==0 ? class_name : class_name+' '+JSON.stringify([...args]));
-								let h_inst = (await php.read())|0;
-								return construct(php, h_inst);
+								return async function(args)
+								{	await php.write(REC_CONSTRUCT, args.length==0 ? class_name : class_name+' '+JSON.stringify([...args]));
+									let h_inst = (await php.read())|0;
+									return construct(php, h_inst);
+								};
 							}
 						);
 					},
@@ -573,29 +620,37 @@ export class PhpInterpreter
 
 function get_proxy
 (	path: string[],
-	get: (path: string[]) => Promise<any>,
-	set: (path: string[], value: any) => boolean,
-	deleteProperty: (path: string[]) => boolean,
-	apply: (path: string[], args: IArguments) => any,
-	construct: (path: string[], args: IArguments) => Promise<any>
+	get_getter: (path: string[]) => () => Promise<any>,
+	get_setter: (path: string[]) => (prop_name: string, value: any) => boolean,
+	get_deleter: (path: string[]) => (prop_name: string) => boolean,
+	get_applier: (path: string[]) => (args: IArguments) => any,
+	get_constructor: (path: string[]) => (args: IArguments) => Promise<any>
 ): any
-{	return new Proxy
+{	let promise: Promise<any> | undefined;
+	let getter: (() => Promise<any>) | undefined;
+	let setter: ((prop_name: string, value: any) => boolean) | undefined;
+	let deleter: ((prop_name: string) => boolean) | undefined;
+	let applier: ((args: IArguments) => any) | undefined;
+	let constructor: ((args: IArguments) => Promise<any>) | undefined;
+	return new Proxy
 	(	function() {}, // if this is not a function, construct() and apply() will throw error
 		{	get(_, prop_name)
-			{	let promise: Promise<any>|undefined;
+			{	if (!getter)
+				{	getter = get_getter(path);
+				}
 				if (prop_name == 'then')
 				{	// case: await path
-					if (!promise) promise = get(path);
+					if (!promise) promise = getter();
 					return (y: any, n: any) => promise!.then(y, n);
 				}
 				else if (prop_name == 'catch')
 				{	// case: await path
-					if (!promise) promise = get(path);
+					if (!promise) promise = getter();
 					return (n: any) => promise!.catch(n);
 				}
 				else if (prop_name == 'finally')
 				{	// case: await path
-					if (!promise) promise = get(path);
+					if (!promise) promise = getter();
 					return (y: any) => promise!.finally(y);
 				}
 				else if (typeof(prop_name) != 'string')
@@ -604,7 +659,7 @@ function get_proxy
 				}
 				else
 				{	// case: path.prop_name
-					return get_proxy(path.concat([prop_name]), get, set, deleteProperty, apply, construct);
+					return get_proxy(path.concat([prop_name]), get_getter, get_setter, get_deleter, get_applier, get_constructor);
 				}
 			},
 			set(_, prop_name, value) // set static class variable
@@ -612,21 +667,33 @@ function get_proxy
 				if (typeof(prop_name) != 'string')
 				{	throw new Error('Cannot use such object like this');
 				}
-				return set(path.concat([prop_name]), value);
+				if (!setter)
+				{	setter = get_setter(path);
+				}
+				return setter(prop_name, value);
 			},
 			deleteProperty(_, prop_name)
 			{	if (typeof(prop_name) != 'string')
 				{	throw new Error('Cannot use such object like this');
 				}
-				return deleteProperty(path.concat([prop_name]));
+				if (!deleter)
+				{	deleter = get_deleter(path);
+				}
+				return deleter(prop_name);
 			},
 			apply(_, proxy, args)
 			{	// case: path(args)
-				return apply(path, args);
+				if (!applier)
+				{	applier = get_applier(path);
+				}
+				return applier(args);
 			},
 			construct(_, args) // new Class
 			{	// case: new path
-				return construct(path, args);
+				if (!constructor)
+				{	constructor = get_constructor(path);
+				}
+				return constructor(args);
 			}
 		}
 	);

@@ -45,8 +45,8 @@ Deno.test
 	async () =>
 	{	await ob_start();
 		await echo('A');
-		await echo('B');
-		assertEquals(await ob_get_clean(), 'AB');
+		await echo('B', 'C');
+		assertEquals(await ob_get_clean(), 'ABC');
 		await exit();
 	}
 );
