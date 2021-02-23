@@ -267,7 +267,7 @@ export class PhpInterpreter
 													}
 													let path_str = JSON.stringify(args[0]);
 													let is_this = false;
-													php.ongoing = php.ongoing.then
+													let promise = php.schedule
 													(	async () =>
 														{	if (!is_this)
 															{	await php.do_write(REC_CALL_EVAL, path_str);
@@ -276,7 +276,7 @@ export class PhpInterpreter
 														}
 													);
 													Object.defineProperty
-													(	php.ongoing,
+													(	promise,
 														'this',
 														{	async get()
 															{	is_this = true;
@@ -286,7 +286,7 @@ export class PhpInterpreter
 															}
 														}
 													);
-													return php.ongoing;
+													return promise;
 												};
 											case 'echo':
 												return async function(args)
@@ -347,7 +347,7 @@ export class PhpInterpreter
 									{	path_str_2 += ' '+JSON.stringify([...args]);
 									}
 									let is_this = false;
-									php.ongoing = php.ongoing.then
+									let promise = php.schedule
 									(	async () =>
 										{	if (!is_this)
 											{	await php.do_write(REC_CALL, path_str_2);
@@ -356,7 +356,7 @@ export class PhpInterpreter
 										}
 									);
 									Object.defineProperty
-									(	php.ongoing,
+									(	promise,
 										'this',
 										{	async get()
 											{	is_this = true;
@@ -366,7 +366,7 @@ export class PhpInterpreter
 											}
 										}
 									);
-									return php.ongoing;
+									return promise;
 								};
 							},
 
@@ -527,19 +527,31 @@ export class PhpInterpreter
 		this.is_initing = false;
 	}
 
-	private write(record_type: number, str: string)
-	{	this.ongoing = this.ongoing.then(() => this.do_write(record_type, str));
+	private schedule(callback: () => any)
+	{	this.ongoing = this.ongoing.then
+		(	callback,
+			error =>
+			{	try
+				{	callback();
+				}
+				catch (e)
+				{	throw error; // TODO: ...
+				}
+			}
+		);
 		return this.ongoing;
+	}
+
+	private write(record_type: number, str: string)
+	{	return this.schedule(() => this.do_write(record_type, str));
 	}
 
 	private read(): Promise<any>
-	{	this.ongoing = this.ongoing.then(() => this.do_read());
-		return this.ongoing;
+	{	return this.schedule(() => this.do_read());
 	}
 
 	exit()
-	{	this.ongoing = this.ongoing.then(() => this.do_exit());
-		return this.ongoing;
+	{	return this.schedule(() => this.do_exit());
 	}
 
 	private async do_write(record_type: number, str: string)
