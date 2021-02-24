@@ -369,3 +369,95 @@ await g.exit();
 await int_1.g.exit();
 await int_2.g.exit();
 ```
+
+### How fast is deno_world?
+
+`deno_world` spawns a background PHP process, and uses it to execute PHP operations. Every operation, like function call, or getting or setting a variable, sends requests to the PHP process and awaits for responses.
+
+First of all, spawning takes time, but it happens once (or several times if your application calls `g.exet()` to terminate the interpreter, and then uses the interpreter again). Then every request to execute an operation, not only executes it, but implies many other operations.
+
+What price you pay depends on operation weight. Executing many lightweight operations implies much overhead. And vise versa, if calling PHP functions that do a lot of work, the commission will be negligible.
+
+Understanding this, lets measure the overhead of average `deno_world` API call.
+
+How much time takes to call the following function in PHP?
+
+```php
+function dec()
+{	global $n;
+	return $n--;
+}
+```
+Let's use this time as a measuring unit, and measure how slower is `deno_world` over native PHP.
+
+```ts
+import {g} from 'https://deno.land/x/php_world/mod.ts';
+
+await g.eval
+(	`	function dec()
+		{	global $n;
+			return $n--;
+		}
+
+		function php_measure_time_per_million_ops(int $bench_times)
+		{	global $n;
+			$n = $bench_times;
+			$start_time = microtime(true);
+			while (dec());
+			return (microtime(true) - $start_time) * 1_000_000 / $bench_times;
+		}
+	`
+);
+
+let {php_measure_time_per_million_ops, dec} = g;
+
+async function deno_measure_time_per_million_ops(bench_times: number)
+{	g.$n = bench_times;
+	let start_time = Date.now() / 1000;
+	while (await dec());
+	return (Date.now()/1000 - start_time) * 1_000_000 / bench_times;
+}
+
+let php_native_time = await php_measure_time_per_million_ops(10_000_000);
+console.log(`PHP native per million ops: ${php_native_time} sec`);
+
+let api_time = await deno_measure_time_per_million_ops(100_000);
+console.log(`API per million ops: ${api_time} sec (${Math.round(api_time/php_native_time)} times slower)`);
+```
+On my computer i get the following result:
+
+```
+PHP native per million ops: 0.6503312110900878 sec
+API per million ops: 67.59000062942505 sec (104 times slower)
+```
+This is for the most elementary operation that we can measure. What if this operation would be heavier?
+
+```php
+function dec()
+{	global $n, $v;
+	$v = !$v ? str_repeat('-', 256) : substr(base64_encode($v), 0, 256);
+	return $n--;
+}
+```
+This benchmark takes more time, so i reduce the number of tests to 1_000_000 for PHP-native, and to 100_000 for API. The results on my computer are these:
+
+```
+PHP native per million ops: 2.2854011058807373 sec
+API per million ops: 72.03999996185303 sec (32 times slower)
+```
+
+And for a some slower operation?
+
+```php
+function dec()
+{	global $n, $v;
+	$v = !$v ? str_repeat('-', 25600) : substr(base64_encode($v), 0, 25600);
+	return $n--;
+}
+```
+Results:
+
+```
+PHP native per million ops: 41.54288053512573 sec
+API per million ops: 118.94999980926514 sec (3 times slower)
+```

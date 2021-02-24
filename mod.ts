@@ -640,20 +640,25 @@ export class PhpInterpreter
 	}
 }
 
+type ProxyGetterForPath = () => Promise<any>;
+type ProxySetterForPath = (prop_name: string, value: any) => boolean;
+type ProxyDeleterForPath = (prop_name: string) => boolean;
+type ProxyApplierForPath = (args: IArguments) => Promise<any>;
+
 function get_proxy
 (	path: string[],
-	get_getter: (path: string[]) => ((() => (Promise<any>)) | undefined),
-	get_setter: (path: string[]) => (prop_name: string, value: any) => boolean,
-	get_deleter: (path: string[]) => (prop_name: string) => boolean,
-	get_applier: (path: string[]) => (args: IArguments) => Promise<any>,
-	get_constructor: (path: string[]) => (args: IArguments) => Promise<any>
+	get_getter: (path: string[]) => ProxyGetterForPath|undefined,
+	get_setter: (path: string[]) => ProxySetterForPath,
+	get_deleter: (path: string[]) => ProxyDeleterForPath,
+	get_applier: (path: string[]) => ProxyApplierForPath,
+	get_constructor: (path: string[]) => ProxyApplierForPath
 ): any
 {	let promise: Promise<any> | undefined;
-	let getter: (() => Promise<any> | undefined) | undefined;
-	let setter: ((prop_name: string, value: any) => boolean) | undefined;
-	let deleter: ((prop_name: string) => boolean) | undefined;
-	let applier: ((args: IArguments) => any) | undefined;
-	let constructor: ((args: IArguments) => Promise<any>) | undefined;
+	let getter: ProxyGetterForPath | undefined;
+	let setter: ProxySetterForPath | undefined;
+	let deleter: ProxyDeleterForPath | undefined;
+	let applier: ProxyApplierForPath | undefined;
+	let constructor: ProxyApplierForPath | undefined;
 	return new Proxy
 	(	function() {}, // if this is not a function, construct() and apply() will throw error
 		{	get(_, prop_name)
