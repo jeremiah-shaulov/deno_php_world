@@ -240,6 +240,28 @@ delete ex.this;
 
 At last, the object must be deleted. This doesn't necessarily destroys the object on PHP side, but it stops holding the handler to the object.
 
+### Get variables as objects
+
+In the same fashion, it's possible to get an object-handler to a variable.
+
+```ts
+import {g, c} from 'https://deno.land/x/php_world/mod.ts';
+
+await g.eval
+(	`	function init()
+		{	global $e;
+			$e = new Exception('The message');
+		}
+	`
+);
+await g.init();
+
+let ex = await g.$e.this;
+console.log(await ex.getMessage()); // prints 'The message'
+delete ex.this;
+```
+In this example, i use function `init()` to create a global variable. Just setting a variable inside `eval()` doesn't make it global.
+
 ### Namespaces
 
 ```ts

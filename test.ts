@@ -287,6 +287,63 @@ Deno.test
 );
 
 Deno.test
+(	'Object from var',
+	async () =>
+	{	await php_eval
+		(	`	function init()
+				{	global $e, $arr;
+
+					$e = new Exception('The e');
+					$arr[0] = new Exception('The e2');
+
+					C::$e = $e;
+					C::$arr = $arr;
+				}
+
+				class C
+				{	static $e;
+					static $arr;
+
+					public $prop_e;
+					public $prop_arr;
+
+					function __construct()
+					{	$this->prop_e = self::$e;
+						$this->prop_arr = self::$arr;
+					}
+				}
+			`
+		);
+
+		g.init();
+
+		let ex = await g.$e.this;
+		assertEquals(await ex.getMessage(), 'The e');
+		delete ex.this;
+
+		ex = await g.$arr[0].this;
+		assertEquals(await ex.getMessage(), 'The e2');
+		delete ex.this;
+
+		ex = await C.$e.this;
+		assertEquals(await ex.getMessage(), 'The e');
+		delete ex.this;
+
+		ex = await C.$arr[0].this;
+		assertEquals(await ex.getMessage(), 'The e2');
+		delete ex.this;
+
+		let obj = await new C;
+		ex = await obj.prop_e.this;
+		assertEquals(await ex.getMessage(), 'The e');
+		delete obj.this;
+		delete ex.this;
+
+		await g.exit();
+	}
+);
+
+Deno.test
 (	'Unset',
 	async () =>
 	{	await php_eval

@@ -9,32 +9,35 @@ const DEBUG_PHP_INIT = false;
 const REC_HELO = 0;
 const REC_CONST = 1;
 const REC_GET = 2;
-const REC_SET = 3;
-const REC_SET_PATH = 4;
-const REC_UNSET = 5;
-const REC_UNSET_PATH = 6;
-const REC_CLASSSTATIC_GET = 7;
-const REC_CLASSSTATIC_SET = 8;
-const REC_CLASSSTATIC_SET_PATH = 9;
-const REC_CLASSSTATIC_UNSET = 10;
-const REC_CONSTRUCT = 11;
-const REC_DESTRUCT = 12;
-const REC_CLASS_GET = 13;
-const REC_CLASS_SET = 14;
-const REC_CLASS_SET_PATH = 15;
-const REC_CLASS_UNSET = 16;
-const REC_CLASS_UNSET_PATH = 17;
-const REC_CLASS_CALL = 18;
-const REC_CLASS_CALL_PATH = 19;
-const REC_CALL = 20;
-const REC_CALL_THIS = 21;
-const REC_CALL_EVAL = 22;
-const REC_CALL_EVAL_THIS = 23;
-const REC_CALL_ECHO = 24;
-const REC_CALL_INCLUDE = 25;
-const REC_CALL_INCLUDE_ONCE = 26;
-const REC_CALL_REQUIRE = 27;
-const REC_CALL_REQUIRE_ONCE = 28;
+const REC_GET_THIS = 3;
+const REC_SET = 4;
+const REC_SET_PATH = 5;
+const REC_UNSET = 6;
+const REC_UNSET_PATH = 7;
+const REC_CLASSSTATIC_GET = 8;
+const REC_CLASSSTATIC_GET_THIS = 9;
+const REC_CLASSSTATIC_SET = 10;
+const REC_CLASSSTATIC_SET_PATH = 11;
+const REC_CLASSSTATIC_UNSET = 12;
+const REC_CONSTRUCT = 13;
+const REC_DESTRUCT = 14;
+const REC_CLASS_GET = 15;
+const REC_CLASS_GET_THIS = 16;
+const REC_CLASS_SET = 17;
+const REC_CLASS_SET_PATH = 18;
+const REC_CLASS_UNSET = 19;
+const REC_CLASS_UNSET_PATH = 20;
+const REC_CLASS_CALL = 21;
+const REC_CLASS_CALL_PATH = 22;
+const REC_CALL = 23;
+const REC_CALL_THIS = 24;
+const REC_CALL_EVAL = 25;
+const REC_CALL_EVAL_THIS = 26;
+const REC_CALL_ECHO = 27;
+const REC_CALL_INCLUDE = 28;
+const REC_CALL_INCLUDE_ONCE = 29;
+const REC_CALL_REQUIRE = 30;
+const REC_CALL_REQUIRE_ONCE = 31;
 
 const RE_BAD_CLASSNAME_FOR_EVAL = /[^\w\\]/;
 
@@ -107,18 +110,26 @@ export class PhpInterpreter
 									// or case: $var['a']['b']
 									if (path[0].charAt(0) != '$')
 									{	// case: A\B\C
-										path_str = path.join('\\');
 										record_type = REC_CONST;
+										path_str = path.join('\\');
 									}
 									else
-									{	path_str = path[0].slice(1); // cut '$'
+									{	record_type = REC_GET;
+										path_str = path[0].slice(1); // cut '$'
 										if (path_str.indexOf(' ') != -1)
 										{	throw new Error(`Variable name must not contain spaces: $${path_str}`);
 										}
-										if (path.length > 1)
-										{	path_str += ' '+JSON.stringify(path.slice(1));
+										if (path.length >= 2)
+										{	if (path[path.length-1] != 'this')
+											{	path_str += ' '+JSON.stringify(path.slice(1));
+											}
+											else
+											{	record_type = REC_GET_THIS;
+												if (path.length >= 3)
+												{	path_str += ' '+JSON.stringify(path.slice(1, -1));
+												}
+											}
 										}
-										record_type = REC_GET;
 									}
 								}
 								else
@@ -128,14 +139,15 @@ export class PhpInterpreter
 									let var_i = path.findIndex(p => p.charAt(0) == '$');
 									if (var_i == -1)
 									{	// case: A\B::C
-										path_str = path.slice(0, -1).join('\\')+'::'+path[path.length-1];
 										record_type = REC_CONST;
+										path_str = path.slice(0, -1).join('\\')+'::'+path[path.length-1];
 									}
 									else if (var_i == 0)
 									{	throw new Error(`Invalid object usage: ${path.join('.')}`);
 									}
 									else
-									{	path_str = path.slice(0, var_i).join('\\');
+									{	record_type = REC_CLASSSTATIC_GET;
+										path_str = path.slice(0, var_i).join('\\');
 										if (path_str.indexOf(' ') != -1)
 										{	throw new Error(`Class/namespace names must not contain spaces: ${path_str}`);
 										}
@@ -144,15 +156,31 @@ export class PhpInterpreter
 										}
 										path_str += ' '+path[var_i].slice(1); // cut '$'
 										if (var_i+1 < path.length)
-										{	path_str += ' '+JSON.stringify(path.slice(var_i+1));
+										{	if (path[path.length-1] != 'this')
+											{	path_str += ' '+JSON.stringify(path.slice(var_i+1));
+											}
+											else
+											{	record_type = REC_CLASSSTATIC_GET_THIS;
+												if (var_i+2 < path.length)
+												{	path_str += ' '+JSON.stringify(path.slice(var_i+1, -1));
+												}
+											}
 										}
-										record_type = REC_CLASSSTATIC_GET;
 									}
 								}
-								return async function()
-								{	await php.write(record_type, path_str);
-									return await php.read();
-								};
+								if (record_type!=REC_GET_THIS && record_type!=REC_CLASSSTATIC_GET_THIS)
+								{	return async function()
+									{	await php.write(record_type, path_str);
+										return await php.read();
+									};
+								}
+								else
+								{	return async function()
+									{	await php.write(record_type, path_str);
+										let h_inst = await php.read();
+										return construct(php, h_inst|0);
+									};
+								}
 							},
 
 							// set
@@ -446,14 +474,32 @@ export class PhpInterpreter
 				{	if (path.length == 0)
 					{	return;
 					}
+					let record_type = REC_CLASS_GET;
 					let path_str = h_inst+' '+path[0];
-					if (path.length > 1)
-					{	path_str += ' '+JSON.stringify(path.slice(1));
+					if (path.length >= 2)
+					{	if (path[path.length-1] != 'this')
+						{	path_str += ' '+JSON.stringify(path.slice(1));
+						}
+						else
+						{	record_type = REC_CLASS_GET_THIS;
+							if (path.length >= 3)
+							{	path_str += ' '+JSON.stringify(path.slice(1, -1));
+							}
+						}
 					}
-					return async function()
-					{	await php.write(REC_CLASS_GET, path_str);
-						return await php.read();
-					};
+					if (record_type == REC_CLASS_GET)
+					{	return async function()
+						{	await php.write(REC_CLASS_GET, path_str);
+							return await php.read();
+						};
+					}
+					else
+					{	return async function()
+						{	await php.write(REC_CLASS_GET_THIS, path_str);
+							let h_inst = await php.read();
+							return construct(php, h_inst|0);
+						};
+					}
 				},
 
 				// set

@@ -5,32 +5,35 @@ class _PhpDenoBridge extends Exception
 {	private const REC_HELO = 0;
 	private const REC_CONST = 1;
 	private const REC_GET = 2;
-	private const REC_SET = 3;
-	private const REC_SET_PATH = 4;
-	private const REC_UNSET = 5;
-	private const REC_UNSET_PATH = 6;
-	private const REC_CLASSSTATIC_GET = 7;
-	private const REC_CLASSSTATIC_SET = 8;
-	private const REC_CLASSSTATIC_SET_PATH = 9;
-	private const REC_CLASSSTATIC_UNSET = 10;
-	private const REC_CONSTRUCT = 11;
-	private const REC_DESTRUCT = 12;
-	private const REC_CLASS_GET = 13;
-	private const REC_CLASS_SET = 14;
-	private const REC_CLASS_SET_PATH = 15;
-	private const REC_CLASS_UNSET = 16;
-	private const REC_CLASS_UNSET_PATH = 17;
-	private const REC_CLASS_CALL = 18;
-	private const REC_CLASS_CALL_PATH = 19;
-	private const REC_CALL = 20;
-	private const REC_CALL_THIS = 21;
-	private const REC_CALL_EVAL = 22;
-	private const REC_CALL_EVAL_THIS = 23;
-	private const REC_CALL_ECHO = 24;
-	private const REC_CALL_INCLUDE = 25;
-	private const REC_CALL_INCLUDE_ONCE = 26;
-	private const REC_CALL_REQUIRE = 27;
-	private const REC_CALL_REQUIRE_ONCE = 28;
+	private const REC_GET_THIS = 3;
+	private const REC_SET = 4;
+	private const REC_SET_PATH = 5;
+	private const REC_UNSET = 6;
+	private const REC_UNSET_PATH = 7;
+	private const REC_CLASSSTATIC_GET = 8;
+	private const REC_CLASSSTATIC_GET_THIS = 9;
+	private const REC_CLASSSTATIC_SET = 10;
+	private const REC_CLASSSTATIC_SET_PATH = 11;
+	private const REC_CLASSSTATIC_UNSET = 12;
+	private const REC_CONSTRUCT = 13;
+	private const REC_DESTRUCT = 14;
+	private const REC_CLASS_GET = 15;
+	private const REC_CLASS_GET_THIS = 16;
+	private const REC_CLASS_SET = 17;
+	private const REC_CLASS_SET_PATH = 18;
+	private const REC_CLASS_UNSET = 19;
+	private const REC_CLASS_UNSET_PATH = 20;
+	private const REC_CLASS_CALL = 21;
+	private const REC_CLASS_CALL_PATH = 22;
+	private const REC_CALL = 23;
+	private const REC_CALL_THIS = 24;
+	private const REC_CALL_EVAL = 25;
+	private const REC_CALL_EVAL_THIS = 26;
+	private const REC_CALL_ECHO = 27;
+	private const REC_CALL_INCLUDE = 28;
+	private const REC_CALL_INCLUDE_ONCE = 29;
+	private const REC_CALL_REQUIRE = 30;
+	private const REC_CALL_REQUIRE_ONCE = 31;
 
 	private static ?int $error_reporting = null;
 	private static array $insts = [];
@@ -225,6 +228,19 @@ class _PhpDenoBridge extends Exception
 							}
 						}
 						break;
+					case self::REC_GET_THIS:
+						$data = self::decode_ident_value($data, $prop_name);
+						if (array_key_exists($prop_name, $GLOBALS))
+						{	$result = $GLOBALS[$prop_name];
+							if ($data!==null and !self::follow_path($result, $data))
+							{	throw new Exception('Value is not set');
+							}
+							self::$insts[self::$inst_id_enum] = $result;
+							$result = self::$inst_id_enum++;
+							$result_is_set = true;
+							break;
+						}
+						throw new Exception('Value is not set');
 					case self::REC_SET:
 						$data = self::decode_ident_value($data, $prop_name);
 						$GLOBALS[$prop_name] = $data;
@@ -260,6 +276,16 @@ class _PhpDenoBridge extends Exception
 						{	$result_is_set = self::follow_path($result, $data);
 						}
 						break;
+					case self::REC_CLASSSTATIC_GET_THIS:
+						$data = self::decode_ident_ident_value($data, $class_name, $prop_name);
+						$result = self::get_reflection($class_name)->getStaticPropertyValue($prop_name);
+						if ($data!==null and !self::follow_path($result, $data))
+						{	throw new Exception('Value is not set');
+						}
+						self::$insts[self::$inst_id_enum] = $result;
+						$result = self::$inst_id_enum++;
+						$result_is_set = true;
+						break;
 					case self::REC_CLASSSTATIC_SET:
 						$data = self::decode_ident_ident_value($data, $class_name, $prop_name);
 						self::get_reflection($class_name)->setStaticPropertyValue($prop_name, $data);
@@ -285,17 +311,31 @@ class _PhpDenoBridge extends Exception
 						unset(self::$insts[$data]);
 						continue 2;
 					case self::REC_CLASS_GET:
-						$prop_name = self::decode_ident_ident($data, $inst_id);
+						$data = self::decode_ident_ident_value($data, $inst_id, $prop_name);
 						$result = self::$insts[$inst_id];
 						$result_is_set = isset($result->$prop_name) || property_exists($result, $prop_name);
 						if ($result_is_set)
 						{	try
 							{	$result = $result->$prop_name;
+								if ($data !== null)
+								{	$result_is_set = self::follow_path($result, $data);
+								}
 							}
 							catch (Throwable $e)
 							{	$result_is_set = false;
 							}
 						}
+						break;
+					case self::REC_CLASS_GET_THIS:
+						$data = self::decode_ident_ident_value($data, $inst_id, $prop_name);
+						$result = self::$insts[$inst_id];
+						$result = $result->$prop_name;
+						if ($data!==null and !self::follow_path($result, $data))
+						{	throw new Exception('Value is not set');
+						}
+						self::$insts[self::$inst_id_enum] = $result;
+						$result = self::$inst_id_enum++;
+						$result_is_set = true;
 						break;
 					case self::REC_CLASS_SET:
 						$data = self::decode_ident_ident_value($data, $inst_id, $prop_name);
