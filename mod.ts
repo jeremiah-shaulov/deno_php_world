@@ -102,34 +102,53 @@ export class PhpInterpreter
 
 							// get
 							path =>
-							{	let path_str = '';
-								let record_type = 0;
-								if (!is_class)
+							{	if (!is_class)
 								{	// case: A\B\C
 									// or case: $var
 									// or case: $var['a']['b']
-									if (path[0].charAt(0) != '$')
+									if (path.length == 0)
+									{	// case: C
+										// or case: $var
+										return async function(prop_name)
+										{	let record_type = REC_CONST;
+											let path_str = prop_name;
+											if (prop_name.charAt(0) == '$')
+											{	path_str = path_str.slice(1); // cut '$'
+												record_type = REC_GET;
+											}
+											await php.write(record_type, path_str);
+											return await php.read();
+										};
+									}
+									else if (path[0].charAt(0) != '$')
 									{	// case: A\B\C
-										record_type = REC_CONST;
-										path_str = path.join('\\');
+										let path_str = path.join('\\');
+										return async function(prop_name)
+										{	await php.write(REC_CONST, path_str+'\\'+prop_name);
+											return await php.read();
+										};
 									}
 									else
-									{	record_type = REC_GET;
-										path_str = path[0].slice(1); // cut '$'
+									{	let path_str = path[0].slice(1); // cut '$'
 										if (path_str.indexOf(' ') != -1)
 										{	throw new Error(`Variable name must not contain spaces: $${path_str}`);
 										}
-										if (path.length >= 2)
-										{	if (path[path.length-1] != 'this')
-											{	path_str += ' '+JSON.stringify(path.slice(1));
+										let path_2 = path.slice(1).concat(['']);
+										return async function(prop_name)
+										{	if (prop_name != 'this')
+											{	path_2[path_2.length-1] = prop_name;
+												await php.write(REC_GET, path_str+' '+JSON.stringify(path_2));
+												return await php.read();
 											}
 											else
-											{	record_type = REC_GET_THIS;
-												if (path.length >= 3)
-												{	path_str += ' '+JSON.stringify(path.slice(1, -1));
+											{	if (path_2.length >= 2)
+												{	path_str += ' '+JSON.stringify(path_2.slice(0, -1));
 												}
+												await php.write(REC_GET_THIS, path_str);
+												let h_inst = await php.read();
+												return construct(php, h_inst|0);
 											}
-										}
+										};
 									}
 								}
 								else
@@ -139,15 +158,35 @@ export class PhpInterpreter
 									let var_i = path.findIndex(p => p.charAt(0) == '$');
 									if (var_i == -1)
 									{	// case: A\B::C
-										record_type = REC_CONST;
-										path_str = path.slice(0, -1).join('\\')+'::'+path[path.length-1];
+										// or case: A\B::$c
+										let path_str = path.join('\\');
+										if (path_str.indexOf(' ') != -1)
+										{	throw new Error(`Class/namespace names must not contain spaces: ${path_str}`);
+										}
+										return async function(prop_name)
+										{	let record_type = REC_CONST;
+											let path_str_2 = path_str;
+											if (prop_name.charAt(0) != '$')
+											{	path_str_2 += '::'+prop_name;
+											}
+											else
+											{	record_type = REC_CLASSSTATIC_GET;
+												if (prop_name.indexOf(' ') != -1)
+												{	throw new Error(`Variable name must not contain spaces: ${path_str_2}::${prop_name}`);
+												}
+												path_str_2 += ' '+prop_name.slice(1); // cut '$'
+											}
+											await php.write(record_type, path_str_2);
+											return await php.read();
+										};
 									}
 									else if (var_i == 0)
 									{	throw new Error(`Invalid object usage: ${path.join('.')}`);
 									}
 									else
-									{	record_type = REC_CLASSSTATIC_GET;
-										path_str = path.slice(0, var_i).join('\\');
+									{	// case: A\B::$c (.this)
+										// or case: A\B::$c['d']['e']
+										let path_str = path.slice(0, var_i).join('\\');
 										if (path_str.indexOf(' ') != -1)
 										{	throw new Error(`Class/namespace names must not contain spaces: ${path_str}`);
 										}
@@ -155,31 +194,23 @@ export class PhpInterpreter
 										{	throw new Error(`Variable name must not contain spaces: ${path[var_i]}`);
 										}
 										path_str += ' '+path[var_i].slice(1); // cut '$'
-										if (var_i+1 < path.length)
-										{	if (path[path.length-1] != 'this')
-											{	path_str += ' '+JSON.stringify(path.slice(var_i+1));
+										let path_2 = path.slice(var_i+1).concat(['']);
+										return async function(prop_name)
+										{	if (prop_name != 'this')
+											{	path_2[path_2.length-1] = prop_name;
+												await php.write(REC_CLASSSTATIC_GET, path_str+' '+JSON.stringify(path_2));
+												return await php.read();
 											}
 											else
-											{	record_type = REC_CLASSSTATIC_GET_THIS;
-												if (var_i+2 < path.length)
-												{	path_str += ' '+JSON.stringify(path.slice(var_i+1, -1));
+											{	if (path_2.length >= 2)
+												{	path_str += ' '+JSON.stringify(path_2.slice(0, -1));
 												}
+												await php.write(REC_CLASSSTATIC_GET_THIS, path_str);
+												let h_inst = await php.read();
+												return construct(php, h_inst|0);
 											}
-										}
+										};
 									}
-								}
-								if (record_type!=REC_GET_THIS && record_type!=REC_CLASSSTATIC_GET_THIS)
-								{	return async function()
-									{	await php.write(record_type, path_str);
-										return await php.read();
-									};
-								}
-								else
-								{	return async function()
-									{	await php.write(record_type, path_str);
-										let h_inst = await php.read();
-										return construct(php, h_inst|0);
-									};
 								}
 							},
 
@@ -472,32 +503,32 @@ export class PhpInterpreter
 				// get
 				path =>
 				{	if (path.length == 0)
-					{	return;
-					}
-					let record_type = REC_CLASS_GET;
-					let path_str = h_inst+' '+path[0];
-					if (path.length >= 2)
-					{	if (path[path.length-1] != 'this')
-						{	path_str += ' '+JSON.stringify(path.slice(1));
-						}
-						else
-						{	record_type = REC_CLASS_GET_THIS;
-							if (path.length >= 3)
-							{	path_str += ' '+JSON.stringify(path.slice(1, -1));
+					{	let path_str = h_inst+' ';
+						return async function(prop_name)
+						{	if (prop_name.indexOf(' ') != -1)
+							{	throw new Error(`Property name must not contain spaces: $${prop_name}`);
 							}
-						}
-					}
-					if (record_type == REC_CLASS_GET)
-					{	return async function()
-						{	await php.write(REC_CLASS_GET, path_str);
+							await php.write(REC_CLASS_GET, path_str+prop_name);
 							return await php.read();
 						};
 					}
 					else
-					{	return async function()
-						{	await php.write(REC_CLASS_GET_THIS, path_str);
-							let h_inst = await php.read();
-							return construct(php, h_inst|0);
+					{	let path_str = h_inst+' '+path[0];
+						let path_2 = path.slice(1).concat(['']);
+						return async function(prop_name)
+						{	if (prop_name != 'this')
+							{	path_2[path_2.length-1] = prop_name;
+								await php.write(REC_CLASS_GET, path_str+' '+JSON.stringify(path_2));
+								return await php.read();
+							}
+							else
+							{	if (path_2.length >= 2)
+								{	path_str += ' '+JSON.stringify(path_2.slice(0, -1));
+								}
+								await php.write(REC_CLASS_GET_THIS, path_str);
+								let h_inst = await php.read();
+								return construct(php, h_inst|0);
+							}
 						};
 					}
 				},
@@ -693,99 +724,96 @@ export class PhpInterpreter
 	}
 }
 
-type ProxyGetterForPath = () => Promise<any>;
+type ProxyGetterForPath = (prop_name: string) => Promise<any>;
 type ProxySetterForPath = (prop_name: string, value: any) => boolean;
 type ProxyDeleterForPath = (prop_name: string) => boolean;
 type ProxyApplierForPath = (args: IArguments) => Promise<any>;
 
 function get_proxy
 (	path: string[],
-	get_getter: (path: string[]) => ProxyGetterForPath|undefined,
+	get_getter: (path: string[]) => ProxyGetterForPath,
 	get_setter: (path: string[]) => ProxySetterForPath,
 	get_deleter: (path: string[]) => ProxyDeleterForPath,
 	get_applier: (path: string[]) => ProxyApplierForPath,
 	get_constructor: (path: string[]) => ProxyApplierForPath
 ): any
-{	let promise: Promise<any> | undefined;
-	let getter: ProxyGetterForPath | undefined;
-	let setter: ProxySetterForPath | undefined;
-	let deleter: ProxyDeleterForPath | undefined;
-	let applier: ProxyApplierForPath | undefined;
-	let constructor: ProxyApplierForPath | undefined;
-	return new Proxy
-	(	function() {}, // if this is not a function, construct() and apply() will throw error
-		{	get(_, prop_name)
-			{	if (prop_name == 'then')
-				{	// case: await path
-					if (!getter)
-					{	getter = get_getter(path);
-						if (!getter) return;
+{	return inst(path, {getter: undefined});
+	function inst
+	(	path: string[],
+		parent_getter: {getter: ProxyGetterForPath | undefined}
+	): any
+	{	let promise: Promise<any> | undefined;
+		let setter: ProxySetterForPath | undefined;
+		let deleter: ProxyDeleterForPath | undefined;
+		let applier: ProxyApplierForPath | undefined;
+		let constructor: ProxyApplierForPath | undefined;
+		return new Proxy
+		(	function() {}, // if this is not a function, construct() and apply() will throw error
+			{	get(_, prop_name)
+				{	if (prop_name=='then' || prop_name=='catch' || prop_name=='finally')
+					{	// case: await path
+						if (path.length == 0) return; // not thenable
+						if (!parent_getter.getter)
+						{	parent_getter.getter = get_getter(path.slice(0, -1));
+						}
+						if (!promise)
+						{	promise = parent_getter.getter(path[path.length-1]);
+						}
+						if (prop_name == 'then')
+						{	return (y: any, n: any) => promise!.then(y, n);
+						}
+						else if (prop_name == 'catch')
+						{	return (n: any) => promise!.catch(n);
+						}
+						else
+						{	return (y: any) => promise!.finally(y);
+						}
 					}
-					if (!promise) promise = getter();
-					return (y: any, n: any) => promise!.then(y, n);
-				}
-				else if (prop_name == 'catch')
-				{	// case: await path
-					if (!getter)
-					{	getter = get_getter(path);
-						if (!getter) return;
+					else if (typeof(prop_name) != 'string')
+					{	// case: +path or path+''
+						throw new Error(`Value must be awaited-for`);
 					}
-					if (!promise) promise = getter();
-					return (n: any) => promise!.catch(n);
-				}
-				else if (prop_name == 'finally')
-				{	// case: await path
-					if (!getter)
-					{	getter = get_getter(path);
-						if (!getter) return;
+					else
+					{	// case: path.prop_name
+						return inst(path.concat([prop_name]), {getter: undefined});
 					}
-					if (!promise) promise = getter();
-					return (y: any) => promise!.finally(y);
+				},
+				set(_, prop_name, value) // set static class variable
+				{	// case: path.prop_name = value
+					if (typeof(prop_name) != 'string')
+					{	throw new Error('Cannot use such object like this');
+					}
+					if (!setter)
+					{	setter = get_setter(path);
+					}
+					return setter(prop_name, value);
+				},
+				deleteProperty(_, prop_name)
+				{	if (typeof(prop_name) != 'string')
+					{	throw new Error('Cannot use such object like this');
+					}
+					if (!deleter)
+					{	deleter = get_deleter(path);
+					}
+					return deleter(prop_name);
+				},
+				apply(_, proxy, args)
+				{	// case: path(args)
+					if (!applier)
+					{	applier = get_applier(path);
+					}
+					return applier(args);
+				},
+				construct(_, args) // new Class
+				{	// case: new path
+					if (!constructor)
+					{	constructor = get_constructor(path);
+					}
+					return constructor(args);
 				}
-				else if (typeof(prop_name) != 'string')
-				{	// case: +path or path+''
-					throw new Error(`Value must be awaited-for`);
-				}
-				else
-				{	// case: path.prop_name
-					return get_proxy(path.concat([prop_name]), get_getter, get_setter, get_deleter, get_applier, get_constructor);
-				}
-			},
-			set(_, prop_name, value) // set static class variable
-			{	// case: path.prop_name = value
-				if (typeof(prop_name) != 'string')
-				{	throw new Error('Cannot use such object like this');
-				}
-				if (!setter)
-				{	setter = get_setter(path);
-				}
-				return setter(prop_name, value);
-			},
-			deleteProperty(_, prop_name)
-			{	if (typeof(prop_name) != 'string')
-				{	throw new Error('Cannot use such object like this');
-				}
-				if (!deleter)
-				{	deleter = get_deleter(path);
-				}
-				return deleter(prop_name);
-			},
-			apply(_, proxy, args)
-			{	// case: path(args)
-				if (!applier)
-				{	applier = get_applier(path);
-				}
-				return applier(args);
-			},
-			construct(_, args) // new Class
-			{	// case: new path
-				if (!constructor)
-				{	constructor = get_constructor(path);
-				}
-				return constructor(args);
 			}
-		}
-	);
+		);
+	}
 }
 
 const php = new PhpInterpreter;
