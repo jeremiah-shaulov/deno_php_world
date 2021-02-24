@@ -12,26 +12,29 @@ const REC_GET = 2;
 const REC_SET = 3;
 const REC_SET_PATH = 4;
 const REC_UNSET = 5;
-const REC_CLASSSTATIC_GET = 6;
-const REC_CLASSSTATIC_SET = 7;
-const REC_CLASSSTATIC_SET_PATH = 8;
-const REC_CLASSSTATIC_UNSET = 9;
-const REC_CONSTRUCT = 10;
-const REC_DESTRUCT = 11;
-const REC_CLASS_GET = 12;
-const REC_CLASS_SET = 13;
-const REC_CLASS_SET_PATH = 14;
-const REC_CLASS_CALL = 15;
-const REC_CLASS_CALL_PATH = 16;
-const REC_CALL = 17;
-const REC_CALL_THIS = 18;
-const REC_CALL_EVAL = 19;
-const REC_CALL_EVAL_THIS = 20;
-const REC_CALL_ECHO = 21;
-const REC_CALL_INCLUDE = 22;
-const REC_CALL_INCLUDE_ONCE = 23;
-const REC_CALL_REQUIRE = 24;
-const REC_CALL_REQUIRE_ONCE = 25;
+const REC_UNSET_PATH = 6;
+const REC_CLASSSTATIC_GET = 7;
+const REC_CLASSSTATIC_SET = 8;
+const REC_CLASSSTATIC_SET_PATH = 9;
+const REC_CLASSSTATIC_UNSET = 10;
+const REC_CONSTRUCT = 11;
+const REC_DESTRUCT = 12;
+const REC_CLASS_GET = 13;
+const REC_CLASS_SET = 14;
+const REC_CLASS_SET_PATH = 15;
+const REC_CLASS_UNSET = 16;
+const REC_CLASS_UNSET_PATH = 17;
+const REC_CLASS_CALL = 18;
+const REC_CLASS_CALL_PATH = 19;
+const REC_CALL = 20;
+const REC_CALL_THIS = 21;
+const REC_CALL_EVAL = 22;
+const REC_CALL_EVAL_THIS = 23;
+const REC_CALL_ECHO = 24;
+const REC_CALL_INCLUDE = 25;
+const REC_CALL_INCLUDE_ONCE = 26;
+const REC_CALL_REQUIRE = 27;
+const REC_CALL_REQUIRE_ONCE = 28;
 
 const RE_BAD_CLASSNAME_FOR_EVAL = /[^\w\\]/;
 
@@ -223,27 +226,29 @@ export class PhpInterpreter
 
 							// deleteProperty
 							path =>
-							{	let path_str = '';
-								let record_type = 0;
-								let var_i = 0;
-								if (!is_class)
+							{	if (!is_class)
 								{	// case: $var['a']['b']
 									if (path[0].charAt(0) != '$')
 									{	throw new Error(`Cannot set this object: ${path.join('.')}`);
 									}
-									path_str = path[0].slice(1); // cut '$'
+									let path_str = path[0].slice(1); // cut '$'
 									if (path_str.indexOf(' ') != -1)
 									{	throw new Error(`Variable name must not contain spaces: $${path_str}`);
 									}
-									record_type = REC_UNSET;
+									path_str += ' ';
+									let path_str_2 = path.length==1 ? '' : ' '+JSON.stringify(path.slice(1));
+									return function(prop_name)
+									{	php.write(REC_UNSET_PATH, path_str+prop_name+path_str_2);
+										return true;
+									};
 								}
 								else
 								{	// case: A\B::$c['d']['e']
-									var_i = path.findIndex(p => p.charAt(0) == '$');
+									let var_i = path.findIndex(p => p.charAt(0) == '$');
 									if (var_i <= 0)
 									{	throw new Error(`Cannot unset this object: ${path.join('.')}`);
 									}
-									path_str = path.slice(0, var_i).join('\\');
+									let path_str = path.slice(0, var_i).join('\\');
 									if (RE_BAD_CLASSNAME_FOR_EVAL.test(path_str))
 									{	throw new Error(`Cannot use such class name: ${path_str}`);
 									}
@@ -251,15 +256,14 @@ export class PhpInterpreter
 									{	throw new Error(`Variable name must not contain spaces: ${path[var_i]}`);
 									}
 									path_str += ' '+path[var_i].slice(1); // cut '$'
-									record_type = REC_CLASSSTATIC_UNSET;
+									path_str += ' ';
+									let path_2 = path.slice(var_i+1).concat(['']);
+									return function(prop_name)
+									{	path_2[path_2.length-1] = prop_name;
+										php.write(REC_CLASSSTATIC_UNSET, path_str+JSON.stringify(path_2));
+										return true;
+									};
 								}
-								path_str += ' ';
-								let path_2 = path.slice(var_i+1).concat(['']);
-								return function(prop_name)
-								{	path_2[path_2.length-1] = prop_name;
-									php.write(record_type, path_str+JSON.stringify(path_2));
-									return true;
-								};
 							},
 
 							// apply
@@ -475,19 +479,22 @@ export class PhpInterpreter
 				// deleteProperty
 				path =>
 				{	if (path.length == 0)
-					{	return function(prop_name)
+					{	let path_str = h_inst+'';
+						return function(prop_name)
 						{	if (prop_name == 'this')
-							{	php.write(REC_DESTRUCT, h_inst+'');
+							{	php.write(REC_DESTRUCT, path_str);
 								return true;
 							}
-							// TODO: ...
-							return false;
+							php.write(REC_CLASS_UNSET, path_str+' '+prop_name);
+							return true;
 						};
 					}
 					else
-					{	return function(prop_name)
-						{	// TODO: ...
-							return false;
+					{	let path_str = h_inst+' ';
+						let path_str_2 = ' '+JSON.stringify(path);
+						return function(prop_name)
+						{	php.write(REC_CLASS_UNSET_PATH, path_str+prop_name+path_str_2);
+							return true;
 						};
 					}
 				},

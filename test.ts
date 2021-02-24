@@ -294,6 +294,7 @@ Deno.test
 
 				class C
 				{	static $var = ['one' => 1, 'two' => ['three' => 3]];
+					public $prop = ['one' => 1, 'two' => ['three' => 3]];
 				}
 			`
 		);
@@ -304,6 +305,25 @@ Deno.test
 		assertEquals(await c.MainNs.SubNs.C.$var, {one: 1, two: {three: 3}});
 		delete c.MainNs.SubNs.C.$var['two'];
 		assertEquals(await c.MainNs.SubNs.C.$var, {one: 1});
+
+		let obj = await new c.MainNs.SubNs.C;
+		assertEquals(await obj.prop, {one: 1, two: {three: 3}});
+		delete obj.prop['two']['three'];
+		assertEquals(await obj.prop, {one: 1, two: {}});
+		delete obj.prop['two'];
+		assertEquals(await obj.prop, {one: 1});
+		delete obj.prop;
+		assertEquals(await obj.prop, undefined);
+		delete obj.this;
+
+		g.$tmp = undefined;
+		assertEquals(await g.$tmp, null);
+		g.$tmp = ['a', 'b'];
+		assertEquals(await g.$tmp, ['a', 'b']);
+		delete g.$tmp[1];
+		assertEquals(await g.$tmp, ['a']);
+		delete g.$tmp;
+		assertEquals(await g.$tmp, undefined);
 
 		await g.exit();
 	}

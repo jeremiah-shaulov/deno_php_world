@@ -8,26 +8,29 @@ class _PhpDenoBridge extends Exception
 	private const REC_SET = 3;
 	private const REC_SET_PATH = 4;
 	private const REC_UNSET = 5;
-	private const REC_CLASSSTATIC_GET = 6;
-	private const REC_CLASSSTATIC_SET = 7;
-	private const REC_CLASSSTATIC_SET_PATH = 8;
-	private const REC_CLASSSTATIC_UNSET = 9;
-	private const REC_CONSTRUCT = 10;
-	private const REC_DESTRUCT = 11;
-	private const REC_CLASS_GET = 12;
-	private const REC_CLASS_SET = 13;
-	private const REC_CLASS_SET_PATH = 14;
-	private const REC_CLASS_CALL = 15;
-	private const REC_CLASS_CALL_PATH = 16;
-	private const REC_CALL = 17;
-	private const REC_CALL_THIS = 18;
-	private const REC_CALL_EVAL = 19;
-	private const REC_CALL_EVAL_THIS = 20;
-	private const REC_CALL_ECHO = 21;
-	private const REC_CALL_INCLUDE = 22;
-	private const REC_CALL_INCLUDE_ONCE = 23;
-	private const REC_CALL_REQUIRE = 24;
-	private const REC_CALL_REQUIRE_ONCE = 25;
+	private const REC_UNSET_PATH = 6;
+	private const REC_CLASSSTATIC_GET = 7;
+	private const REC_CLASSSTATIC_SET = 8;
+	private const REC_CLASSSTATIC_SET_PATH = 9;
+	private const REC_CLASSSTATIC_UNSET = 10;
+	private const REC_CONSTRUCT = 11;
+	private const REC_DESTRUCT = 12;
+	private const REC_CLASS_GET = 13;
+	private const REC_CLASS_SET = 14;
+	private const REC_CLASS_SET_PATH = 15;
+	private const REC_CLASS_UNSET = 16;
+	private const REC_CLASS_UNSET_PATH = 17;
+	private const REC_CLASS_CALL = 18;
+	private const REC_CLASS_CALL_PATH = 19;
+	private const REC_CALL = 20;
+	private const REC_CALL_THIS = 21;
+	private const REC_CALL_EVAL = 22;
+	private const REC_CALL_EVAL_THIS = 23;
+	private const REC_CALL_ECHO = 24;
+	private const REC_CALL_INCLUDE = 25;
+	private const REC_CALL_INCLUDE_ONCE = 26;
+	private const REC_CALL_REQUIRE = 27;
+	private const REC_CALL_REQUIRE_ONCE = 28;
 
 	private static ?int $error_reporting = null;
 	private static array $insts = [];
@@ -106,9 +109,8 @@ class _PhpDenoBridge extends Exception
 		$value = $new_value;
 	}
 
-	private static function follow_path_unset(&$value, array $path)
-	{	$last_p = array_pop($path);
-		foreach ($path as $p)
+	private static function follow_path_unset(&$value, array $path, $last_p)
+	{	foreach ($path as $p)
 		{	if (is_array($value))
 			{	if (isset($value[$p]))
 				{	$value = &$value[$p];
@@ -232,12 +234,15 @@ class _PhpDenoBridge extends Exception
 						self::follow_path_set($GLOBALS[$prop_name], $data, $result);
 						continue 2;
 					case self::REC_UNSET:
-						$data = self::decode_ident_value($data, $prop_name);
+						unset($GLOBALS[$data]);
+						continue 2;
+					case self::REC_UNSET_PATH:
+						$data = self::decode_ident_ident_value($data, $class_name, $prop_name); // $class_name is the first path element, and $prop_name is the last
 						if ($data === null)
-						{	unset($GLOBALS[$prop_name]);
+						{	unset($GLOBALS[$class_name][$prop_name]);
 						}
 						else
-						{	self::follow_path_unset($GLOBALS[$prop_name], $data);
+						{	self::follow_path_unset($GLOBALS[$class_name], $data, $prop_name);
 						}
 						continue 2;
 					case self::REC_CLASSSTATIC_GET:
@@ -265,7 +270,9 @@ class _PhpDenoBridge extends Exception
 						continue 2;
 					case self::REC_CLASSSTATIC_UNSET:
 						$data = self::decode_ident_ident_value($data, $class_name, $prop_name);
-						eval('self::follow_path_unset('.$class_name.'::$'.'{$prop_name}, $data);');
+						$value = array_pop($data);
+						eval('self::follow_path_unset('.$class_name.'::$'.'{$prop_name}, $data, $value);');
+						$value = null;
 						continue 2;
 					case self::REC_CONSTRUCT:
 						$data = self::decode_ident_value($data, $class_name);
@@ -282,7 +289,12 @@ class _PhpDenoBridge extends Exception
 						$result = self::$insts[$inst_id];
 						$result_is_set = isset($result->$prop_name) || property_exists($result, $prop_name);
 						if ($result_is_set)
-						{	$result = $result->$prop_name;
+						{	try
+							{	$result = $result->$prop_name;
+							}
+							catch (Throwable $e)
+							{	$result_is_set = false;
+							}
 						}
 						break;
 					case self::REC_CLASS_SET:
@@ -293,6 +305,14 @@ class _PhpDenoBridge extends Exception
 						list($data, $result) = self::decode_ident_ident_value($data, $inst_id, $prop_name);
 						self::follow_path_set(self::$insts[$inst_id]->$prop_name, $data, $result);
 						continue 2;
+					case self::REC_CLASS_UNSET:
+						$prop_name = self::decode_ident_ident($data, $inst_id);
+						unset(self::$insts[$inst_id]->$prop_name);
+						continue 2;
+					case self::REC_CLASS_UNSET_PATH:
+						$data = self::decode_ident_ident_value($data, $inst_id, $prop_name);
+						self::follow_path_unset(self::$insts[$inst_id], $data, $prop_name);
+						continue 2;
 					case self::REC_CLASS_CALL:
 						$data = self::decode_ident_ident_value($data, $inst_id, $prop_name);
 						$result = $data===null ? call_user_func([self::$insts[$inst_id], $prop_name]) : call_user_func_array([self::$insts[$inst_id], $prop_name], $data);
@@ -300,10 +320,10 @@ class _PhpDenoBridge extends Exception
 						break;
 					case self::REC_CLASS_CALL_PATH:
 						list($data, $result) = self::decode_ident_ident_value($data, $inst_id, $prop_name);
-						$inst = self::$insts[$inst_id];
-						self::follow_path($inst, $data);
-						$result = call_user_func_array([$inst, $prop_name], $result);
-						$inst = null;
+						$value = self::$insts[$inst_id];
+						self::follow_path($value, $data);
+						$result = call_user_func_array([$value, $prop_name], $result);
+						$value = null;
 						$result_is_set = true;
 						break;
 					case self::REC_CALL:
