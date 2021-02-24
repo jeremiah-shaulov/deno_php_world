@@ -743,6 +743,7 @@ function get_proxy
 		parent_getter: {getter: ProxyGetterForPath | undefined}
 	): any
 	{	let promise: Promise<any> | undefined;
+		let for_getter = {getter: undefined};
 		let setter: ProxySetterForPath | undefined;
 		let deleter: ProxyDeleterForPath | undefined;
 		let applier: ProxyApplierForPath | undefined;
@@ -775,7 +776,7 @@ function get_proxy
 					}
 					else
 					{	// case: path.prop_name
-						return inst(path.concat([prop_name]), {getter: undefined});
+						return inst(path.concat([prop_name]), for_getter);
 					}
 				},
 				set(_, prop_name, value) // set static class variable
