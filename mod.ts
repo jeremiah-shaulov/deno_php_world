@@ -79,7 +79,7 @@ export class InterpreterError extends Error
 export class PhpInterpreter
 {	public g: any;
 	public c: any;
-	public settings = {php_cli_name: PHP_CLI_NAME_DEFAULT, socket: SOCKET_NAME_DEFAULT};
+	public settings = {php_cli_name: PHP_CLI_NAME_DEFAULT, unix_socket_name: SOCKET_NAME_DEFAULT};
 
 	private proc: Deno.Process|undefined;
 	private socket: Deno.Listener|undefined;
@@ -686,10 +686,10 @@ export class PhpInterpreter
 	private async init()
 	{	// 1. Open a socket, and start listening
 		let php_socket;
-		if (Deno.build.os != 'windows')
-		{	this.using_unix_socket = this.settings.socket;
-			this.socket = Deno.listen({transport: 'unix', path: this.settings.socket});
-			php_socket = 'unix://'+this.settings.socket;
+		if (this.settings.unix_socket_name && Deno.build.os!='windows')
+		{	this.using_unix_socket = this.settings.unix_socket_name;
+			this.socket = Deno.listen({transport: 'unix', path: this.settings.unix_socket_name});
+			php_socket = 'unix://'+this.using_unix_socket;
 		}
 		else
 		{	this.using_unix_socket = '';

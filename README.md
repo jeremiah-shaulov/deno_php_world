@@ -33,7 +33,7 @@ Run the script like this:
 deno run --unstable --allow-run --allow-read --allow-write --allow-net main.ts
 ```
 
-`php_world` will execute the `php` CLI command. If in your system the interpreter appears under different name, you need to set it's name before accessing `php_world` interfaces.
+`php_world` will execute the `php` CLI command. If in your system PHP appears under different name, you need to set it before accessing `php_world` interfaces.
 
 ```ts
 import {g, c, settings} from 'https://deno.land/x/php_world/mod.ts';
@@ -44,6 +44,10 @@ settings.php_cli_name = 'php7.4';
 // and at last, terminate the interpreter
 await g.exit();
 ```
+There are 2 configurable settings:
+
+1. `settings.php_cli_name` - PHP-CLI command name.
+2. `settings.unix_socket_name` - On Windows this setting is ignored. Name of unix-domain socket to use on non-Windows systems. By default it's `/tmp/deno-php-commands-io`. Setting it to empty string causes `php_world` to use TCP sockets, as on Windows. Currently Deno requires `--unstable` flag when using unix-domain sockets. And the `--allow-net` flag is only needed if using TCP.
 
 ### Interface
 
