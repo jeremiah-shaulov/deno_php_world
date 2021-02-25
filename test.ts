@@ -1,17 +1,28 @@
 import {assert, assertEquals} from "https://deno.land/std@0.87.0/testing/asserts.ts";
 import {sleep} from "https://deno.land/x/sleep/mod.ts";
-import {g, c, php, PhpInterpreter} from './mod.ts';
+import {g, c, php, PhpInterpreter, InterpreterExitError} from './mod.ts';
 
 const {eval: php_eval, ob_start, ob_get_clean, echo, json_encode, exit} = g;
 const {MainNs, C} = c;
 
 Deno.test
-(	'exit',
+(	'Exit',
 	async () =>
 	{	await exit();
 		await exit();
 		assertEquals(await json_encode([]), '[]');
 		await exit();
+
+		let error;
+		try
+		{	await php_eval('exit(100);');
+		}
+		catch (e)
+		{	if (e instanceof InterpreterExitError)
+			{	error = e;
+			}
+		}
+		assertEquals(error?.code, 100);
 	}
 );
 

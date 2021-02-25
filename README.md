@@ -59,6 +59,7 @@ There are 2 configurable settings:
 4. `c` - the same as `php.c`. Contains classes.
 5. `settings` - the same as `php.settings`. Allows to modify interpreter settings.
 6. `InterpreterError` - class for exceptions propagated from PHP.
+7. `InterpreterExitError` - this error is thrown in case PHP interpreter exits or crashes.
 
 ### Calling functions
 
@@ -430,6 +431,22 @@ queueMicrotask
 	}
 );
 ```
+If PHP interpreter exits (not as result of calling `g.exit()`), `InterpreterExitError` exception is thrown.
+
+```ts
+import {g, InterpreterExitError} from 'https://deno.land/x/php_world/mod.ts';
+
+try
+{	await g.eval('exit(100);');
+}
+catch (e)
+{	if (e instanceof InterpreterExitError)
+	{	console.log(`PHP exited with code ${e.code}`);
+	}
+}
+```
+
+The InterpreterExitError class has the following fields: `message`, `code` (process exit status code).
 
 ### Running several PHP interpreters in parallel
 

@@ -78,6 +78,12 @@ export class InterpreterError extends Error
 	}
 }
 
+export class InterpreterExitError extends Error
+{	constructor(public message: string, public code: number)
+	{	super(message);
+	}
+}
+
 export class PhpInterpreter
 {	public g: any;
 	public c: any;
@@ -776,8 +782,7 @@ export class PhpInterpreter
 		while (pos < 4)
 		{	let n_read = await this.commands_io!.read(buffer);
 			if (n_read == null)
-			{	await this.do_exit();
-				throw new Error('PHP interpreter died');
+			{	this.exit_status_to_exception(await this.do_exit());
 			}
 			pos += n_read;
 		}
@@ -798,8 +803,7 @@ export class PhpInterpreter
 		while (pos < len)
 		{	let n_read = await this.commands_io!.read(buffer.subarray(pos));
 			if (n_read == null)
-			{	await this.do_exit();
-				throw new Error('PHP interpreter died');
+			{	this.exit_status_to_exception(await this.do_exit());
 			}
 			pos += n_read;
 		}
@@ -812,14 +816,19 @@ export class PhpInterpreter
 
 	private async do_exit()
 	{	this.proc?.stdin!.close();
-		await this.proc?.status();
+		let status = await this.proc?.status();
 		this.proc?.close();
 		this.commands_io?.close();
 		this.socket?.close();
 		if (this.using_unix_socket)
 		{	let yes = await exists(this.using_unix_socket);
 			if (yes)
-			{	await Deno.remove(this.using_unix_socket);
+			{	try
+				{	await Deno.remove(this.using_unix_socket);
+				}
+				catch (e)
+				{	console.error(e);
+				}
 			}
 		}
 		this.proc = undefined;
@@ -827,6 +836,13 @@ export class PhpInterpreter
 		this.commands_io = undefined;
 		this.last_inst_id = -1;
 		this.stack_frames.length = 0;
+		return status;
+	}
+
+	private exit_status_to_exception(status: {code: number} | undefined): never
+	{	let code = status?.code ?? -1;
+		let message = code==-1 ? 'PHP interpreter died' : code!=0 ? `PHP interpreter died with error code ${code}` : 'PHP interpreter exited';
+		throw new InterpreterExitError(message, code);
 	}
 
 	private async do_push_frame()
