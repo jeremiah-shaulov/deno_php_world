@@ -772,10 +772,14 @@ export class PhpInterpreter
 
 	private async do_read(): Promise<any>
 	{	let buffer = new Uint8Array(4);
-		let n_read = await this.commands_io!.read(buffer);
-		if (n_read == null)
-		{	await this.do_exit();
-			throw new Error('PHP interpreter died');
+		let pos = 0;
+		while (pos < 4)
+		{	let n_read = await this.commands_io!.read(buffer);
+			if (n_read == null)
+			{	await this.do_exit();
+				throw new Error('PHP interpreter died');
+			}
+			pos += n_read;
 		}
 		let [len] = new Int32Array(buffer.buffer);
 		if (len == 0)
@@ -790,10 +794,14 @@ export class PhpInterpreter
 			len = -len;
 		}
 		buffer = new Uint8Array(len);
-		let pos = 0;
+		pos = 0;
 		while (pos < len)
 		{	let n_read = await this.commands_io!.read(buffer.subarray(pos));
-			pos += n_read!;
+			if (n_read == null)
+			{	await this.do_exit();
+				throw new Error('PHP interpreter died');
+			}
+			pos += n_read;
 		}
 		if (is_error)
 		{	let [file, line, message, trace] = JSON.parse(this.decoder.decode(buffer));
