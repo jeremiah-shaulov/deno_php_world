@@ -1,6 +1,6 @@
 import {assert, assertEquals} from "https://deno.land/std@0.87.0/testing/asserts.ts";
 import {sleep} from "https://deno.land/x/sleep/mod.ts";
-import {g, c, PhpInterpreter} from './mod.ts';
+import {g, c, php, PhpInterpreter} from './mod.ts';
 
 const {eval: php_eval, ob_start, ob_get_clean, echo, json_encode, exit} = g;
 const {MainNs, C} = c;
@@ -555,11 +555,46 @@ Deno.test
 (	'Iterators',
 	async () =>
 	{	let obj = await new c.ArrayObject(['a', 'b', 'c']);
-		let arr = [];
+		/*let arr = [];
 		for await (let value of obj)
 		{	arr.push(value);
 		}
-		assertEquals(arr, ['a', 'b', 'c']);
+		assertEquals(arr, ['a', 'b', 'c']);*/
+
+		await g.exit();
+	}
+);
+
+Deno.test
+(	'Push frame',
+	async () =>
+	{	for (let i=0; i<3; i++)
+		{	assertEquals(await php.n_objects(), 0);
+			php.push_frame();
+			let obj = await new c.ArrayObject([]);
+			assertEquals(await php.n_objects(), 1);
+
+			php.push_frame();
+			let obj2 = await new c.ArrayObject([]);
+			assertEquals(await php.n_objects(), 2);
+
+			php.push_frame();
+			let obj3 = await new c.ArrayObject([]);
+			assertEquals(await php.n_objects(), 3);
+
+			php.pop_frame();
+			assertEquals(await php.n_objects(), 2);
+			delete obj3.this;
+			assertEquals(await php.n_objects(), 2);
+
+			delete obj2.this;
+			assertEquals(await php.n_objects(), 1);
+			php.pop_frame();
+			assertEquals(await php.n_objects(), 1);
+
+			php.pop_frame();
+			assertEquals(await php.n_objects(), 0);
+		}
 
 		await g.exit();
 	}

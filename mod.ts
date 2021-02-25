@@ -31,15 +31,17 @@ const REC_CLASS_CALL = 21;
 const REC_CLASS_CALL_PATH = 22;
 const REC_CLASS_ITERATE_BEGIN = 23;
 const REC_CLASS_ITERATE = 24;
-const REC_CALL = 25;
-const REC_CALL_THIS = 26;
-const REC_CALL_EVAL = 27;
-const REC_CALL_EVAL_THIS = 28;
-const REC_CALL_ECHO = 29;
-const REC_CALL_INCLUDE = 30;
-const REC_CALL_INCLUDE_ONCE = 31;
-const REC_CALL_REQUIRE = 32;
-const REC_CALL_REQUIRE_ONCE = 33;
+const REC_POP_FRAME = 25;
+const REC_N_OBJECTS = 26;
+const REC_CALL = 27;
+const REC_CALL_THIS = 28;
+const REC_CALL_EVAL = 29;
+const REC_CALL_EVAL_THIS = 30;
+const REC_CALL_ECHO = 31;
+const REC_CALL_INCLUDE = 32;
+const REC_CALL_INCLUDE_ONCE = 33;
+const REC_CALL_REQUIRE = 34;
+const REC_CALL_REQUIRE_ONCE = 35;
 
 const RE_BAD_CLASSNAME_FOR_EVAL = /[^\w\\]/;
 
@@ -87,6 +89,8 @@ export class PhpInterpreter
 	private is_initing = false;
 	private using_unix_socket = '';
 	private ongoing: Promise<unknown> = Promise.resolve();
+	private last_inst_id = -1;
+	private stack_frames: number[] = [];
 	private encoder = new TextEncoder;
 	private decoder = new TextDecoder;
 
@@ -536,6 +540,7 @@ export class PhpInterpreter
 				}
 			}
 			let inst_id = Number(result);
+			php.last_inst_id = inst_id;
 			return get_proxy
 			(	[],
 				class_name,
@@ -724,7 +729,7 @@ export class PhpInterpreter
 		this.is_initing = false;
 	}
 
-	private schedule(callback: () => any)
+	private schedule(callback: () => Promise<any>)
 	{	if (!this.commands_io && !this.is_initing)
 		{	this.is_initing = true;
 			this.schedule(() => this.init());
@@ -742,8 +747,20 @@ export class PhpInterpreter
 	{	return this.schedule(() => this.do_read());
 	}
 
-	exit()
+	private exit()
 	{	return this.schedule(() => this.do_exit());
+	}
+
+	push_frame()
+	{	this.schedule(() => this.do_push_frame());
+	}
+
+	pop_frame()
+	{	this.schedule(() => this.do_pop_frame());
+	}
+
+	n_objects()
+	{	return this.schedule(() => this.do_n_objects()) as Promise<number>;
 	}
 
 	private async do_write(record_type: number, str: string)
@@ -797,6 +814,26 @@ export class PhpInterpreter
 		this.proc = undefined;
 		this.socket = undefined;
 		this.commands_io = undefined;
+		this.last_inst_id = -1;
+		this.stack_frames.length = 0;
+	}
+
+	private async do_push_frame()
+	{	this.stack_frames.push(this.last_inst_id);
+	}
+
+	private async do_pop_frame()
+	{	let last_inst_id = this.stack_frames.pop();
+		if (last_inst_id === undefined)
+		{	throw new Error('No frames to pop');
+		}
+		await this.do_write(REC_POP_FRAME, last_inst_id+'');
+		this.last_inst_id = last_inst_id;
+	}
+
+	private async do_n_objects()
+	{	await this.do_write(REC_N_OBJECTS, '');
+		return await this.do_read();
 	}
 }
 
@@ -917,7 +954,5 @@ function get_proxy
 	}
 }
 
-const php = new PhpInterpreter;
-export const g = php.g;
-export const c = php.c;
-export const settings = php.settings;
+export const php = new PhpInterpreter;
+export const {g, c, settings} = php;

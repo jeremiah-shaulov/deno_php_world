@@ -27,15 +27,17 @@ class _PhpDenoBridge extends Exception
 	private const REC_CLASS_CALL_PATH = 22;
 	private const REC_CLASS_ITERATE_BEGIN = 23;
 	private const REC_CLASS_ITERATE = 24;
-	private const REC_CALL = 25;
-	private const REC_CALL_THIS = 26;
-	private const REC_CALL_EVAL = 27;
-	private const REC_CALL_EVAL_THIS = 28;
-	private const REC_CALL_ECHO = 29;
-	private const REC_CALL_INCLUDE = 30;
-	private const REC_CALL_INCLUDE_ONCE = 31;
-	private const REC_CALL_REQUIRE = 32;
-	private const REC_CALL_REQUIRE_ONCE = 33;
+	private const REC_POP_FRAME = 25;
+	private const REC_N_OBJECTS = 26;
+	private const REC_CALL = 27;
+	private const REC_CALL_THIS = 28;
+	private const REC_CALL_EVAL = 29;
+	private const REC_CALL_EVAL_THIS = 30;
+	private const REC_CALL_ECHO = 31;
+	private const REC_CALL_INCLUDE = 32;
+	private const REC_CALL_INCLUDE_ONCE = 33;
+	private const REC_CALL_REQUIRE = 34;
+	private const REC_CALL_REQUIRE_ONCE = 35;
 
 	private static ?int $error_reporting = null;
 	private static array $insts = [];
@@ -435,6 +437,19 @@ class _PhpDenoBridge extends Exception
 						break;
 					case self::REC_CLASS_ITERATE:
 						$result = self::iterate($data);
+						$result_is_set = true;
+						break;
+					case self::REC_POP_FRAME:
+						foreach (self::$insts as $inst_id => $result)
+						{	if ($inst_id > $data)
+							{	unset(self::$insts[$inst_id]);
+								unset(self::$insts_iters[$inst_id]);
+							}
+						}
+						self::$inst_id_enum = $data + 1;
+						continue 2;
+					case self::REC_N_OBJECTS:
+						$result = count(self::$insts);
 						$result_is_set = true;
 						break;
 					case self::REC_CALL:

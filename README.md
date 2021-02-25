@@ -51,10 +51,14 @@ There are 2 configurable settings:
 
 ### Interface
 
-There are 2 logical namespaces:
+`php_world` library exports the following symbols:
 
-1. `g` contains all the PHP functions, global constants and variables.
-2. `c` contains classes.
+1. `PhpInterpreter` - constructor for new PHP interpreter to run in the background.
+2. `php` - default interpreter (created with `new PhpInterpreter`).
+3. `g` - the same as `php.g`. Contains all the PHP functions, global constants and variables.
+4. `c` - the same as `php.c`. Contains classes.
+5. `settings` - the same as `php.settings`. Allows to modify interpreter settings.
+6. `InterpreterError` - class for exceptions propagated from PHP.
 
 ### Calling functions
 
@@ -182,6 +186,35 @@ Each instance created with `new`, must be destroyed with `delete`. Special prope
 ```ts
 delete value.this;
 ```
+For debugging purposes it's possible to query number of currently allocated objects. This number must reach 0 at the end of the script.
+
+```ts
+import {g, c, php} from 'https://deno.land/x/php_world/mod.ts';
+
+console.log(await php.n_objects()); // prints 0
+let obj = await new c.Exception('Test');
+console.log(await php.n_objects()); // prints 1
+delete obj.this;
+console.log(await php.n_objects()); // prints 0
+```
+To help you free memory, there's 2 helper functions:
+
+1. `php.push_frame()` - All objects allocated after this call, can be freed at once.
+2. `php.pop_frame()` - Free at once all the objects allocated after last `php.push_frame()` call.
+
+```ts
+import {g, c, php} from 'https://deno.land/x/php_world/mod.ts';
+
+php.push_frame();
+try
+{	let obj = await new c.Exception('Test');
+	console.log(await php.n_objects()); // prints 1
+}
+finally
+{	php.pop_frame();
+	console.log(await php.n_objects()); // prints 0
+}
+```
 
 ### Instance variables
 
@@ -284,6 +317,7 @@ console.log(obj instanceof c.ArrayObject); // prints "true"
 for await (let item of obj)
 {	console.log(item);
 }
+delete obj.this;
 ```
 
 ### Namespaces
