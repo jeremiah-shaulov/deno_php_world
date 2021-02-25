@@ -59,6 +59,7 @@ Deno.test
 		(	`	class C
 				{	public const TEN = 10;
 					public static $var = 'hello';
+					public static $var2;
 					public static function get_eleven()
 					{	return 11;
 					}
@@ -81,6 +82,11 @@ Deno.test
 		assertEquals(await C.$var, 3);
 
 		assertEquals(await C.get_eleven(), 11);
+
+		C.$var2 = {a: {b: {c: 10}}};
+		assertEquals(await C.$var2, {a: {b: {c: 10}}});
+		assertEquals(await C.$var2['a'], {b: {c: 10}});
+		assertEquals(await C.$var2['a']['b']['c'], 10);
 
 		// invalid usage:
 		let error = null;
@@ -167,22 +173,23 @@ Deno.test
 			`
 		);
 
-		let c = await new C;
+		let obj = await new C;
 
-		assertEquals(await c.var, 10);
-		assertEquals(await c.get_twice_var(), 20);
+		assertEquals(await obj.var, 10);
+		assertEquals(await obj.get_twice_var(), 20);
 
-		c.var = 12;
-		assertEquals(await c.var, 12);
-		assertEquals(await c.get_twice_var(), 24);
+		obj.var = 12;
+		assertEquals(await obj.var, 12);
+		assertEquals(await obj.get_twice_var(), 24);
 
-		c.a.b.cc = [true];
-		c.a.bb = [true];
-		assertEquals(await c.a, {b: {cc: [true]}, bb: [true]});
+		obj.a.b.cc = [true];
+		obj.a.bb = [true];
+		assertEquals(await obj.a, {b: {cc: [true]}, bb: [true]});
+		assertEquals(await obj.a.b, {cc: [true]});
 
-		assertEquals(await c.for_c2.key.twice(3), 6);
+		assertEquals(await obj.for_c2.key.twice(3), 6);
 
-		delete c.this;
+		delete obj.this;
 		await exit();
 	}
 );
@@ -382,6 +389,11 @@ Deno.test
 		delete g.$tmp;
 		assertEquals(await g.$tmp, undefined);
 
+		g.$tmp = ['a', 'b', {value: 'c'}];
+		assertEquals(await g.$tmp, ['a', 'b', {value: 'c'}]);
+		delete g.$tmp[2]['value'];
+		assertEquals(await g.$tmp, ['a', 'b', {}]);
+
 		await g.exit();
 	}
 );
@@ -515,6 +527,25 @@ Deno.test
 		assert(Object.prototype.toString.call(obj).indexOf('MainNs\\C') != -1);
 		assertEquals(obj instanceof MainNs.C, true);
 		delete obj.this;
+
+		await g.exit();
+	}
+);
+
+Deno.test
+(	'Assign object',
+	async () =>
+	{	await php_eval
+		(	`	class C
+				{	public $var = 10;
+				}
+			`
+		);
+
+		let obj = await new C;
+		g.$tmp = obj;
+		assertEquals(await g.$tmp['var'], 10);
+		assertEquals(await g.$tmp, {var: 10});
 
 		await g.exit();
 	}

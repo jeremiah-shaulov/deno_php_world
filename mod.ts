@@ -41,6 +41,8 @@ const REC_CALL_REQUIRE_ONCE = 31;
 
 const RE_BAD_CLASSNAME_FOR_EVAL = /[^\w\\]/;
 
+let symbol_php_object = Symbol();
+
 function assert(expr: unknown): asserts expr
 {	if (ASSERTIONS_ENABLED && !expr)
 	{	throw new Error('Assertion failed');
@@ -224,11 +226,15 @@ export class PhpInterpreter
 									if (path_str.indexOf(' ') != -1)
 									{	throw new Error(`Variable name must not contain spaces: $${path_str}`);
 									}
-									path_str += ' ';
-									let path_2 = path.slice(1).concat(['']);
+									path_str += ' [';
+									if (path.length > 1)
+									{	path_str += JSON.stringify(path.slice(1)).slice(0, -1)+',';
+									}
+									else
+									{	path_str += '[';
+									}
 									return function(prop_name, value)
-									{	path_2[path_2.length-1] = prop_name;
-										php.write(REC_SET_PATH, path_str+JSON.stringify([path_2, value]));
+									{	php.write(REC_SET_PATH, path_str+JSON.stringify(prop_name)+'],'+JSON.stringify(value)+']');
 										return true;
 									};
 								}
@@ -271,11 +277,15 @@ export class PhpInterpreter
 										if (path[var_i].indexOf(' ') != -1)
 										{	throw new Error(`Variable name must not contain spaces: ${path[var_i]}`);
 										}
-										path_str += ' '+path[var_i].slice(1); // cut '$'
-										let path_2 = path.slice(var_i+1).concat(['']);
+										path_str += ' '+path[var_i].slice(1)+' ['; // cut '$'
+										if (path.length > var_i+1)
+										{	path_str += JSON.stringify(path.slice(var_i+1)).slice(0, -1)+',';
+										}
+										else
+										{	path_str += '[';
+										}
 										return function(prop_name, value)
-										{	path_2[path_2.length-1] = prop_name;
-											php.write(REC_CLASSSTATIC_SET_PATH, path_str+' '+JSON.stringify([path_2, value]));
+										{	php.write(REC_CLASSSTATIC_SET_PATH, path_str+JSON.stringify(prop_name)+'],'+JSON.stringify(value)+']');
 											return true;
 										};
 									}
@@ -456,7 +466,7 @@ export class PhpInterpreter
 							{	if (is_class && path.length>0 && path.findIndex(p => p.charAt(0) == '$')==-1)
 								{	let class_name = path.join('\\');
 									return function(inst)
-									{	if ((inst as any)[Symbol.toStringTag] === class_name)
+									{	if ((inst as any)[symbol_php_object] === class_name)
 										{	return true;
 										}
 										return false;
@@ -516,7 +526,7 @@ export class PhpInterpreter
 					result = result.slice(0, pos);
 				}
 			}
-			let h_inst = Number(result);
+			let inst_id = Number(result);
 			return get_proxy
 			(	[],
 				class_name,
@@ -524,7 +534,7 @@ export class PhpInterpreter
 				// get
 				path =>
 				{	if (path.length == 0)
-					{	let path_str = h_inst+' ';
+					{	let path_str = inst_id+' ';
 						return async function(prop_name)
 						{	if (prop_name.indexOf(' ') != -1)
 							{	throw new Error(`Property name must not contain spaces: $${prop_name}`);
@@ -534,7 +544,7 @@ export class PhpInterpreter
 						};
 					}
 					else
-					{	let path_str = h_inst+' '+path[0];
+					{	let path_str = inst_id+' '+path[0];
 						let path_2 = path.slice(1).concat(['']);
 						return async function(prop_name)
 						{	if (prop_name != 'this')
@@ -556,18 +566,25 @@ export class PhpInterpreter
 				// set
 				path =>
 				{	if (path.length == 0)
-					{	let path_str = h_inst+' ';
+					{	let path_str = inst_id+' ';
 						return function(prop_name, value)
-						{	php.write(REC_CLASS_SET, value==null ? path_str+prop_name : path_str+prop_name+' '+JSON.stringify(value));
+						{	if (prop_name.indexOf(' ') != -1)
+							{	throw new Error(`Property name must not contain spaces: ${prop_name}`);
+							}
+							php.write(REC_CLASS_SET, value==null ? path_str+prop_name : path_str+prop_name+' '+JSON.stringify(value));
 							return true;
 						};
 					}
 					else
-					{	let path_str = h_inst+' '+path[0]+' ';
-						let path_2 = path.slice(1).concat(['']);
+					{	let path_str = inst_id+' '+path[0]+' [';
+						if (path.length > 1)
+						{	path_str += JSON.stringify(path.slice(1)).slice(0, -1)+',';
+						}
+						else
+						{	path_str += '[';
+						}
 						return function(prop_name, value)
-						{	path_2[path_2.length-1] = prop_name;
-							php.write(REC_CLASS_SET_PATH, path_str+JSON.stringify([path_2, value]));
+						{	php.write(REC_CLASS_SET_PATH, path_str+JSON.stringify(prop_name)+'],'+JSON.stringify(value)+']');
 							return true;
 						};
 					}
@@ -576,7 +593,7 @@ export class PhpInterpreter
 				// deleteProperty
 				path =>
 				{	if (path.length == 0)
-					{	let path_str = h_inst+'';
+					{	let path_str = inst_id+'';
 						return function(prop_name)
 						{	if (prop_name == 'this')
 							{	php.write(REC_DESTRUCT, path_str);
@@ -587,7 +604,7 @@ export class PhpInterpreter
 						};
 					}
 					else
-					{	let path_str = h_inst+' ';
+					{	let path_str = inst_id+' ';
 						let path_str_2 = ' '+JSON.stringify(path);
 						return function(prop_name)
 						{	php.write(REC_CLASS_UNSET_PATH, path_str+prop_name+path_str_2);
@@ -602,17 +619,26 @@ export class PhpInterpreter
 					{	throw new Error('Cannot use such object like this');
 					}
 					if (path.length == 1)
-					{	let path_str = h_inst+' '+path[0];
-						return async function(args)
-						{	await php.write(REC_CLASS_CALL, args.length==0 ? path_str : path_str+' '+JSON.stringify([...args]));
-							return await php.read();
-						};
+					{	if (path[0] == 'toJSON')
+						{	return function()
+							{	return {DENO_PHP_WORLD_INST_ID: inst_id};
+							};
+						}
+						else
+						{	let path_str = inst_id+' '+path[0];
+							return async function(args)
+							{	await php.write(REC_CLASS_CALL, args.length==0 ? path_str : path_str+' '+JSON.stringify([...args]));
+								return await php.read();
+							};
+						}
 					}
 					else
-					{	let path_str = h_inst+' '+path[path.length-1]+' ';
-						let path_2 = path.slice(0, -1);
+					{	if (path[path.length-1].indexOf(' ') != -1)
+						{	throw new Error(`Function name must not contain spaces: ${path[path.length-1]}`);
+						}
+						let path_str = inst_id+' '+path[path.length-1]+' ['+JSON.stringify(path.slice(0, -1))+',';
 						return async function(args)
-						{	await php.write(REC_CLASS_CALL_PATH, path_str+' '+JSON.stringify([path_2, [...args]]));
+						{	await php.write(REC_CLASS_CALL_PATH, path_str+JSON.stringify([...args])+']');
 							return await php.read();
 						};
 					}
@@ -751,7 +777,7 @@ export class PhpInterpreter
 type ProxyGetterForPath = (prop_name: string) => Promise<any>;
 type ProxySetterForPath = (prop_name: string, value: any) => boolean;
 type ProxyDeleterForPath = (prop_name: string) => boolean;
-type ProxyApplierForPath = (args: IArguments) => Promise<any>;
+type ProxyApplierForPath = (args: IArguments) => any;
 type ProxyHasInstanceForPath = (inst: Object) => boolean;
 
 function get_proxy
@@ -781,7 +807,7 @@ function get_proxy
 			{	get(_, prop_name)
 				{	if (typeof(prop_name) != 'string')
 					{	// case: +path or path+''
-						if (prop_name == Symbol.toStringTag)
+						if (prop_name==symbol_php_object || prop_name==Symbol.toStringTag)
 						{	return string_tag;
 						}
 						else if (prop_name == Symbol.hasInstance)

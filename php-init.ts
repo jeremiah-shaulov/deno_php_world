@@ -174,6 +174,23 @@ class _PhpDenoBridge extends Exception
 		}
 	}
 
+	private static function subst_insts($value)
+	{	if (is_array($value))
+		{	if (count($value)==1 and ($inst_id = $value['DENO_PHP_WORLD_INST_ID'] ?? -1)>=0)
+			{	return self::$insts[$inst_id];
+			}
+			foreach ($value as $k => $v)
+			{	$value[$k] = self::subst_insts($v);
+			}
+		}
+		else if (is_object($value))
+		{	foreach ($value as $k => $v)
+			{	$value->$k = self::subst_insts($v);
+			}
+		}
+		return $value;
+	}
+
 	public static function main()
 	{	global $argc, $argv;
 		// Install error handler, that converts E_ERROR to Exception
@@ -244,11 +261,11 @@ class _PhpDenoBridge extends Exception
 						throw new Exception('Value is not set');
 					case self::REC_SET:
 						$data = self::decode_ident_value($data, $prop_name);
-						$GLOBALS[$prop_name] = $data;
+						$GLOBALS[$prop_name] = self::subst_insts($data);
 						continue 2;
 					case self::REC_SET_PATH:
 						list($data, $result) = self::decode_ident_value($data, $prop_name);
-						self::follow_path_set($GLOBALS[$prop_name], $data, $result);
+						self::follow_path_set($GLOBALS[$prop_name], $data, self::subst_insts($result));
 						continue 2;
 					case self::REC_UNSET:
 						unset($GLOBALS[$data]);
@@ -290,10 +307,11 @@ class _PhpDenoBridge extends Exception
 						break;
 					case self::REC_CLASSSTATIC_SET:
 						$data = self::decode_ident_ident_value($data, $class_name, $prop_name);
-						self::get_reflection($class_name)->setStaticPropertyValue($prop_name, $data);
+						self::get_reflection($class_name)->setStaticPropertyValue($prop_name, self::subst_insts($data));
 						continue 2;
 					case self::REC_CLASSSTATIC_SET_PATH:
 						list($data, $result) = self::decode_ident_ident_value($data, $class_name, $prop_name);
+						$result = self::subst_insts($result);
 						eval('self::follow_path_set('.$class_name.'::$'.'{$prop_name}, $data, $result);');
 						continue 2;
 					case self::REC_CLASSSTATIC_UNSET:
@@ -304,7 +322,7 @@ class _PhpDenoBridge extends Exception
 						continue 2;
 					case self::REC_CONSTRUCT:
 						$data = self::decode_ident_value($data, $class_name);
-						$data = $data===null ? self::get_reflection($class_name)->newInstance() : self::get_reflection($class_name)->newInstanceArgs($data);
+						$data = $data===null ? self::get_reflection($class_name)->newInstance() : self::get_reflection($class_name)->newInstanceArgs(self::subst_insts($data));
 						self::$insts[self::$inst_id_enum] = $data;
 						$result = self::$inst_id_enum++;
 						$result_is_set = true;
@@ -342,11 +360,11 @@ class _PhpDenoBridge extends Exception
 						break;
 					case self::REC_CLASS_SET:
 						$data = self::decode_ident_ident_value($data, $inst_id, $prop_name);
-						self::$insts[$inst_id]->$prop_name = $data;
+						self::$insts[$inst_id]->$prop_name = self::subst_insts($data);
 						continue 2;
 					case self::REC_CLASS_SET_PATH:
 						list($data, $result) = self::decode_ident_ident_value($data, $inst_id, $prop_name);
-						self::follow_path_set(self::$insts[$inst_id]->$prop_name, $data, $result);
+						self::follow_path_set(self::$insts[$inst_id]->$prop_name, $data, self::subst_insts($result));
 						continue 2;
 					case self::REC_CLASS_UNSET:
 						$prop_name = self::decode_ident_ident($data, $inst_id);
@@ -358,25 +376,25 @@ class _PhpDenoBridge extends Exception
 						continue 2;
 					case self::REC_CLASS_CALL:
 						$data = self::decode_ident_ident_value($data, $inst_id, $prop_name);
-						$result = $data===null ? call_user_func([self::$insts[$inst_id], $prop_name]) : call_user_func_array([self::$insts[$inst_id], $prop_name], $data);
+						$result = $data===null ? call_user_func([self::$insts[$inst_id], $prop_name]) : call_user_func_array([self::$insts[$inst_id], $prop_name], self::subst_insts($data));
 						$result_is_set = true;
 						break;
 					case self::REC_CLASS_CALL_PATH:
 						list($data, $result) = self::decode_ident_ident_value($data, $inst_id, $prop_name);
 						$value = self::$insts[$inst_id];
 						self::follow_path($value, $data);
-						$result = call_user_func_array([$value, $prop_name], $result);
+						$result = call_user_func_array([$value, $prop_name], self::subst_insts($result));
 						$value = null;
 						$result_is_set = true;
 						break;
 					case self::REC_CALL:
 						$data = self::decode_ident_value($data, $prop_name);
-						$result = $data===null ? call_user_func($prop_name) : call_user_func_array($prop_name, $data);
+						$result = $data===null ? call_user_func($prop_name) : call_user_func_array($prop_name, self::subst_insts($data));
 						$result_is_set = true;
 						break;
 					case self::REC_CALL_THIS:
 						$data = self::decode_ident_value($data, $prop_name);
-						$data = $data===null ? call_user_func($prop_name) : call_user_func_array($prop_name, $data);
+						$data = $data===null ? call_user_func($prop_name) : call_user_func_array($prop_name, self::subst_insts($data));
 						$class_name = is_object($data) ? ' '.get_class($data) : '';
 						self::$insts[self::$inst_id_enum] = $data;
 						$result = self::$inst_id_enum++.$class_name;
@@ -384,41 +402,41 @@ class _PhpDenoBridge extends Exception
 						break;
 					case self::REC_CALL_EVAL:
 						$data = self::decode_value($data);
-						$result = self::eval($data);
+						$result = self::eval(self::subst_insts($data));
 						$result_is_set = true;
 						break;
 					case self::REC_CALL_EVAL_THIS:
 						$data = self::decode_value($data);
-						$data = self::eval($data);
+						$data = self::eval(self::subst_insts($data));
 						$class_name = is_object($data) ? ' '.get_class($data) : '';
 						self::$insts[self::$inst_id_enum] = $data;
 						$result = self::$inst_id_enum++.$class_name;
 						$result_is_set = true;
 						break;
 					case self::REC_CALL_ECHO:
-						$data = self::decode_value($data);
+						$data = self::subst_insts(self::decode_value($data));
 						foreach ($data as $arg)
 						{	echo $arg;
 						}
 						break;
 					case self::REC_CALL_INCLUDE:
 						$data = self::decode_value($data);
-						$result = include($data);
+						$result = include(self::subst_insts($data));
 						$result_is_set = true;
 						break;
 					case self::REC_CALL_INCLUDE_ONCE:
 						$data = self::decode_value($data);
-						$result = include_once($data);
+						$result = include_once(self::subst_insts($data));
 						$result_is_set = true;
 						break;
 					case self::REC_CALL_REQUIRE:
 						$data = self::decode_value($data);
-						$result = require($data);
+						$result = require(self::subst_insts($data));
 						$result_is_set = true;
 						break;
 					case self::REC_CALL_REQUIRE_ONCE:
 						$data = self::decode_value($data);
-						$result = require_once($data);
+						$result = require_once(self::subst_insts($data));
 						$result_is_set = true;
 						break;
 				}
