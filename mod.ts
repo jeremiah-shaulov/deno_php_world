@@ -99,6 +99,7 @@ export class PhpInterpreter
 						}
 						return get_proxy
 						(	[prop_name],
+							'',
 
 							// get
 							path =>
@@ -145,8 +146,7 @@ export class PhpInterpreter
 												{	path_str += ' '+JSON.stringify(path_2.slice(0, -1));
 												}
 												await php.write(REC_GET_THIS, path_str);
-												let h_inst = await php.read();
-												return construct(php, h_inst|0);
+												return construct(php, await php.read());
 											}
 										};
 									}
@@ -206,8 +206,7 @@ export class PhpInterpreter
 												{	path_str += ' '+JSON.stringify(path_2.slice(0, -1));
 												}
 												await php.write(REC_CLASSSTATIC_GET_THIS, path_str);
-												let h_inst = await php.read();
-												return construct(php, h_inst|0);
+												return construct(php, await php.read());
 											}
 										};
 									}
@@ -356,8 +355,7 @@ export class PhpInterpreter
 														{	async get()
 															{	is_this = true;
 																await php.write(REC_CALL_EVAL_THIS, path_str);
-																let h_inst = await php.read();
-																return construct(php, h_inst|0);
+																return construct(php, await php.read());
 															}
 														}
 													);
@@ -436,8 +434,7 @@ export class PhpInterpreter
 										{	async get()
 											{	is_this = true;
 												await php.write(REC_CALL_THIS, path_str_2);
-												let h_inst = await php.read();
-												return construct(php, h_inst|0);
+												return construct(php, await php.read());
 											}
 										}
 									);
@@ -450,9 +447,24 @@ export class PhpInterpreter
 							{	let class_name = path.join('\\');
 								return async function(args)
 								{	await php.write(REC_CONSTRUCT, args.length==0 ? class_name : class_name+' '+JSON.stringify([...args]));
-									let h_inst = (await php.read())|0;
-									return construct(php, h_inst);
+									return construct(php, await php.read(), class_name);
 								};
+							},
+
+							// hasInstance
+							path =>
+							{	if (is_class && path.length>0 && path.findIndex(p => p.charAt(0) == '$')==-1)
+								{	let class_name = path.join('\\');
+									return function(inst)
+									{	if ((inst as any)[Symbol.toStringTag] === class_name)
+										{	return true;
+										}
+										return false;
+									};
+								}
+								else
+								{	return inst => false;
+								}
 							}
 						);
 					},
@@ -496,9 +508,18 @@ export class PhpInterpreter
 			);
 		}
 
-		function construct(php: PhpInterpreter, h_inst: number)
-		{	let inst = get_proxy
+		function construct(php: PhpInterpreter, result: string, class_name=''): any
+		{	if (!class_name)
+			{	let pos = result.indexOf(' ');
+				if (pos != -1)
+				{	class_name = result.slice(pos+1);
+					result = result.slice(0, pos);
+				}
+			}
+			let h_inst = Number(result);
+			return get_proxy
 			(	[],
+				class_name,
 
 				// get
 				path =>
@@ -526,8 +547,7 @@ export class PhpInterpreter
 								{	path_str += ' '+JSON.stringify(path_2.slice(0, -1));
 								}
 								await php.write(REC_CLASS_GET_THIS, path_str);
-								let h_inst = await php.read();
-								return construct(php, h_inst|0);
+								return construct(php, await php.read());
 							}
 						};
 					}
@@ -601,9 +621,13 @@ export class PhpInterpreter
 				// construct
 				path =>
 				{	throw new Error('Cannot construct such object');
+				},
+
+				// hasInstance
+				path =>
+				{	return inst => false;
 				}
 			);
-			return inst;
 		}
 	}
 
@@ -728,15 +752,18 @@ type ProxyGetterForPath = (prop_name: string) => Promise<any>;
 type ProxySetterForPath = (prop_name: string, value: any) => boolean;
 type ProxyDeleterForPath = (prop_name: string) => boolean;
 type ProxyApplierForPath = (args: IArguments) => Promise<any>;
+type ProxyHasInstanceForPath = (inst: Object) => boolean;
 
 function get_proxy
 (	path: string[],
+	string_tag: string,
 	get_getter: (path: string[]) => ProxyGetterForPath,
 	get_setter: (path: string[]) => ProxySetterForPath,
 	get_deleter: (path: string[]) => ProxyDeleterForPath,
 	get_applier: (path: string[]) => ProxyApplierForPath,
-	get_constructor: (path: string[]) => ProxyApplierForPath
-): any
+	get_constructor: (path: string[]) => ProxyApplierForPath,
+	get_has_instance: (path: string[]) => ProxyHasInstanceForPath
+)
 {	return inst(path, {getter: undefined});
 	function inst
 	(	path: string[],
@@ -748,12 +775,31 @@ function get_proxy
 		let deleter: ProxyDeleterForPath | undefined;
 		let applier: ProxyApplierForPath | undefined;
 		let constructor: ProxyApplierForPath | undefined;
+		let has_instance: ProxyHasInstanceForPath | undefined;
 		return new Proxy
 		(	function() {}, // if this is not a function, construct() and apply() will throw error
 			{	get(_, prop_name)
-				{	if (prop_name=='then' || prop_name=='catch' || prop_name=='finally')
+				{	if (typeof(prop_name) != 'string')
+					{	// case: +path or path+''
+						if (prop_name == Symbol.toStringTag)
+						{	return string_tag;
+						}
+						else if (prop_name == Symbol.hasInstance)
+						{	if (!has_instance)
+							{	has_instance = get_has_instance(path);
+							}
+							return has_instance;
+						}
+						else if (prop_name == Symbol.toPrimitive)
+						{
+						}
+						throw new Error(`Value must be awaited-for`);
+					}
+					else if (prop_name=='then' || prop_name=='catch' || prop_name=='finally')
 					{	// case: await path
-						if (path.length == 0) return; // not thenable
+						if (path.length == 0)
+						{	return; // not thenable
+						}
 						if (!parent_getter.getter)
 						{	parent_getter.getter = get_getter(path.slice(0, -1));
 						}
@@ -769,10 +815,6 @@ function get_proxy
 						else
 						{	return (y: any) => promise!.finally(y);
 						}
-					}
-					else if (typeof(prop_name) != 'string')
-					{	// case: +path or path+''
-						throw new Error(`Value must be awaited-for`);
 					}
 					else
 					{	// case: path.prop_name

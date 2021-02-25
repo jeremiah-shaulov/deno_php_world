@@ -235,8 +235,9 @@ class _PhpDenoBridge extends Exception
 							if ($data!==null and !self::follow_path($result, $data))
 							{	throw new Exception('Value is not set');
 							}
+							$class_name = is_object($result) ? ' '.get_class($result) : '';
 							self::$insts[self::$inst_id_enum] = $result;
-							$result = self::$inst_id_enum++;
+							$result = self::$inst_id_enum++.$class_name;
 							$result_is_set = true;
 							break;
 						}
@@ -282,8 +283,9 @@ class _PhpDenoBridge extends Exception
 						if ($data!==null and !self::follow_path($result, $data))
 						{	throw new Exception('Value is not set');
 						}
+						$class_name = is_object($result) ? ' '.get_class($result) : '';
 						self::$insts[self::$inst_id_enum] = $result;
-						$result = self::$inst_id_enum++;
+						$result = self::$inst_id_enum++.$class_name;
 						$result_is_set = true;
 						break;
 					case self::REC_CLASSSTATIC_SET:
@@ -333,8 +335,9 @@ class _PhpDenoBridge extends Exception
 						if ($data!==null and !self::follow_path($result, $data))
 						{	throw new Exception('Value is not set');
 						}
+						$class_name = is_object($result) ? ' '.get_class($result) : '';
 						self::$insts[self::$inst_id_enum] = $result;
-						$result = self::$inst_id_enum++;
+						$result = self::$inst_id_enum++.$class_name;
 						$result_is_set = true;
 						break;
 					case self::REC_CLASS_SET:
@@ -374,8 +377,9 @@ class _PhpDenoBridge extends Exception
 					case self::REC_CALL_THIS:
 						$data = self::decode_ident_value($data, $prop_name);
 						$data = $data===null ? call_user_func($prop_name) : call_user_func_array($prop_name, $data);
+						$class_name = is_object($data) ? ' '.get_class($data) : '';
 						self::$insts[self::$inst_id_enum] = $data;
-						$result = self::$inst_id_enum++;
+						$result = self::$inst_id_enum++.$class_name;
 						$result_is_set = true;
 						break;
 					case self::REC_CALL_EVAL:
@@ -386,8 +390,9 @@ class _PhpDenoBridge extends Exception
 					case self::REC_CALL_EVAL_THIS:
 						$data = self::decode_value($data);
 						$data = self::eval($data);
+						$class_name = is_object($data) ? ' '.get_class($data) : '';
 						self::$insts[self::$inst_id_enum] = $data;
-						$result = self::$inst_id_enum++;
+						$result = self::$inst_id_enum++.$class_name;
 						$result_is_set = true;
 						break;
 					case self::REC_CALL_ECHO:

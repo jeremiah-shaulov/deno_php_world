@@ -483,3 +483,39 @@ Deno.test
 		await g.exit();
 	}
 );
+
+Deno.test
+(	'Instance Of',
+	async () =>
+	{	await php_eval
+		(	`	namespace MainNs;
+
+				class C
+				{	static $inst;
+				}
+
+				function get_c()
+				{	C::$inst = new C;
+					return new C;
+				}
+			`
+		);
+
+		let obj = await new MainNs.C;
+		assert(Object.prototype.toString.call(obj).indexOf('MainNs\\C') != -1);
+		assertEquals(obj instanceof MainNs.C, true);
+		delete obj.this;
+
+		obj = await g.MainNs.get_c().this;
+		assert(Object.prototype.toString.call(obj).indexOf('MainNs\\C') != -1);
+		assertEquals(obj instanceof MainNs.C, true);
+		delete obj.this;
+
+		obj = await MainNs.C.$inst.this;
+		assert(Object.prototype.toString.call(obj).indexOf('MainNs\\C') != -1);
+		assertEquals(obj instanceof MainNs.C, true);
+		delete obj.this;
+
+		await g.exit();
+	}
+);
