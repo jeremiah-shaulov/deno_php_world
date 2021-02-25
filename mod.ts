@@ -673,14 +673,13 @@ export class PhpInterpreter
 				{	let path_str = inst_id+'';
 					return async function*()
 					{	await php.write(REC_CLASS_ITERATE_BEGIN, path_str);
-						let [value, done] = await php.read();
 						while (true)
-						{	if (done)
+						{	let [value, done] = await php.read();
+							if (done)
 							{	return;
 							}
 							yield value;
 							await php.write(REC_CLASS_ITERATE, path_str);
-							[value, done] = await php.read();
 						}
 					};
 				}
@@ -773,7 +772,11 @@ export class PhpInterpreter
 
 	private async do_read(): Promise<any>
 	{	let buffer = new Uint8Array(4);
-		await this.commands_io!.read(buffer);
+		let n_read = await this.commands_io!.read(buffer);
+		if (n_read == null)
+		{	await this.do_exit();
+			throw new Error('PHP interpreter died');
+		}
 		let [len] = new Int32Array(buffer.buffer);
 		if (len == 0)
 		{	return null;
