@@ -262,6 +262,26 @@ delete ex.this;
 ```
 In this example, i use function `init()` to create a global variable. Just setting a variable inside `eval()` doesn't make it global.
 
+### Objects behavior
+
+Remote PHP objects are represented in Deno as opaque `Proxy` objects, and they don't feel like real Typescript objects. Most of magic behavior is missing. For example they don't convert to strings automatically (because `toString()` magic method is synchronous). Only the following object features work:
+
+1. Getting, setting and deleting properties.
+2. The `instanceof` operator.
+3. Async iterators.
+
+Example:
+
+```ts
+import {g, c} from 'https://deno.land/x/php_world/mod.ts';
+
+let obj = await new c.ArrayObject(['a', 'b', 'c']);
+console.log(obj instanceof c.ArrayObject); // prints "true"
+for await (let item of obj)
+{	console.log(item);
+}
+```
+
 ### Namespaces
 
 ```ts

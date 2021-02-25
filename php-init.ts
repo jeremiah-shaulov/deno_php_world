@@ -25,18 +25,21 @@ class _PhpDenoBridge extends Exception
 	private const REC_CLASS_UNSET_PATH = 20;
 	private const REC_CLASS_CALL = 21;
 	private const REC_CLASS_CALL_PATH = 22;
-	private const REC_CALL = 23;
-	private const REC_CALL_THIS = 24;
-	private const REC_CALL_EVAL = 25;
-	private const REC_CALL_EVAL_THIS = 26;
-	private const REC_CALL_ECHO = 27;
-	private const REC_CALL_INCLUDE = 28;
-	private const REC_CALL_INCLUDE_ONCE = 29;
-	private const REC_CALL_REQUIRE = 30;
-	private const REC_CALL_REQUIRE_ONCE = 31;
+	private const REC_CLASS_ITERATE_BEGIN = 23;
+	private const REC_CLASS_ITERATE = 24;
+	private const REC_CALL = 25;
+	private const REC_CALL_THIS = 26;
+	private const REC_CALL_EVAL = 27;
+	private const REC_CALL_EVAL_THIS = 28;
+	private const REC_CALL_ECHO = 29;
+	private const REC_CALL_INCLUDE = 30;
+	private const REC_CALL_INCLUDE_ONCE = 31;
+	private const REC_CALL_REQUIRE = 32;
+	private const REC_CALL_REQUIRE_ONCE = 33;
 
 	private static ?int $error_reporting = null;
 	private static array $insts = [];
+	private static array $insts_iters = [];
 	private static int $inst_id_enum = 0;
 
 	public function __construct($message=null, $code=null, $file=null, $line=null)
@@ -191,6 +194,44 @@ class _PhpDenoBridge extends Exception
 		return $value;
 	}
 
+	private static function create_iterator($obj)
+	{	foreach ($obj as $value)
+		{	yield $value;
+		}
+	}
+
+	private static function iterate_begin($inst_id)
+	{	if (!isset(self::$insts[$inst_id]))
+		{	throw new Exception("Object destroyed");
+		}
+		$obj = self::$insts[$inst_id];
+		if (!($obj instanceof Traversable))
+		{	throw new Exception("Object is not iterable");
+		}
+		$iter = self::create_iterator($obj);
+		if (!$iter->valid())
+		{	return [null, true];
+		}
+		self::$insts_iters[$inst_id] = $iter;
+		$value = $iter->current();
+		$iter->next();
+		return [$value, false];
+	}
+
+	private static function iterate($inst_id)
+	{	$iter = self::$insts_iters[$inst_id] ?? null;
+		if (!$iter)
+		{	throw new Exception("Object destroyed");
+		}
+		if (!$iter->valid())
+		{	unset(self::$insts_iters[$inst_id]);
+			return [null, true];
+		}
+		$value = $iter->current();
+		$iter->next();
+		return [$value, false];
+	}
+
 	public static function main()
 	{	global $argc, $argv;
 		// Install error handler, that converts E_ERROR to Exception
@@ -329,6 +370,7 @@ class _PhpDenoBridge extends Exception
 						break;
 					case self::REC_DESTRUCT:
 						unset(self::$insts[$data]);
+						unset(self::$insts_iters[$data]);
 						continue 2;
 					case self::REC_CLASS_GET:
 						$data = self::decode_ident_ident_value($data, $inst_id, $prop_name);
@@ -385,6 +427,14 @@ class _PhpDenoBridge extends Exception
 						self::follow_path($value, $data);
 						$result = call_user_func_array([$value, $prop_name], self::subst_insts($result));
 						$value = null;
+						$result_is_set = true;
+						break;
+					case self::REC_CLASS_ITERATE_BEGIN:
+						$result = self::iterate_begin($data);
+						$result_is_set = true;
+						break;
+					case self::REC_CLASS_ITERATE:
+						$result = self::iterate($data);
 						$result_is_set = true;
 						break;
 					case self::REC_CALL:

@@ -29,15 +29,17 @@ const REC_CLASS_UNSET = 19;
 const REC_CLASS_UNSET_PATH = 20;
 const REC_CLASS_CALL = 21;
 const REC_CLASS_CALL_PATH = 22;
-const REC_CALL = 23;
-const REC_CALL_THIS = 24;
-const REC_CALL_EVAL = 25;
-const REC_CALL_EVAL_THIS = 26;
-const REC_CALL_ECHO = 27;
-const REC_CALL_INCLUDE = 28;
-const REC_CALL_INCLUDE_ONCE = 29;
-const REC_CALL_REQUIRE = 30;
-const REC_CALL_REQUIRE_ONCE = 31;
+const REC_CLASS_ITERATE_BEGIN = 23;
+const REC_CLASS_ITERATE = 24;
+const REC_CALL = 25;
+const REC_CALL_THIS = 26;
+const REC_CALL_EVAL = 27;
+const REC_CALL_EVAL_THIS = 28;
+const REC_CALL_ECHO = 29;
+const REC_CALL_INCLUDE = 30;
+const REC_CALL_INCLUDE_ONCE = 31;
+const REC_CALL_REQUIRE = 32;
+const REC_CALL_REQUIRE_ONCE = 33;
 
 const RE_BAD_CLASSNAME_FOR_EVAL = /[^\w\\]/;
 
@@ -475,6 +477,13 @@ export class PhpInterpreter
 								else
 								{	return inst => false;
 								}
+							},
+
+							// asyncIterator
+							path =>
+							{	return async function*()
+								{	throw new Error('Object is not iterable');
+								};
 							}
 						);
 					},
@@ -652,6 +661,23 @@ export class PhpInterpreter
 				// hasInstance
 				path =>
 				{	return inst => false;
+				},
+
+				// asyncIterator
+				path =>
+				{	let path_str = inst_id+'';
+					return async function*()
+					{	await php.write(REC_CLASS_ITERATE_BEGIN, path_str);
+						let [value, done] = await php.read();
+						while (true)
+						{	if (done)
+							{	return;
+							}
+							yield value;
+							await php.write(REC_CLASS_ITERATE, path_str);
+							[value, done] = await php.read();
+						}
+					};
 				}
 			);
 		}
@@ -779,6 +805,7 @@ type ProxySetterForPath = (prop_name: string, value: any) => boolean;
 type ProxyDeleterForPath = (prop_name: string) => boolean;
 type ProxyApplierForPath = (args: IArguments) => any;
 type ProxyHasInstanceForPath = (inst: Object) => boolean;
+type ProxyIteratorForPath = () => AsyncGenerator<any>;
 
 function get_proxy
 (	path: string[],
@@ -788,7 +815,8 @@ function get_proxy
 	get_deleter: (path: string[]) => ProxyDeleterForPath,
 	get_applier: (path: string[]) => ProxyApplierForPath,
 	get_constructor: (path: string[]) => ProxyApplierForPath,
-	get_has_instance: (path: string[]) => ProxyHasInstanceForPath
+	get_has_instance: (path: string[]) => ProxyHasInstanceForPath,
+	get_iterator: (path: string[]) => ProxyIteratorForPath
 )
 {	return inst(path, {getter: undefined});
 	function inst
@@ -802,6 +830,7 @@ function get_proxy
 		let applier: ProxyApplierForPath | undefined;
 		let constructor: ProxyApplierForPath | undefined;
 		let has_instance: ProxyHasInstanceForPath | undefined;
+		let iterator: ProxyIteratorForPath | undefined;
 		return new Proxy
 		(	function() {}, // if this is not a function, construct() and apply() will throw error
 			{	get(_, prop_name)
@@ -816,8 +845,11 @@ function get_proxy
 							}
 							return has_instance;
 						}
-						else if (prop_name == Symbol.toPrimitive)
-						{
+						else if (prop_name == Symbol.asyncIterator)
+						{	if (!iterator)
+							{	iterator = get_iterator(path);
+							}
+							return iterator;
 						}
 						throw new Error(`Value must be awaited-for`);
 					}

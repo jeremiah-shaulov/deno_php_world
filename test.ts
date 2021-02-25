@@ -550,3 +550,17 @@ Deno.test
 		await g.exit();
 	}
 );
+
+Deno.test
+(	'Iterators',
+	async () =>
+	{	let obj = await new c.ArrayObject(['a', 'b', 'c']);
+		let arr = [];
+		for await (let value of obj)
+		{	arr.push(value);
+		}
+		assertEquals(arr, ['a', 'b', 'c']);
+
+		await g.exit();
+	}
+);
