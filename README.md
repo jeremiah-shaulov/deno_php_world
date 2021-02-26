@@ -44,10 +44,11 @@ settings.php_cli_name = 'php7.4';
 // and at last, terminate the interpreter
 await g.exit();
 ```
-There are 2 configurable settings:
+There are 3 configurable settings:
 
 1. `settings.php_cli_name` - PHP-CLI command name.
 2. `settings.unix_socket_name` - On Windows this setting is ignored. Name of unix-domain socket to use on non-Windows systems. By default it's `/tmp/deno-php-commands-io`. Setting it to empty string causes `php_world` to use TCP sockets, as on Windows. Currently Deno requires `--unstable` flag when using unix-domain sockets. And the `--allow-net` flag is only needed if using TCP.
+3. `settings.stdout` - allows to redirect PHP process echo output (see below).
 
 ### Interface
 
@@ -75,7 +76,7 @@ console.log(await class_exists('Hello'));
 await exit();
 ```
 
-At the end of Deno script, it's nice to call `exit()`. This function terminates the interpreter, and frees all the resources. After this function called, the `php_world` can be used again, and a new instance of the interpreter will be spawned. It's OK to call `exit()` several times.
+At the end of Deno script, it's nice to call `exit()`. This function terminates the interpreter, and frees all the resources. After this function called, the `php_world` can be used again, and a new instance of the interpreter will be spawned. It's OK to call `exit()` several times. If `settings.stdout` is set to `piped` (see below), calling `exit()` is required.
 
 If function's result is not awaited-for, the function will work in the background, and if it throws exception, this exception will come out on next operation awaiting. After exception occures, all further operations in current microtask iteration will be skipped (see below).
 
@@ -447,6 +448,50 @@ catch (e)
 ```
 
 The InterpreterExitError class has the following fields: `message`, `code` (process exit status code).
+
+### Dealing with PHP echo output
+
+There's setting that provides control on how PHP output is processed: `settings.stdout`.
+
+```ts
+stdout: 'inherit'|'piped'|'null'|number = 'inherit'
+```
+It's default value is `inherit` that means to pass PHP output to Deno. So `g.echo("msg\n")` works like `console.log("msg")`.
+
+As usual, it's possible to use PHP output buffering to catch the output.
+
+```ts
+import {g} from 'https://deno.land/x/php_world/mod.ts';
+
+g.ob_start();
+g.echo("A");
+g.echo("B");
+g.echo("C");
+let output = await g.ob_get_clean();
+console.log(output); // prints "ABC"
+
+await g.exit();
+```
+But this is not good for large outputs, because the whole output will be stored in RAM.
+
+Setting `settings.stdout` to `piped` allows to catch PHP output. Initially the output will be passed to Deno, as in the `inherit` case, but you'll be able to call `php.get_stdout_reader()` to get `Deno.Reader` object from which the output can be read. To stop reading the output from that reader, and to redirect it back to `Deno.stdout`, call `php.drop_stdout_reader()`. This will cause the reader stream to end (`EOF`).
+
+```ts
+import {php, settings} from 'https://deno.land/x/php_world/mod.ts';
+
+settings.stdout = 'piped';
+
+let stdout = await php.get_stdout_reader();
+php.g.echo("*".repeat(256));
+php.drop_stdout_reader();
+let data = new TextDecoder().decode(await Deno.readAll(stdout));
+console.log(data == "*".repeat(256)); // prints "true"
+
+await g.exit();
+```
+If `settings.stdout` is set to something other that `piped`, calling `g.exit()` at the end of script is not requered, but in case of `piped` it's absolutely necessary (even if you didn't call `php.get_stdout_reader()`), to stop the reader task.
+
+Another options for `settings.stdout` are `null` (to ignore the output), and a numeric file descriptor (rid) of an opened file/stream.
 
 ### Running several PHP interpreters in parallel
 

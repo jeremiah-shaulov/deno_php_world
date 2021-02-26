@@ -1,6 +1,6 @@
 import {assert, assertEquals} from "https://deno.land/std@0.87.0/testing/asserts.ts";
 import {sleep} from "https://deno.land/x/sleep/mod.ts";
-import {g, c, php, PhpInterpreter, InterpreterExitError} from './mod.ts';
+import {g, c, php, settings, PhpInterpreter, InterpreterExitError} from './mod.ts';
 
 const {eval: php_eval, ob_start, ob_get_clean, echo, json_encode, exit} = g;
 const {MainNs, C} = c;
@@ -55,10 +55,17 @@ Deno.test
 Deno.test
 (	'ob_start',
 	async () =>
-	{	await ob_start();
+	{	g.ob_start();
+		g.echo("A");
+		g.echo("B");
+		g.echo("C");
+		assertEquals(await ob_get_clean(), 'ABC');
+
+		await ob_start();
 		await echo('A');
 		await echo('B', 'C');
 		assertEquals(await ob_get_clean(), 'ABC');
+
 		await exit();
 	}
 );
@@ -606,6 +613,29 @@ Deno.test
 			php.pop_frame();
 			assertEquals(await php.n_objects(), 0);
 		}
+
+		await g.exit();
+	}
+);
+
+Deno.test
+(	'Stdout',
+	async () =>
+	{	settings.stdout = 'piped';
+		let stdout = await php.get_stdout_reader();
+		php.g.echo("*".repeat(256));
+		php.drop_stdout_reader();
+		let data = new TextDecoder().decode(await Deno.readAll(stdout));
+		assertEquals(data, "*".repeat(256));
+
+		await g.exit();
+	}
+);
+
+Deno.test
+(	'Binary data',
+	async () =>
+	{	assertEquals(await g.substr("\x00\x01\x02 \x7F\x80\x81 \xFD\xFE\xFF", 0, 100), "\x00\x01\x02 \x7F\x80\x81 \xFD\xFE\xFF");
 
 		await g.exit();
 	}

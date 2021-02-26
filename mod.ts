@@ -1,10 +1,13 @@
 import {PHP_INIT} from './php-init.ts';
+import {create_proxy} from './proxy_object.ts';
+import {ReaderMux} from './reader_mux.ts';
 import {exists} from "https://deno.land/std/fs/mod.ts";
 
 const PHP_CLI_NAME_DEFAULT = 'php';
 const SOCKET_NAME_DEFAULT = '/tmp/deno-php-commands-io';
 const ASSERTIONS_ENABLED = true;
 const DEBUG_PHP_INIT = false;
+const READER_MUX_END_MARK_LEN = 32;
 
 const REC_HELO = 0;
 const REC_CONST = 1;
@@ -72,6 +75,12 @@ async function get_random_key(): Promise<string>
 	return String(Math.random());
 }
 
+function fill_weak_random_chars(buffer: Uint8Array)
+{	for (let i=0; i<buffer.length; i++)
+	{	buffer[i] = Math.floor(Math.random()*128);
+	}
+}
+
 export class InterpreterError extends Error
 {	constructor(public message: string, public fileName: string, public lineNumber: number, public trace: string)
 	{	super(message);
@@ -84,10 +93,16 @@ export class InterpreterExitError extends Error
 	}
 }
 
+class Settings
+{	public php_cli_name = PHP_CLI_NAME_DEFAULT;
+	public unix_socket_name = SOCKET_NAME_DEFAULT;
+	public stdout: 'inherit'|'piped'|'null'|number = 'inherit';
+}
+
 export class PhpInterpreter
 {	public g: any;
 	public c: any;
-	public settings = {php_cli_name: PHP_CLI_NAME_DEFAULT, unix_socket_name: SOCKET_NAME_DEFAULT};
+	public settings = new Settings;
 
 	private proc: Deno.Process|undefined;
 	private socket: Deno.Listener|undefined;
@@ -95,6 +110,10 @@ export class PhpInterpreter
 	private is_initing = false;
 	private using_unix_socket = '';
 	private ongoing: Promise<unknown> = Promise.resolve();
+	private is_piped_stdout = false;
+	private stdout_mux: ReaderMux|undefined;
+	private stdout_copy_task: Promise<number> | undefined;
+	private mux_end_mark = new Uint8Array(READER_MUX_END_MARK_LEN);
 	private last_inst_id = -1;
 	private stack_frames: number[] = [];
 	private encoder = new TextEncoder;
@@ -111,7 +130,7 @@ export class PhpInterpreter
 					{	if (typeof(prop_name)!='string' || prop_name.length==0)
 						{	throw new Error('Invalid object name');
 						}
-						return get_proxy
+						return create_proxy
 						(	[prop_name],
 							'',
 
@@ -131,16 +150,14 @@ export class PhpInterpreter
 											{	path_str = path_str.slice(1); // cut '$'
 												record_type = REC_GET;
 											}
-											await php.write(record_type, path_str);
-											return await php.read();
+											return await php.write_read(record_type, path_str);
 										};
 									}
 									else if (path[0].charAt(0) != '$')
 									{	// case: A\B\C
 										let path_str = path.join('\\');
 										return async function(prop_name)
-										{	await php.write(REC_CONST, path_str+'\\'+prop_name);
-											return await php.read();
+										{	return await php.write_read(REC_CONST, path_str+'\\'+prop_name);
 										};
 									}
 									else
@@ -152,15 +169,13 @@ export class PhpInterpreter
 										return async function(prop_name)
 										{	if (prop_name != 'this')
 											{	path_2[path_2.length-1] = prop_name;
-												await php.write(REC_GET, path_str+' '+JSON.stringify(path_2));
-												return await php.read();
+												return await php.write_read(REC_GET, path_str+' '+JSON.stringify(path_2));
 											}
 											else
 											{	if (path_2.length >= 2)
 												{	path_str += ' '+JSON.stringify(path_2.slice(0, -1));
 												}
-												await php.write(REC_GET_THIS, path_str);
-												return construct(php, await php.read());
+												return construct(php, await php.write_read(REC_GET_THIS, path_str));
 											}
 										};
 									}
@@ -190,8 +205,7 @@ export class PhpInterpreter
 												}
 												path_str_2 += ' '+prop_name.slice(1); // cut '$'
 											}
-											await php.write(record_type, path_str_2);
-											return await php.read();
+											return await php.write_read(record_type, path_str_2);
 										};
 									}
 									else if (var_i == 0)
@@ -212,15 +226,13 @@ export class PhpInterpreter
 										return async function(prop_name)
 										{	if (prop_name != 'this')
 											{	path_2[path_2.length-1] = prop_name;
-												await php.write(REC_CLASSSTATIC_GET, path_str+' '+JSON.stringify(path_2));
-												return await php.read();
+												return await php.write_read(REC_CLASSSTATIC_GET, path_str+' '+JSON.stringify(path_2));
 											}
 											else
 											{	if (path_2.length >= 2)
 												{	path_str += ' '+JSON.stringify(path_2.slice(0, -1));
 												}
-												await php.write(REC_CLASSSTATIC_GET_THIS, path_str);
-												return construct(php, await php.read());
+												return construct(php, await php.write_read(REC_CLASSSTATIC_GET_THIS, path_str));
 											}
 										};
 									}
@@ -376,8 +388,7 @@ export class PhpInterpreter
 														'this',
 														{	async get()
 															{	is_this = true;
-																await php.write(REC_CALL_EVAL_THIS, path_str);
-																return construct(php, await php.read());
+																return construct(php, await php.write_read(REC_CALL_EVAL_THIS, path_str));
 															}
 														}
 													);
@@ -385,40 +396,35 @@ export class PhpInterpreter
 												};
 											case 'echo':
 												return async function(args)
-												{	await php.write(REC_CALL_ECHO, JSON.stringify([...args]));
-													return await php.read();
+												{	return await php.write_read(REC_CALL_ECHO, JSON.stringify([...args]));
 												};
 											case 'include':
 												return async function(args)
 												{	if (args.length != 1)
 													{	throw new Error('Invalid number of arguments to include()');
 													}
-													await php.write(REC_CALL_INCLUDE, JSON.stringify(args[0]));
-													return await php.read();
+													return await php.write_read(REC_CALL_INCLUDE, JSON.stringify(args[0]));
 												};
 											case 'include_once':
 												return async function(args)
 												{	if (args.length != 1)
 													{	throw new Error('Invalid number of arguments to include_once()');
 													}
-													await php.write(REC_CALL_INCLUDE_ONCE, JSON.stringify(args[0]));
-													return await php.read();
+													return await php.write_read(REC_CALL_INCLUDE_ONCE, JSON.stringify(args[0]));
 												};
 											case 'require':
 												return async function(args)
 												{	if (args.length != 1)
 													{	throw new Error('Invalid number of arguments to require()');
 													}
-													await php.write(REC_CALL_REQUIRE, JSON.stringify(args[0]));
-													return await php.read();
+													return await php.write_read(REC_CALL_REQUIRE, JSON.stringify(args[0]));
 												};
 											case 'require_once':
 												return async function(args)
 												{	if (args.length != 1)
 													{	throw new Error('Invalid number of arguments to require_once()');
 													}
-													await php.write(REC_CALL_REQUIRE_ONCE, JSON.stringify(args[0]));
-													return await php.read();
+													return await php.write_read(REC_CALL_REQUIRE_ONCE, JSON.stringify(args[0]));
 												};
 										}
 									}
@@ -455,8 +461,7 @@ export class PhpInterpreter
 										'this',
 										{	async get()
 											{	is_this = true;
-												await php.write(REC_CALL_THIS, path_str_2);
-												return construct(php, await php.read());
+												return construct(php, await php.write_read(REC_CALL_THIS, path_str_2));
 											}
 										}
 									);
@@ -468,8 +473,7 @@ export class PhpInterpreter
 							path =>
 							{	let class_name = path.join('\\');
 								return async function(args)
-								{	await php.write(REC_CONSTRUCT, args.length==0 ? class_name : class_name+' '+JSON.stringify([...args]));
-									return construct(php, await php.read(), class_name);
+								{	return construct(php, await php.write_read(REC_CONSTRUCT, args.length==0 ? class_name : class_name+' '+JSON.stringify([...args])), class_name);
 								};
 							},
 
@@ -494,7 +498,9 @@ export class PhpInterpreter
 							{	return async function*()
 								{	throw new Error('Object is not iterable');
 								};
-							}
+							},
+
+							symbol_php_object
 						);
 					},
 
@@ -547,7 +553,7 @@ export class PhpInterpreter
 			}
 			let inst_id = Number(result);
 			php.last_inst_id = inst_id;
-			return get_proxy
+			return create_proxy
 			(	[],
 				class_name,
 
@@ -559,8 +565,7 @@ export class PhpInterpreter
 						{	if (prop_name.indexOf(' ') != -1)
 							{	throw new Error(`Property name must not contain spaces: $${prop_name}`);
 							}
-							await php.write(REC_CLASS_GET, path_str+prop_name);
-							return await php.read();
+							return await php.write_read(REC_CLASS_GET, path_str+prop_name);
 						};
 					}
 					else
@@ -569,15 +574,13 @@ export class PhpInterpreter
 						return async function(prop_name)
 						{	if (prop_name != 'this')
 							{	path_2[path_2.length-1] = prop_name;
-								await php.write(REC_CLASS_GET, path_str+' '+JSON.stringify(path_2));
-								return await php.read();
+								return await php.write_read(REC_CLASS_GET, path_str+' '+JSON.stringify(path_2));
 							}
 							else
 							{	if (path_2.length >= 2)
 								{	path_str += ' '+JSON.stringify(path_2.slice(0, -1));
 								}
-								await php.write(REC_CLASS_GET_THIS, path_str);
-								return construct(php, await php.read());
+								return construct(php, await php.write_read(REC_CLASS_GET_THIS, path_str));
 							}
 						};
 					}
@@ -647,8 +650,7 @@ export class PhpInterpreter
 						else
 						{	let path_str = inst_id+' '+path[0];
 							return async function(args)
-							{	await php.write(REC_CLASS_CALL, args.length==0 ? path_str : path_str+' '+JSON.stringify([...args]));
-								return await php.read();
+							{	return await php.write_read(REC_CLASS_CALL, args.length==0 ? path_str : path_str+' '+JSON.stringify([...args]));
 							};
 						}
 					}
@@ -658,8 +660,7 @@ export class PhpInterpreter
 						}
 						let path_str = inst_id+' '+path[path.length-1]+' ['+JSON.stringify(path.slice(0, -1))+',';
 						return async function(args)
-						{	await php.write(REC_CLASS_CALL_PATH, path_str+JSON.stringify([...args])+']');
-							return await php.read();
+						{	return await php.write_read(REC_CLASS_CALL_PATH, path_str+JSON.stringify([...args])+']');
 						};
 					}
 				},
@@ -678,17 +679,18 @@ export class PhpInterpreter
 				path =>
 				{	let path_str = inst_id+'';
 					return async function*()
-					{	await php.write(REC_CLASS_ITERATE_BEGIN, path_str);
+					{	let [value, done] = await php.write_read(REC_CLASS_ITERATE_BEGIN, path_str);
 						while (true)
-						{	let [value, done] = await php.read();
-							if (done)
+						{	if (done)
 							{	return;
 							}
 							yield value;
-							await php.write(REC_CLASS_ITERATE, path_str);
+							[value, done] = await php.write_read(REC_CLASS_ITERATE, path_str);
 						}
 					};
-				}
+				},
+
+				symbol_php_object
 			);
 		}
 	}
@@ -711,7 +713,7 @@ export class PhpInterpreter
 		if (Deno.args.length)
 		{	cmd.splice(cmd.length, 0, '--', ...Deno.args);
 		}
-		this.proc = Deno.run({cmd, stdin: 'piped', stdout: 'inherit', stderr: 'inherit'});
+		this.proc = Deno.run({cmd, stdin: 'piped', stdout: this.settings.stdout, stderr: 'inherit'});
 		// 3. Generate random key
 		let key = await get_random_key();
 		// 4. Send the HELO packet with opened socket address and the key
@@ -730,22 +732,34 @@ export class PhpInterpreter
 			}
 			this.commands_io.close();
 		}
-		// 6. Done
+		// 6. Mux stdout
+		this.is_piped_stdout = this.settings.stdout == 'piped';
+		if (this.is_piped_stdout)
+		{	fill_weak_random_chars(this.mux_end_mark);
+			this.stdout_mux = new ReaderMux(this.proc.stdout!, this.mux_end_mark);
+			this.stdout_copy_task = Deno.copy(this.stdout_mux, Deno.stdout);
+		}
+		// 7. Done
 		this.is_initing = false;
 	}
 
-	private schedule(callback: () => Promise<any>)
+	private schedule<T>(callback: () => T): Promise<T>
 	{	if (!this.commands_io && !this.is_initing)
 		{	this.is_initing = true;
 			this.schedule(() => this.init());
 		}
-		this.ongoing = this.ongoing.then(callback);
+		let promise = this.ongoing.then(callback);
+		this.ongoing = promise;
 		queueMicrotask(() => {this.ongoing = this.ongoing.catch(() => {})});
-		return this.ongoing;
+		return promise;
 	}
 
 	private write(record_type: number, str: string)
 	{	return this.schedule(() => this.do_write(record_type, str));
+	}
+
+	private write_read(record_type: number, str: string)
+	{	return this.schedule(() => this.do_write(record_type, str).then(() => this.do_read()));
 	}
 
 	private read(): Promise<any>
@@ -765,7 +779,15 @@ export class PhpInterpreter
 	}
 
 	n_objects()
-	{	return this.schedule(() => this.do_n_objects()) as Promise<number>;
+	{	return this.schedule(() => this.do_n_objects());
+	}
+
+	get_stdout_reader()
+	{	return this.schedule(() => this.do_get_stdout_reader());
+	}
+
+	drop_stdout_reader()
+	{	return this.schedule(() => this.do_drop_stdout_reader());
 	}
 
 	private async do_write(record_type: number, str: string)
@@ -782,7 +804,7 @@ export class PhpInterpreter
 		while (pos < 4)
 		{	let n_read = await this.commands_io!.read(buffer);
 			if (n_read == null)
-			{	this.exit_status_to_exception(await this.do_exit());
+			{	this.exit_status_to_exception(await this.do_exit(true));
 			}
 			pos += n_read;
 		}
@@ -803,7 +825,7 @@ export class PhpInterpreter
 		while (pos < len)
 		{	let n_read = await this.commands_io!.read(buffer.subarray(pos));
 			if (n_read == null)
-			{	this.exit_status_to_exception(await this.do_exit());
+			{	this.exit_status_to_exception(await this.do_exit(true));
 			}
 			pos += n_read;
 		}
@@ -814,8 +836,12 @@ export class PhpInterpreter
 		return JSON.parse(this.decoder.decode(buffer));
 	}
 
-	private async do_exit()
-	{	this.proc?.stdin!.close();
+	private async do_exit(is_eof=false)
+	{	await this.do_end_stdout_mux(is_eof);
+		this.proc?.stdin!.close();
+		if (this.is_piped_stdout)
+		{	this.proc?.stdout!.close();
+		}
 		let status = await this.proc?.status();
 		this.proc?.close();
 		this.commands_io?.close();
@@ -862,122 +888,34 @@ export class PhpInterpreter
 	{	await this.do_write(REC_N_OBJECTS, '');
 		return await this.do_read();
 	}
-}
 
-type ProxyGetterForPath = (prop_name: string) => Promise<any>;
-type ProxySetterForPath = (prop_name: string, value: any) => boolean;
-type ProxyDeleterForPath = (prop_name: string) => boolean;
-type ProxyApplierForPath = (args: IArguments) => any;
-type ProxyHasInstanceForPath = (inst: Object) => boolean;
-type ProxyIteratorForPath = () => AsyncGenerator<any>;
+	private async do_get_stdout_reader(): Promise<Deno.Reader>
+	{	if (!this.is_piped_stdout)
+		{	throw new Error("Set settings.stdout to 'piped' to be able to redirect stdout");
+		}
+		await this.do_end_stdout_mux();
+		this.stdout_mux = new ReaderMux(this.proc!.stdout!, this.mux_end_mark);
+		return this.stdout_mux;
+	}
 
-function get_proxy
-(	path: string[],
-	string_tag: string,
-	get_getter: (path: string[]) => ProxyGetterForPath,
-	get_setter: (path: string[]) => ProxySetterForPath,
-	get_deleter: (path: string[]) => ProxyDeleterForPath,
-	get_applier: (path: string[]) => ProxyApplierForPath,
-	get_constructor: (path: string[]) => ProxyApplierForPath,
-	get_has_instance: (path: string[]) => ProxyHasInstanceForPath,
-	get_iterator: (path: string[]) => ProxyIteratorForPath
-)
-{	return inst(path, {getter: undefined});
-	function inst
-	(	path: string[],
-		parent_getter: {getter: ProxyGetterForPath | undefined}
-	): any
-	{	let promise: Promise<any> | undefined;
-		let for_getter = {getter: undefined};
-		let setter: ProxySetterForPath | undefined;
-		let deleter: ProxyDeleterForPath | undefined;
-		let applier: ProxyApplierForPath | undefined;
-		let constructor: ProxyApplierForPath | undefined;
-		let has_instance: ProxyHasInstanceForPath | undefined;
-		let iterator: ProxyIteratorForPath | undefined;
-		return new Proxy
-		(	function() {}, // if this is not a function, construct() and apply() will throw error
-			{	get(_, prop_name)
-				{	if (typeof(prop_name) != 'string')
-					{	// case: +path or path+''
-						if (prop_name==symbol_php_object || prop_name==Symbol.toStringTag)
-						{	return string_tag;
-						}
-						else if (prop_name == Symbol.hasInstance)
-						{	if (!has_instance)
-							{	has_instance = get_has_instance(path);
-							}
-							return has_instance;
-						}
-						else if (prop_name == Symbol.asyncIterator)
-						{	if (!iterator)
-							{	iterator = get_iterator(path);
-							}
-							return iterator;
-						}
-						throw new Error(`Value must be awaited-for`);
-					}
-					else if (prop_name=='then' || prop_name=='catch' || prop_name=='finally')
-					{	// case: await path
-						if (path.length == 0)
-						{	return; // not thenable
-						}
-						if (!parent_getter.getter)
-						{	parent_getter.getter = get_getter(path.slice(0, -1));
-						}
-						if (!promise)
-						{	promise = parent_getter.getter(path[path.length-1]);
-						}
-						if (prop_name == 'then')
-						{	return (y: any, n: any) => promise!.then(y, n);
-						}
-						else if (prop_name == 'catch')
-						{	return (n: any) => promise!.catch(n);
-						}
-						else
-						{	return (y: any) => promise!.finally(y);
-						}
-					}
-					else
-					{	// case: path.prop_name
-						return inst(path.concat([prop_name]), for_getter);
-					}
-				},
-				set(_, prop_name, value) // set static class variable
-				{	// case: path.prop_name = value
-					if (typeof(prop_name) != 'string')
-					{	throw new Error('Cannot use such object like this');
-					}
-					if (!setter)
-					{	setter = get_setter(path);
-					}
-					return setter(prop_name, value);
-				},
-				deleteProperty(_, prop_name)
-				{	if (typeof(prop_name) != 'string')
-					{	throw new Error('Cannot use such object like this');
-					}
-					if (!deleter)
-					{	deleter = get_deleter(path);
-					}
-					return deleter(prop_name);
-				},
-				apply(_, proxy, args)
-				{	// case: path(args)
-					if (!applier)
-					{	applier = get_applier(path);
-					}
-					return applier(args);
-				},
-				construct(_, args) // new Class
-				{	// case: new path
-					if (!constructor)
-					{	constructor = get_constructor(path);
-					}
-					return constructor(args);
-				}
+	private async do_drop_stdout_reader()
+	{	if (!this.stdout_copy_task && this.is_piped_stdout)
+		{	await this.do_end_stdout_mux();
+			this.stdout_mux = new ReaderMux(this.proc!.stdout!, this.mux_end_mark);
+			this.stdout_copy_task = Deno.copy(this.stdout_mux, Deno.stdout);
+		}
+	}
+
+	private async do_end_stdout_mux(is_eof=false)
+	{	if (this.stdout_copy_task || this.stdout_mux) // is copying this.proc.stdout to Deno.stdout || is reading this.proc.stdout with external reader
+		{	if (!is_eof)
+			{	await this.do_write(REC_CALL_ECHO, '['+JSON.stringify(new TextDecoder('latin1').decode(this.mux_end_mark))+']');
+				await this.do_write(REC_CALL, 'flush');
 			}
-		);
+			await this.stdout_copy_task;
+			this.stdout_copy_task = undefined;
+			this.stdout_mux = undefined;
+		}
 	}
 }
 
