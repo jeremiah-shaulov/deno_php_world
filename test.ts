@@ -622,10 +622,20 @@ Deno.test
 (	'Stdout',
 	async () =>
 	{	settings.stdout = 'piped';
+
+		// no sleep
 		let stdout = await php.get_stdout_reader();
 		php.g.echo("*".repeat(256));
 		php.drop_stdout_reader();
 		let data = new TextDecoder().decode(await Deno.readAll(stdout));
+		assertEquals(data, "*".repeat(256));
+
+		// sleep
+		stdout = await php.get_stdout_reader();
+		php.g.echo("*".repeat(256));
+		php.drop_stdout_reader();
+		await sleep(0.2);
+		data = new TextDecoder().decode(await Deno.readAll(stdout));
 		assertEquals(data, "*".repeat(256));
 
 		await g.exit();

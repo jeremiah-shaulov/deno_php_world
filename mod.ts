@@ -36,15 +36,16 @@ const REC_CLASS_ITERATE_BEGIN = 23;
 const REC_CLASS_ITERATE = 24;
 const REC_POP_FRAME = 25;
 const REC_N_OBJECTS = 26;
-const REC_CALL = 27;
-const REC_CALL_THIS = 28;
-const REC_CALL_EVAL = 29;
-const REC_CALL_EVAL_THIS = 30;
-const REC_CALL_ECHO = 31;
-const REC_CALL_INCLUDE = 32;
-const REC_CALL_INCLUDE_ONCE = 33;
-const REC_CALL_REQUIRE = 34;
-const REC_CALL_REQUIRE_ONCE = 35;
+const REC_END_STDOUT = 27;
+const REC_CALL = 28;
+const REC_CALL_THIS = 29;
+const REC_CALL_EVAL = 30;
+const REC_CALL_EVAL_THIS = 31;
+const REC_CALL_ECHO = 32;
+const REC_CALL_INCLUDE = 33;
+const REC_CALL_INCLUDE_ONCE = 34;
+const REC_CALL_REQUIRE = 35;
+const REC_CALL_REQUIRE_ONCE = 36;
 
 const RE_BAD_CLASSNAME_FOR_EVAL = /[^\w\\]/;
 
@@ -75,10 +76,12 @@ async function get_random_key(): Promise<string>
 	return String(Math.random());
 }
 
-function fill_weak_random_chars(buffer: Uint8Array)
-{	for (let i=0; i<buffer.length; i++)
-	{	buffer[i] = Math.floor(Math.random()*128);
+function get_weak_random_bytes(n: number)
+{	let buffer = new Uint8Array(n);
+	for (let i=0; i<buffer.length; i++)
+	{	buffer[i] = Math.floor(Math.random()*256);
 	}
+	return buffer;
 }
 
 export class InterpreterError extends Error
@@ -110,10 +113,7 @@ export class PhpInterpreter
 	private is_initing = false;
 	private using_unix_socket = '';
 	private ongoing: Promise<unknown> = Promise.resolve();
-	private is_piped_stdout = false;
 	private stdout_mux: ReaderMux|undefined;
-	private stdout_copy_task: Promise<number> | undefined;
-	private mux_end_mark = new Uint8Array(READER_MUX_END_MARK_LEN);
 	private last_inst_id = -1;
 	private stack_frames: number[] = [];
 	private encoder = new TextEncoder;
@@ -716,8 +716,9 @@ export class PhpInterpreter
 		this.proc = Deno.run({cmd, stdin: 'piped', stdout: this.settings.stdout, stderr: 'inherit'});
 		// 3. Generate random key
 		let key = await get_random_key();
+		let end_mark = get_weak_random_bytes(READER_MUX_END_MARK_LEN);
 		// 4. Send the HELO packet with opened socket address and the key
-		this.do_write(REC_HELO, JSON.stringify([php_socket, key]));
+		this.do_write(REC_HELO, JSON.stringify([php_socket, key, end_mark]));
 		// 5. Accept connection from the interpreter. Identify it by the key.
 		while (true)
 		{	this.commands_io = await this.socket.accept();
@@ -733,17 +734,14 @@ export class PhpInterpreter
 			this.commands_io.close();
 		}
 		// 6. Mux stdout
-		this.is_piped_stdout = this.settings.stdout == 'piped';
-		if (this.is_piped_stdout)
-		{	fill_weak_random_chars(this.mux_end_mark);
-			this.stdout_mux = new ReaderMux(this.proc.stdout!, this.mux_end_mark);
-			this.stdout_copy_task = Deno.copy(this.stdout_mux, Deno.stdout);
+		if (this.settings.stdout == 'piped')
+		{	this.stdout_mux = new ReaderMux(this.proc.stdout!, end_mark);
 		}
 		// 7. Done
 		this.is_initing = false;
 	}
 
-	private schedule<T>(callback: () => T): Promise<T>
+	private schedule<T>(callback: () => T | Promise<T>): Promise<T>
 	{	if (!this.commands_io && !this.is_initing)
 		{	this.is_initing = true;
 			this.schedule(() => this.init());
@@ -760,10 +758,6 @@ export class PhpInterpreter
 
 	private write_read(record_type: number, str: string)
 	{	return this.schedule(() => this.do_write(record_type, str).then(() => this.do_read()));
-	}
-
-	private read(): Promise<any>
-	{	return this.schedule(() => this.do_read());
 	}
 
 	private exit()
@@ -795,6 +789,9 @@ export class PhpInterpreter
 		let len = new DataView(body.buffer);
 		len.setInt32(0, record_type);
 		len.setInt32(4, body.length - 8);
+		if (this.stdout_mux && !this.stdout_mux.is_reading)
+		{	this.stdout_mux.set_writer(Deno.stdout);
+		}
 		await Deno.writeAll(this.proc!.stdin!, body);
 	}
 
@@ -837,10 +834,11 @@ export class PhpInterpreter
 	}
 
 	private async do_exit(is_eof=false)
-	{	await this.do_end_stdout_mux(is_eof);
+	{	await this.do_drop_stdout_reader(is_eof);
 		this.proc?.stdin!.close();
-		if (this.is_piped_stdout)
+		if (this.stdout_mux)
 		{	this.proc?.stdout!.close();
+			this.stdout_mux = undefined;
 		}
 		let status = await this.proc?.status();
 		this.proc?.close();
@@ -890,31 +888,18 @@ export class PhpInterpreter
 	}
 
 	private async do_get_stdout_reader(): Promise<Deno.Reader>
-	{	if (!this.is_piped_stdout)
+	{	if (!this.stdout_mux)
 		{	throw new Error("Set settings.stdout to 'piped' to be able to redirect stdout");
 		}
-		await this.do_end_stdout_mux();
-		this.stdout_mux = new ReaderMux(this.proc!.stdout!, this.mux_end_mark);
-		return this.stdout_mux;
+		return await this.stdout_mux.get_reader();
 	}
 
-	private async do_drop_stdout_reader()
-	{	if (!this.stdout_copy_task && this.is_piped_stdout)
-		{	await this.do_end_stdout_mux();
-			this.stdout_mux = new ReaderMux(this.proc!.stdout!, this.mux_end_mark);
-			this.stdout_copy_task = Deno.copy(this.stdout_mux, Deno.stdout);
-		}
-	}
-
-	private async do_end_stdout_mux(is_eof=false)
-	{	if (this.stdout_copy_task || this.stdout_mux) // is copying this.proc.stdout to Deno.stdout || is reading this.proc.stdout with external reader
-		{	if (!is_eof)
-			{	await this.do_write(REC_CALL_ECHO, '['+JSON.stringify(new TextDecoder('latin1').decode(this.mux_end_mark))+']');
-				await this.do_write(REC_CALL, 'flush');
+	private async do_drop_stdout_reader(is_eof=false)
+	{	if (this.stdout_mux)
+		{	if (this.stdout_mux.is_reading && !is_eof)
+			{	await this.do_write(REC_END_STDOUT, '');
 			}
-			await this.stdout_copy_task;
-			this.stdout_copy_task = undefined;
-			this.stdout_mux = undefined;
+			await this.stdout_mux.set_none();
 		}
 	}
 }

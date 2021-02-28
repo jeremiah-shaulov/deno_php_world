@@ -29,17 +29,19 @@ class _PhpDenoBridge extends Exception
 	private const REC_CLASS_ITERATE = 24;
 	private const REC_POP_FRAME = 25;
 	private const REC_N_OBJECTS = 26;
-	private const REC_CALL = 27;
-	private const REC_CALL_THIS = 28;
-	private const REC_CALL_EVAL = 29;
-	private const REC_CALL_EVAL_THIS = 30;
-	private const REC_CALL_ECHO = 31;
-	private const REC_CALL_INCLUDE = 32;
-	private const REC_CALL_INCLUDE_ONCE = 33;
-	private const REC_CALL_REQUIRE = 34;
-	private const REC_CALL_REQUIRE_ONCE = 35;
+	private const REC_END_STDOUT = 27;
+	private const REC_CALL = 28;
+	private const REC_CALL_THIS = 29;
+	private const REC_CALL_EVAL = 30;
+	private const REC_CALL_EVAL_THIS = 31;
+	private const REC_CALL_ECHO = 32;
+	private const REC_CALL_INCLUDE = 33;
+	private const REC_CALL_INCLUDE_ONCE = 34;
+	private const REC_CALL_REQUIRE = 35;
+	private const REC_CALL_REQUIRE_ONCE = 36;
 
 	private static ?int $error_reporting = null;
+	private static string $end_mark = '';
 	private static array $insts = [];
 	private static array $insts_iters = [];
 	private static int $inst_id_enum = 0;
@@ -269,6 +271,7 @@ class _PhpDenoBridge extends Exception
 						if ($output === false)
 						{	exit("stream_socket_client(): errno=$errno $errstr");
 						}
+						self::$end_mark = implode(array_map(function($b) {return chr($b);}, $data[2]));
 						$result = $data[1];
 						$result_is_set = true;
 						break;
@@ -452,6 +455,10 @@ class _PhpDenoBridge extends Exception
 						$result = count(self::$insts);
 						$result_is_set = true;
 						break;
+					case self::REC_END_STDOUT:
+						echo self::$end_mark;
+						flush();
+						continue 2;
 					case self::REC_CALL:
 						$data = self::decode_ident_value($data, $prop_name);
 						$result = $data===null ? call_user_func($prop_name) : call_user_func_array($prop_name, self::subst_insts($data));

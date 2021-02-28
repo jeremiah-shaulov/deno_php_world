@@ -2,7 +2,7 @@
 
 This module extends Deno world with PHP, by running commandline PHP interpreter in the background.
 
-There are several possible reasons to use the `php_world`:
+There are several possible reasons to use `php_world`:
 
 1. If you have a large PHP application, and you wish to convert it to Javascript/Typescript, but it's impossible to achieve at once. In this case `php_world` allows you to start writing new code in Javascript/Typescript, and convert each part of the application later, as desired.
 2. If you want to benefit from PHP functionality or third-party PHP libraries/SDKs or database drivers.
@@ -13,7 +13,7 @@ PHP CLI must be installed on your system.
 
 ## Limitations
 
-1. Unfortunately it's impossible to automatically garbage-collect PHP object handles, so `delete` must be used explicitly (see below).
+1. Unfortunately it's impossible to automatically garbage-collect PHP object handles, so `delete` must be used explicitly (see below). However there are helper methods.
 2. On non-Windows, it uses unix-domain socket to communicate with the interpreter, so requires `--unstable` flag.
 
 ## Examples
@@ -482,14 +482,14 @@ import {php, settings} from 'https://deno.land/x/php_world/mod.ts';
 settings.stdout = 'piped';
 
 let stdout = await php.get_stdout_reader();
-php.g.echo("*".repeat(256));
+php.g.echo("*".repeat(10));
 php.drop_stdout_reader();
 let data = new TextDecoder().decode(await Deno.readAll(stdout));
-console.log(data == "*".repeat(256)); // prints "true"
+console.log(data == "*".repeat(10)); // prints "true"
 
 await g.exit();
 ```
-If `settings.stdout` is set to something other that `piped`, calling `g.exit()` at the end of script is not requered, but in case of `piped` it's absolutely necessary (even if you didn't call `php.get_stdout_reader()`), to stop the reader task.
+If `settings.stdout` is set to something other that `piped`, calling `g.exit()` at the end of script is not requered, but in case of `piped` it's absolutely necessary (even if you didn't call `php.get_stdout_reader()`), to stop the reader task. Otherwise Deno script can not exit at the end.
 
 Another options for `settings.stdout` are `null` (to ignore the output), and a numeric file descriptor (rid) of an opened file/stream.
 
