@@ -76,7 +76,7 @@ console.log(await class_exists('Hello'));
 await exit();
 ```
 
-At the end of Deno script, it's nice to call `exit()`. This function terminates the interpreter, and frees all the resources. After this function called, the `php_world` can be used again, and a new instance of the interpreter will be spawned. It's OK to call `exit()` several times. If `settings.stdout` is set to `piped` (see below), calling `exit()` is required.
+At the end of Deno script, it's nice to call `exit()`. This function terminates the interpreter, and frees all the resources. After this function called, the `php_world` can be used again, and a new instance of the interpreter will be spawned. It's OK to call `exit()` several times. If `settings.stdout` is set to `piped` (see below), calling `exit()` may be necessary to let Deno script exit naturally at it's end, and not awaiting for PHP output.
 
 If function's result is not awaited-for, the function will work in the background, and if it throws exception, this exception will come out on next operation awaiting. After exception occures, all further operations in current microtask iteration will be skipped (see below).
 
@@ -375,12 +375,12 @@ catch (e)
 }
 ```
 
-The InterpreterError class has the following fields: `message`, `fileName`, `lineNumber`, `trace` (string).
+InterpreterError has the following fields: `message`, `fileName`, `lineNumber`, `trace` (string).
 
 If a function throws exception, and you don't await for the result, it's error will be returned to the next awaited operation within current microtask iteration.
 
 ```ts
-import {g, c} from 'https://deno.land/x/php_world/mod.ts';
+import {g, c, php} from 'https://deno.land/x/php_world/mod.ts';
 
 await g.eval
 (	`	function failure($msg)
@@ -395,7 +395,10 @@ g.failure('Test 1'); // $n gets the value of 1
 g.failure('Test 2'); // this will no be executed, so $n will remain 1
 g.failure('Test 3'); // not executed
 try
-{	await g.$n; // throws error 'Test 1'
+{	// await for some fake variable result
+	await g.$n; // throws error 'Test 1'
+	// or we can use php.ready() to just await for all pending operations
+	await php.ready();
 }
 catch (e)
 {	console.log(e.message); // prints 'Test 1'
@@ -489,7 +492,7 @@ console.log(data == "*".repeat(10)); // prints "true"
 
 await g.exit();
 ```
-If `settings.stdout` is set to something other that `piped`, calling `g.exit()` at the end of script is not requered, but in case of `piped` it's absolutely necessary (even if you didn't call `php.get_stdout_reader()`), to stop the reader task. Otherwise Deno script can not exit at the end.
+If `settings.stdout` is set to something other that `piped`, calling `g.exit()` at the end of script is not requered, but in case of `piped` not calling it may cause Deno script not exiting at the end, because the task that reads from PHP STDOUT may not know that there's no more output expected.
 
 Another options for `settings.stdout` are `null` (to ignore the output), and a numeric file descriptor (rid) of an opened file/stream.
 

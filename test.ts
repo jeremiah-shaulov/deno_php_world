@@ -638,6 +638,37 @@ Deno.test
 		data = new TextDecoder().decode(await Deno.readAll(stdout));
 		assertEquals(data, "*".repeat(256));
 
+		// exit + no sleep
+		stdout = await php.get_stdout_reader();
+		php.g.echo("*".repeat(256));
+		let error;
+		php.g.eval('exit;').catch((e: any) => {error = e});
+		php.drop_stdout_reader();
+		data = new TextDecoder().decode(await Deno.readAll(stdout));
+		assertEquals(data, "*".repeat(256));
+		let ok = g.substr('ok', 0, 100);
+		await php.ready();
+		assert(error !== undefined);
+		assertEquals(await ok, 'ok');
+
+		// await
+		stdout = await php.get_stdout_reader();
+		php.g.echo("*".repeat(256));
+		php.drop_stdout_reader();
+		data = new TextDecoder().decode(await Deno.readAll(stdout));
+		assertEquals(data, "*".repeat(256));
+		await g.phpversion();
+
+		// exit + sleep
+		stdout = await php.get_stdout_reader();
+		php.g.echo("*".repeat(256));
+		error = undefined;
+		php.g.eval('exit;').catch((e: any) => {error = e});
+		php.drop_stdout_reader();
+		await sleep(0.2);
+		data = new TextDecoder().decode(await Deno.readAll(stdout));
+		assertEquals(data, "*".repeat(256));
+
 		await g.exit();
 	}
 );

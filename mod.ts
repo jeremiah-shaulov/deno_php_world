@@ -110,7 +110,7 @@ export class PhpInterpreter
 	private proc: Deno.Process|undefined;
 	private socket: Deno.Listener|undefined;
 	private commands_io: Deno.Conn|undefined;
-	private is_initing = false;
+	private is_inited = false;
 	private using_unix_socket = '';
 	private ongoing: Promise<unknown> = Promise.resolve();
 	private stdout_mux: ReaderMux|undefined;
@@ -695,8 +695,11 @@ export class PhpInterpreter
 		}
 	}
 
-	private async init()
-	{	// 1. Open a socket, and start listening
+	private async do_init()
+	{	// 1. Set is_inited flag, to avoid entering this function recursively
+		assert(!this.is_inited);
+		this.is_inited = true;
+		// 2. Open a socket, and start listening
 		let php_socket;
 		if (this.settings.unix_socket_name && Deno.build.os!='windows')
 		{	this.using_unix_socket = this.settings.unix_socket_name;
@@ -708,18 +711,18 @@ export class PhpInterpreter
 			this.socket = Deno.listen({transport: 'tcp', hostname: '127.0.0.1', port: 0});
 			php_socket = 'tcp://127.0.0.1:'+(this.socket.addr as Deno.NetAddr).port;
 		}
-		// 2. Run the PHP interpreter
+		// 3. Run the PHP interpreter
 		let cmd = DEBUG_PHP_INIT ? [this.settings.php_cli_name, 'php-init.ts'] : [this.settings.php_cli_name, '-r', PHP_INIT.slice('<?php\n\n'.length)];
 		if (Deno.args.length)
 		{	cmd.splice(cmd.length, 0, '--', ...Deno.args);
 		}
 		this.proc = Deno.run({cmd, stdin: 'piped', stdout: this.settings.stdout, stderr: 'inherit'});
-		// 3. Generate random key
+		// 4. Generate random key
 		let key = await get_random_key();
 		let end_mark = get_weak_random_bytes(READER_MUX_END_MARK_LEN);
-		// 4. Send the HELO packet with opened socket address and the key
+		// 5. Send the HELO packet with opened socket address and the key
 		this.do_write(REC_HELO, JSON.stringify([php_socket, key, end_mark]));
-		// 5. Accept connection from the interpreter. Identify it by the key.
+		// 6. Accept connection from the interpreter. Identify it by the key.
 		while (true)
 		{	this.commands_io = await this.socket.accept();
 			try
@@ -733,55 +736,10 @@ export class PhpInterpreter
 			}
 			this.commands_io.close();
 		}
-		// 6. Mux stdout
+		// 7. Mux stdout
 		if (this.settings.stdout == 'piped')
 		{	this.stdout_mux = new ReaderMux(this.proc.stdout!, end_mark);
 		}
-		// 7. Done
-		this.is_initing = false;
-	}
-
-	private schedule<T>(callback: () => T | Promise<T>): Promise<T>
-	{	if (!this.commands_io && !this.is_initing)
-		{	this.is_initing = true;
-			this.schedule(() => this.init());
-		}
-		let promise = this.ongoing.then(callback);
-		this.ongoing = promise;
-		queueMicrotask(() => {this.ongoing = this.ongoing.catch(() => {})});
-		return promise;
-	}
-
-	private write(record_type: number, str: string)
-	{	return this.schedule(() => this.do_write(record_type, str));
-	}
-
-	private write_read(record_type: number, str: string)
-	{	return this.schedule(() => this.do_write(record_type, str).then(() => this.do_read()));
-	}
-
-	private exit()
-	{	return this.schedule(() => this.do_exit());
-	}
-
-	push_frame()
-	{	this.schedule(() => this.do_push_frame());
-	}
-
-	pop_frame()
-	{	this.schedule(() => this.do_pop_frame());
-	}
-
-	n_objects()
-	{	return this.schedule(() => this.do_n_objects());
-	}
-
-	get_stdout_reader()
-	{	return this.schedule(() => this.do_get_stdout_reader());
-	}
-
-	drop_stdout_reader()
-	{	return this.schedule(() => this.do_drop_stdout_reader());
 	}
 
 	private async do_write(record_type: number, str: string)
@@ -789,8 +747,11 @@ export class PhpInterpreter
 		let len = new DataView(body.buffer);
 		len.setInt32(0, record_type);
 		len.setInt32(4, body.length - 8);
+		if (!this.is_inited)
+		{	await this.do_init();
+		}
 		if (this.stdout_mux && !this.stdout_mux.is_reading)
-		{	this.stdout_mux.set_writer(Deno.stdout);
+		{	await this.stdout_mux.set_writer(Deno.stdout);
 		}
 		await Deno.writeAll(this.proc!.stdin!, body);
 	}
@@ -858,6 +819,7 @@ export class PhpInterpreter
 		this.proc = undefined;
 		this.socket = undefined;
 		this.commands_io = undefined;
+		this.is_inited = false;
 		this.last_inst_id = -1;
 		this.stack_frames.length = 0;
 		return status;
@@ -870,7 +832,10 @@ export class PhpInterpreter
 	}
 
 	private async do_push_frame()
-	{	this.stack_frames.push(this.last_inst_id);
+	{	if (!this.is_inited)
+		{	await this.do_init();
+		}
+		this.stack_frames.push(this.last_inst_id);
 	}
 
 	private async do_pop_frame()
@@ -888,8 +853,14 @@ export class PhpInterpreter
 	}
 
 	private async do_get_stdout_reader(): Promise<Deno.Reader>
-	{	if (!this.stdout_mux)
+	{	if (!this.is_inited)
+		{	await this.do_init();
+		}
+		if (!this.stdout_mux)
 		{	throw new Error("Set settings.stdout to 'piped' to be able to redirect stdout");
+		}
+		if (this.stdout_mux.is_reading)
+		{	await this.do_write(REC_END_STDOUT, '');
 		}
 		return await this.stdout_mux.get_reader();
 	}
@@ -901,6 +872,49 @@ export class PhpInterpreter
 			}
 			await this.stdout_mux.set_none();
 		}
+	}
+
+	private schedule<T>(callback: () => T | Promise<T>): Promise<T>
+	{	let promise = this.ongoing.then(callback);
+		this.ongoing = promise;
+		queueMicrotask(() => {this.ongoing = this.ongoing.catch(() => {})});
+		return promise;
+	}
+
+	private write(record_type: number, str: string)
+	{	return this.schedule(() => this.do_write(record_type, str));
+	}
+
+	private write_read(record_type: number, str: string)
+	{	return this.schedule(() => this.do_write(record_type, str).then(() => this.do_read()));
+	}
+
+	private exit()
+	{	return this.schedule(() => this.do_exit());
+	}
+
+	push_frame()
+	{	this.schedule(() => this.do_push_frame());
+	}
+
+	pop_frame()
+	{	this.schedule(() => this.do_pop_frame());
+	}
+
+	n_objects()
+	{	return this.schedule(() => this.do_n_objects());
+	}
+
+	get_stdout_reader()
+	{	return this.schedule(() => this.do_get_stdout_reader());
+	}
+
+	drop_stdout_reader()
+	{	return this.schedule(() => this.do_drop_stdout_reader());
+	}
+
+	ready(): Promise<unknown>
+	{	return this.ongoing;
 	}
 }
 
