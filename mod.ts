@@ -143,21 +143,21 @@ export class PhpInterpreter
 									if (path.length == 0)
 									{	// case: C
 										// or case: $var
-										return async function(prop_name)
+										return function(prop_name)
 										{	let record_type = REC_CONST;
 											let path_str = prop_name;
 											if (prop_name.charAt(0) == '$')
 											{	path_str = path_str.slice(1); // cut '$'
 												record_type = REC_GET;
 											}
-											return await php.write_read(record_type, path_str);
+											return php.write_read(record_type, path_str);
 										};
 									}
 									else if (path[0].charAt(0) != '$')
 									{	// case: A\B\C
 										let path_str = path.join('\\');
-										return async function(prop_name)
-										{	return await php.write_read(REC_CONST, path_str+'\\'+prop_name);
+										return function(prop_name)
+										{	return php.write_read(REC_CONST, path_str+'\\'+prop_name);
 										};
 									}
 									else
@@ -192,7 +192,7 @@ export class PhpInterpreter
 										if (path_str.indexOf(' ') != -1)
 										{	throw new Error(`Class/namespace names must not contain spaces: ${path_str}`);
 										}
-										return async function(prop_name)
+										return function(prop_name)
 										{	let record_type = REC_CONST;
 											let path_str_2 = path_str;
 											if (prop_name.charAt(0) != '$')
@@ -205,7 +205,7 @@ export class PhpInterpreter
 												}
 												path_str_2 += ' '+prop_name.slice(1); // cut '$'
 											}
-											return await php.write_read(record_type, path_str_2);
+											return php.write_read(record_type, path_str_2);
 										};
 									}
 									else if (var_i == 0)
@@ -365,8 +365,8 @@ export class PhpInterpreter
 									{	// case: func_name()
 										switch (path[0].toLowerCase())
 										{	case 'exit':
-												return async function()
-												{	return await php.exit();
+												return function()
+												{	return php.exit();
 												};
 											case 'eval':
 												return function(args)
@@ -395,36 +395,36 @@ export class PhpInterpreter
 													return promise;
 												};
 											case 'echo':
-												return async function(args)
-												{	return await php.write_read(REC_CALL_ECHO, JSON.stringify([...args]));
+												return function(args)
+												{	return php.write_read(REC_CALL_ECHO, JSON.stringify([...args]));
 												};
 											case 'include':
-												return async function(args)
+												return function(args)
 												{	if (args.length != 1)
 													{	throw new Error('Invalid number of arguments to include()');
 													}
-													return await php.write_read(REC_CALL_INCLUDE, JSON.stringify(args[0]));
+													return php.write_read(REC_CALL_INCLUDE, JSON.stringify(args[0]));
 												};
 											case 'include_once':
-												return async function(args)
+												return function(args)
 												{	if (args.length != 1)
 													{	throw new Error('Invalid number of arguments to include_once()');
 													}
-													return await php.write_read(REC_CALL_INCLUDE_ONCE, JSON.stringify(args[0]));
+													return php.write_read(REC_CALL_INCLUDE_ONCE, JSON.stringify(args[0]));
 												};
 											case 'require':
-												return async function(args)
+												return function(args)
 												{	if (args.length != 1)
 													{	throw new Error('Invalid number of arguments to require()');
 													}
-													return await php.write_read(REC_CALL_REQUIRE, JSON.stringify(args[0]));
+													return php.write_read(REC_CALL_REQUIRE, JSON.stringify(args[0]));
 												};
 											case 'require_once':
-												return async function(args)
+												return function(args)
 												{	if (args.length != 1)
 													{	throw new Error('Invalid number of arguments to require_once()');
 													}
-													return await php.write_read(REC_CALL_REQUIRE_ONCE, JSON.stringify(args[0]));
+													return php.write_read(REC_CALL_REQUIRE_ONCE, JSON.stringify(args[0]));
 												};
 										}
 									}
@@ -561,11 +561,11 @@ export class PhpInterpreter
 				path =>
 				{	if (path.length == 0)
 					{	let path_str = inst_id+' ';
-						return async function(prop_name)
+						return function(prop_name)
 						{	if (prop_name.indexOf(' ') != -1)
 							{	throw new Error(`Property name must not contain spaces: $${prop_name}`);
 							}
-							return await php.write_read(REC_CLASS_GET, path_str+prop_name);
+							return php.write_read(REC_CLASS_GET, path_str+prop_name);
 						};
 					}
 					else
@@ -649,8 +649,8 @@ export class PhpInterpreter
 						}
 						else
 						{	let path_str = inst_id+' '+path[0];
-							return async function(args)
-							{	return await php.write_read(REC_CLASS_CALL, args.length==0 ? path_str : path_str+' '+JSON.stringify([...args]));
+							return function(args)
+							{	return php.write_read(REC_CLASS_CALL, args.length==0 ? path_str : path_str+' '+JSON.stringify([...args]));
 							};
 						}
 					}
@@ -659,8 +659,8 @@ export class PhpInterpreter
 						{	throw new Error(`Function name must not contain spaces: ${path[path.length-1]}`);
 						}
 						let path_str = inst_id+' '+path[path.length-1]+' ['+JSON.stringify(path.slice(0, -1))+',';
-						return async function(args)
-						{	return await php.write_read(REC_CLASS_CALL_PATH, path_str+JSON.stringify([...args])+']');
+						return function(args)
+						{	return php.write_read(REC_CLASS_CALL_PATH, path_str+JSON.stringify([...args])+']');
 						};
 					}
 				},
@@ -712,7 +712,7 @@ export class PhpInterpreter
 			php_socket = 'tcp://127.0.0.1:'+(this.socket.addr as Deno.NetAddr).port;
 		}
 		// 3. Run the PHP interpreter
-		let cmd = DEBUG_PHP_INIT ? [this.settings.php_cli_name, 'php-init.ts'] : [this.settings.php_cli_name, '-r', PHP_INIT.slice('<?php\n\n'.length)];
+		let cmd = DEBUG_PHP_INIT ? [this.settings.php_cli_name, '-f', 'php-init.ts'] : [this.settings.php_cli_name, '-r', PHP_INIT.slice('<?php\n\n'.length)];
 		if (Deno.args.length)
 		{	cmd.splice(cmd.length, 0, '--', ...Deno.args);
 		}
@@ -881,6 +881,10 @@ export class PhpInterpreter
 		return promise;
 	}
 
+	ready(): Promise<unknown>
+	{	return this.ongoing;
+	}
+
 	private write(record_type: number, str: string)
 	{	return this.schedule(() => this.do_write(record_type, str));
 	}
@@ -911,10 +915,6 @@ export class PhpInterpreter
 
 	drop_stdout_reader()
 	{	return this.schedule(() => this.do_drop_stdout_reader());
-	}
-
-	ready(): Promise<unknown>
-	{	return this.ongoing;
 	}
 }
 

@@ -306,7 +306,7 @@ In this example, i use function `init()` to create a global variable. Just setti
 Remote PHP objects are represented in Deno as opaque `Proxy` objects, and they don't feel like real Typescript objects. Most of magic behavior is missing. For example they don't convert to strings automatically (because `toString()` magic method is synchronous). Only the following object features work:
 
 1. Getting, setting and deleting properties.
-2. The `instanceof` operator.
+2. `instanceof` operator.
 3. Async iterators.
 
 Example:
@@ -395,9 +395,8 @@ g.failure('Test 1'); // $n gets the value of 1
 g.failure('Test 2'); // this will no be executed, so $n will remain 1
 g.failure('Test 3'); // not executed
 try
-{	// await for some fake variable result
-	await g.$n; // throws error 'Test 1'
-	// or we can use php.ready() to just await for all pending operations
+{	// await for anything will throw exception
+	// we can use php.ready() to just await for all pending operations
 	await php.ready();
 }
 catch (e)
@@ -409,7 +408,7 @@ console.log(await g.$n); // prints 1
 But if you don't await any other `php_world` operation within the current microtask iteration, the exception will be lost.
 
 ```ts
-import {g, c} from 'https://deno.land/x/php_world/mod.ts';
+import {g, c, php} from 'https://deno.land/x/php_world/mod.ts';
 
 await g.eval
 (	`	function failure($msg)
@@ -426,7 +425,7 @@ queueMicrotask
 	{	g.failure('Test 2'); // $n gets the value of 2
 		g.failure('Test 3'); // this will no be executed, so $n remains 2
 		try
-		{	await g.$n; // throws error 'Test 2'
+		{	await php.ready(); // throws error 'Test 2'
 		}
 		catch (e)
 		{	console.log(e.message); // prints 'Test 2'
