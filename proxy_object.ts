@@ -102,14 +102,14 @@ export function create_proxy
 					if (!applier)
 					{	applier = get_applier(path);
 					}
-					return applier(args);
+					return applier(args as any);
 				},
 				construct(_, args) // new Class
 				{	// case: new path
 					if (!constructor)
 					{	constructor = get_constructor(path);
 					}
-					return constructor(args);
+					return constructor(args as any);
 				}
 			}
 		);

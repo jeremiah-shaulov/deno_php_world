@@ -251,7 +251,7 @@ class _PhpDenoBridge extends Exception
 				{	if (strlen($len)==0 or $len=="\n" or $len=="\r" or $len=="\r\n")
 					{	continue;
 					}
-					exit; // Fatal error
+					return; // Fatal error
 				}
 				list('T' => $record_type, 'L' => $len) = unpack('NT/NL', $len);
 				$data = '';
@@ -269,7 +269,8 @@ class _PhpDenoBridge extends Exception
 						$data = json_decode($data, true);
 						$output = stream_socket_client($data[0], $errno, $errstr);
 						if ($output === false)
-						{	exit("stream_socket_client(): errno=$errno $errstr");
+						{	error_log("stream_socket_client(): errno=$errno $errstr");
+							return;
 						}
 						self::$end_mark = implode(array_map(function($b) {return chr($b);}, $data[2]));
 						$result = $data[1];

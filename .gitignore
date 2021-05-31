@@ -1,3 +1,4 @@
 main.ts
 .directory
 .vscode
+tests/coverage

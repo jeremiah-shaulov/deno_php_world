@@ -1,6 +1,6 @@
+import {g, c, php, settings, PhpInterpreter, InterpreterExitError} from '../mod.ts';
 import {assert, assertEquals} from "https://deno.land/std@0.87.0/testing/asserts.ts";
 import {sleep} from "https://deno.land/x/sleep/mod.ts";
-import {g, c, php, settings, PhpInterpreter, InterpreterExitError} from './mod.ts';
 
 const {eval: php_eval, ob_start, ob_get_clean, echo, json_encode, exit} = g;
 const {MainNs, C} = c;

@@ -491,7 +491,7 @@ console.log(data == "*".repeat(10)); // prints "true"
 
 await g.exit();
 ```
-If `settings.stdout` is set to something other that `piped`, calling `g.exit()` at the end of script is not requered, but in case of `piped` not calling it may cause Deno script not exiting at the end, because the task that reads from PHP STDOUT may not know that there's no more output expected.
+If `settings.stdout` is set to something other that `piped`, calling `g.exit()` at the end of script is not required, but in case of `piped` not calling it may cause Deno script not exiting at the end, because the task that reads from PHP STDOUT may not know that there's no more output expected.
 
 Another options for `settings.stdout` are `null` (to ignore the output), and a numeric file descriptor (rid) of an opened file/stream.
 
