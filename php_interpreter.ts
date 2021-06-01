@@ -2,15 +2,17 @@ import {PHP_INIT} from './php-init.ts';
 import {create_proxy} from './proxy_object.ts';
 import {ReaderMux} from './reader_mux.ts';
 import {debug_assert} from './debug_assert.ts';
+import {fcgi, ResponseWithCookies} from 'https://deno.land/x/fcgi@v0.0.18/mod.ts';
 import {writeAll} from 'https://deno.land/std/io/util.ts';
 import {exists} from "https://deno.land/std/fs/mod.ts";
+import {dirname} from "https://deno.land/std/path/mod.ts";
 
 const PHP_CLI_NAME_DEFAULT = 'php';
-const SOCKET_NAME_DEFAULT = '/tmp/deno-php-commands-io';
+const TMP_SCRIPT_FILENAME = 'deno-php-world.php';
 const DEBUG_PHP_INIT = false;
 const READER_MUX_END_MARK_LEN = 32;
+const DEFAULT_KEEP_ALIVE_TIMEOUT = 10000;
 
-const REC_HELO = 0;
 const REC_CONST = 1;
 const REC_GET = 2;
 const REC_GET_THIS = 3;
@@ -52,6 +54,9 @@ const RE_BAD_CLASSNAME_FOR_EVAL = /[^\w\\]/;
 
 let symbol_php_object = Symbol('php_object');
 
+let encoder = new TextEncoder;
+let decoder = new TextDecoder;
+
 async function get_random_key(): Promise<string>
 {	if (await exists('/dev/urandom'))
 	{	let fh = await Deno.open('/dev/urandom', {read: true});
@@ -68,7 +73,7 @@ async function get_random_key(): Promise<string>
 		}
 		return btoa(String.fromCharCode.apply(null, buffer as any));
 	}
-	return String(Math.random());
+	return Math.random()+'';
 }
 
 function get_weak_random_bytes(n: number)
@@ -77,6 +82,25 @@ function get_weak_random_bytes(n: number)
 	{	buffer[i] = Math.floor(Math.random()*256);
 	}
 	return buffer;
+}
+
+let tmp_dirname = '';
+async function get_tmp_dir()
+{	if (!tmp_dirname)
+	{	let tmp_name = await Deno.makeTempFile();
+		tmp_dirname = dirname(tmp_name);
+		tmp_dirname = tmp_name.slice(0, tmp_dirname.length+1); // inclide dir separator char
+		await Deno.remove(tmp_name);
+	}
+	return tmp_dirname;
+}
+
+async function create_tmp_script_file()
+{	let filename = (await get_tmp_dir()) + TMP_SCRIPT_FILENAME;
+	if (!await exists(filename))
+	{	await Deno.writeTextFile(filename, PHP_INIT, {mode: 0o640});
+	}
+	return filename;
 }
 
 export class InterpreterError extends Error
@@ -93,7 +117,11 @@ export class InterpreterExitError extends Error
 
 class Settings
 {	public php_cli_name = PHP_CLI_NAME_DEFAULT;
-	public unix_socket_name = SOCKET_NAME_DEFAULT;
+	public php_fpm =
+	{	listen: '',
+		keep_alive_timeout: DEFAULT_KEEP_ALIVE_TIMEOUT
+	};
+	public unix_socket_name = '';
 	public stdout: 'inherit'|'piped'|'null'|number = 'inherit';
 }
 
@@ -102,17 +130,17 @@ export class PhpInterpreter
 	public c: any;
 	public settings = new Settings;
 
-	private proc: Deno.Process|undefined;
-	private socket: Deno.Listener|undefined;
+	private php_cli_proc: Deno.Process|undefined;
+	private php_fpm_response: Promise<ResponseWithCookies>|undefined;
+	private listener: Deno.Listener|undefined;
 	private commands_io: Deno.Conn|undefined;
 	private is_inited = false;
 	private using_unix_socket = '';
 	private ongoing: Promise<unknown> = Promise.resolve();
+	private ongoing_stderr: Promise<unknown> = Promise.resolve();
 	private stdout_mux: ReaderMux|undefined;
 	private last_inst_id = -1;
 	private stack_frames: number[] = [];
-	private encoder = new TextEncoder;
-	private decoder = new TextDecoder;
 
 	constructor()
 	{	this.g = get_global(this, false);
@@ -693,33 +721,76 @@ export class PhpInterpreter
 	private async do_init()
 	{	// 1. Set is_inited flag, to avoid entering this function recursively
 		debug_assert(!this.is_inited);
+		debug_assert(!this.php_cli_proc && !this.php_fpm_response && !this.stdout_mux && !this.commands_io);
 		this.is_inited = true;
-		// 2. Open a socket, and start listening
+		// 2. Open a listener, and start listening
 		let php_socket;
-		if (this.settings.unix_socket_name && Deno.build.os!='windows')
+		if (this.settings.unix_socket_name)
 		{	this.using_unix_socket = this.settings.unix_socket_name;
-			this.socket = Deno.listen({transport: 'unix', path: this.settings.unix_socket_name});
+			this.listener = Deno.listen({transport: 'unix', path: this.using_unix_socket});
 			php_socket = 'unix://'+this.using_unix_socket;
 		}
 		else
 		{	this.using_unix_socket = '';
-			this.socket = Deno.listen({transport: 'tcp', hostname: '127.0.0.1', port: 0});
-			php_socket = 'tcp://127.0.0.1:'+(this.socket.addr as Deno.NetAddr).port;
+			this.listener = Deno.listen({transport: 'tcp', hostname: '127.0.0.1', port: 0});
+			php_socket = 'tcp://127.0.0.1:'+(this.listener.addr as Deno.NetAddr).port;
 		}
-		// 3. Run the PHP interpreter
-		let cmd = DEBUG_PHP_INIT ? [this.settings.php_cli_name, '-f', 'php-init.ts'] : [this.settings.php_cli_name, '-r', PHP_INIT.slice('<?php\n\n'.length)];
-		if (Deno.args.length)
-		{	cmd.splice(cmd.length, 0, '--', ...Deno.args);
-		}
-		this.proc = Deno.run({cmd, stdin: 'piped', stdout: this.settings.stdout, stderr: 'inherit'});
-		// 4. Generate random key
+		// 3. REC_HELO (generate random key)
 		let key = await get_random_key();
 		let end_mark = get_weak_random_bytes(READER_MUX_END_MARK_LEN);
-		// 5. Send the HELO packet with opened socket address and the key
-		this.do_write(REC_HELO, JSON.stringify([php_socket, key, end_mark]));
-		// 6. Accept connection from the interpreter. Identify it by the key.
+		let rec_helo = key+' '+btoa(String.fromCharCode.apply(null, end_mark as any))+' '+php_socket;
+		let php_init_file = '';
+		// 4. Run the PHP interpreter or connect to PHP-FPM service
+		if (!this.settings.php_fpm.listen)
+		{	// Run the PHP interpreter
+			let cmd = DEBUG_PHP_INIT ? [this.settings.php_cli_name, '-f', await create_tmp_script_file()] : [this.settings.php_cli_name, '-r', PHP_INIT.slice('<?php\n\n'.length)];
+			if (Deno.args.length)
+			{	cmd.splice(cmd.length, 0, '--', ...Deno.args);
+			}
+			this.php_cli_proc = Deno.run({cmd, stdin: 'piped', stdout: this.settings.stdout, stderr: 'inherit'});
+			// Send the HELO packet with opened listener address and the key
+			await writeAll(this.php_cli_proc.stdin!, encoder.encode(rec_helo));
+			this.php_cli_proc.stdin!.close();
+			// Mux stdout
+			if (this.settings.stdout == 'piped')
+			{	this.stdout_mux = new ReaderMux(Promise.resolve(this.php_cli_proc.stdout), end_mark);
+			}
+		}
+		else
+		{	// Connect to PHP-FPM service
+			php_init_file = await create_tmp_script_file();
+			while (!fcgi.canFetch())
+			{	await fcgi.pollCanFetch();
+			}
+			this.php_fpm_response = fcgi.fetch
+			(	{	addr: this.settings.php_fpm.listen,
+					scriptFilename: php_init_file,
+					params: new Map(Object.entries({DENO_WORLD_HELO: rec_helo})),
+					timeout: Number.MAX_SAFE_INTEGER,
+					keepAliveTimeout: this.settings.php_fpm.keep_alive_timeout,
+					onLogError: msg =>
+					{	this.ongoing_stderr = this.ongoing_stderr.then(() => writeAll(Deno.stderr, encoder.encode(msg+'\n')));
+					}
+				},
+				'http://localhost/'
+			);
+			// Mux stdout
+			this.stdout_mux = new ReaderMux(this.php_fpm_response.then(r => r.body), end_mark);
+		}
+		// 5. Accept connection from the interpreter. Identify it by the key.
 		while (true)
-		{	this.commands_io = await this.socket.accept();
+		{	let accept = this.listener.accept();
+			if (!this.php_fpm_response)
+			{	this.commands_io = await accept;
+			}
+			else
+			{	let result = await Promise.race([accept, this.php_fpm_response]);
+				if (result instanceof ResponseWithCookies)
+				{	accept.then(s => s.close());
+					throw new Error(`Failed to execute PHP-FPM script "${php_init_file}" through socket "${this.settings.php_fpm.listen}": status ${result.status}, ${await result.text()}`);
+				}
+				this.commands_io = result;
+			}
 			try
 			{	let helo = await this.do_read();
 				if (helo == key)
@@ -731,14 +802,10 @@ export class PhpInterpreter
 			}
 			this.commands_io.close();
 		}
-		// 7. Mux stdout
-		if (this.settings.stdout == 'piped')
-		{	this.stdout_mux = new ReaderMux(this.proc.stdout!, end_mark);
-		}
 	}
 
 	private async do_write(record_type: number, str: string)
-	{	let body = this.encoder.encode('01230123'+str);
+	{	let body = encoder.encode('01230123'+str);
 		let len = new DataView(body.buffer);
 		len.setInt32(0, record_type);
 		len.setInt32(4, body.length - 8);
@@ -746,9 +813,29 @@ export class PhpInterpreter
 		{	await this.do_init();
 		}
 		if (this.stdout_mux && !this.stdout_mux.is_reading)
-		{	await this.stdout_mux.set_writer(Deno.stdout);
+		{	let {stdout} = this.settings;
+			let writer: Deno.Writer;
+			if (typeof(stdout) == 'number')
+			{	let rid = stdout;
+				writer =
+				{	async write(data)
+					{	return await Deno.write(rid, data);
+					}
+				};
+			}
+			else if (stdout == 'null')
+			{	writer =
+				{	async write(data)
+					{	return data.length;
+					}
+				};
+			}
+			else
+			{	writer = Deno.stdout;
+			}
+			await this.stdout_mux.set_writer(writer);
 		}
-		await writeAll(this.proc!.stdin!, body);
+		await writeAll(this.commands_io!, body);
 	}
 
 	private async do_read(): Promise<any>
@@ -783,26 +870,31 @@ export class PhpInterpreter
 			pos += n_read;
 		}
 		if (is_error)
-		{	let [file, line, message, trace] = JSON.parse(this.decoder.decode(buffer));
+		{	let [file, line, message, trace] = JSON.parse(decoder.decode(buffer));
 			throw new InterpreterError(message, file, Number(line), trace);
 		}
-		return JSON.parse(this.decoder.decode(buffer));
+		return JSON.parse(decoder.decode(buffer));
 	}
 
 	private async do_exit(is_eof=false)
-	{	await this.do_drop_stdout_reader(is_eof);
-		this.proc?.stdin!.close();
+	{	await this.do_drop_stdout_reader(is_eof, true);
+		if (this.php_fpm_response)
+		{	let response = await this.php_fpm_response;
+			if (response.body)
+			{	await Deno.copy(response.body, {async write(p: Uint8Array) {return p.length}}); // read and discard
+			}
+			this.php_fpm_response = undefined;
+		}
 		if (this.stdout_mux)
-		{	this.proc?.stdout!.close();
+		{	this.php_cli_proc?.stdout!.close();
 			this.stdout_mux = undefined;
 		}
-		let status = await this.proc?.status();
-		this.proc?.close();
+		let status = await this.php_cli_proc?.status();
+		this.php_cli_proc?.close();
 		this.commands_io?.close();
-		this.socket?.close();
+		this.listener?.close();
 		if (this.using_unix_socket)
-		{	let yes = await exists(this.using_unix_socket);
-			if (yes)
+		{	if (await exists(this.using_unix_socket))
 			{	try
 				{	await Deno.remove(this.using_unix_socket);
 				}
@@ -811,8 +903,10 @@ export class PhpInterpreter
 				}
 			}
 		}
-		this.proc = undefined;
-		this.socket = undefined;
+		await this.ongoing_stderr;
+		this.ongoing_stderr = Promise.resolve();
+		this.php_cli_proc = undefined;
+		this.listener = undefined;
 		this.commands_io = undefined;
 		this.is_inited = false;
 		this.last_inst_id = -1;
@@ -860,12 +954,18 @@ export class PhpInterpreter
 		return await this.stdout_mux.get_reader();
 	}
 
-	private async do_drop_stdout_reader(is_eof=false)
+	private async do_drop_stdout_reader(is_eof=false, and_close_write=false)
 	{	if (this.stdout_mux)
 		{	if (this.stdout_mux.is_reading && !is_eof)
 			{	await this.do_write(REC_END_STDOUT, '');
 			}
+			if (and_close_write)
+			{	this.commands_io?.closeWrite();
+			}
 			await this.stdout_mux.set_none();
+		}
+		else if (and_close_write)
+		{	this.commands_io?.closeWrite();
 		}
 	}
 
@@ -910,5 +1010,9 @@ export class PhpInterpreter
 
 	drop_stdout_reader()
 	{	return this.schedule(() => this.do_drop_stdout_reader());
+	}
+
+	close_idle()
+	{	fcgi.closeIdle();
 	}
 }

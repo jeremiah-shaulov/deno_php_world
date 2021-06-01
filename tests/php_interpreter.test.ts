@@ -4,6 +4,7 @@ import {sleep} from "https://deno.land/x/sleep/mod.ts";
 
 const {eval: php_eval, ob_start, ob_get_clean, echo, json_encode, exit} = g;
 const {MainNs, C} = c;
+const PHP_FPM_LISTEN = '/run/php/php-fpm.jeremiah.sock';
 
 Deno.test
 (	'Exit',
@@ -679,5 +680,28 @@ Deno.test
 	{	assertEquals(await g.substr("\x00\x01\x02 \x7F\x80\x81 \xFD\xFE\xFF", 0, 100), "\x00\x01\x02 \x7F\x80\x81 \xFD\xFE\xFF");
 
 		await g.exit();
+	}
+);
+
+Deno.test
+(	'PHP-FPM',
+	async () =>
+	{	settings.php_fpm.listen = PHP_FPM_LISTEN;
+		let promises = [];
+		for (let i=0; i<10; i++)
+		{	let php_i = new PhpInterpreter;
+			promises[i] = Promise.resolve().then
+			(	async () =>
+				{	let len = await php_i.g.strlen('*'.repeat(i));
+					await php_i.g.exit();
+					return len;
+				}
+			);
+		}
+		let results: any = await Promise.all(promises);
+		for (let i=0; i<10; i++)
+		{	assertEquals(results[i], i);
+		}
+		php.close_idle();
 	}
 );

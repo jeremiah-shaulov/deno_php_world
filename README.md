@@ -1,6 +1,6 @@
 # php_world
 
-This module extends Deno world with PHP, by running commandline PHP interpreter in the background.
+This module extends Deno world with PHP, by running commandline PHP interpreter in the background, or by connecting to a PHP-FPM service.
 
 There are several possible reasons to use `php_world`:
 
@@ -9,12 +9,11 @@ There are several possible reasons to use `php_world`:
 
 ## Requirements
 
-PHP CLI must be installed on your system.
+PHP-CLI or PHP-FPM must be installed on your system.
 
 ## Limitations
 
 1. Unfortunately it's impossible to automatically garbage-collect PHP object handles, so `delete` must be used explicitly (see below). However there are helper methods.
-2. On non-Windows, it uses unix-domain socket to communicate with the interpreter, so requires `--unstable` flag.
 
 ## Examples
 
@@ -27,13 +26,13 @@ import {g, c} from 'https://deno.land/x/php_world/mod.ts';
 await g.exit();
 ```
 
-Run the script like this:
+Run the script as follows:
 
 ```bash
-deno run --unstable --allow-run --allow-read --allow-write --allow-net main.ts
+deno run --unstable --allow-read --allow-write --allow-net --allow-run=php main.ts
 ```
 
-`php_world` will execute the `php` CLI command. If in your system PHP appears under different name, you need to set it before accessing `php_world` interfaces.
+By default `php_world` will execute the `php` CLI command. If in your system PHP appears under different name, you need to set it before accessing `php_world` interfaces.
 
 ```ts
 import {g, c, settings} from 'https://deno.land/x/php_world/mod.ts';
@@ -44,11 +43,13 @@ settings.php_cli_name = 'php7.4';
 // and at last, terminate the interpreter
 await g.exit();
 ```
-There are 3 configurable settings:
+There are several configurable settings:
 
-1. `settings.php_cli_name` - PHP-CLI command name.
-2. `settings.unix_socket_name` - On Windows this setting is ignored. Name of unix-domain socket to use on non-Windows systems. By default it's `/tmp/deno-php-commands-io`. Setting it to empty string causes `php_world` to use TCP sockets, as on Windows. Currently Deno requires `--unstable` flag when using unix-domain sockets. And the `--allow-net` flag is only needed if using TCP.
+1. `settings.php_cli_name` - PHP-CLI command name (default `php`).
+2. `settings.unix_socket_name` - `php_world` uses socket channel to communicate with the remote interpreter. By default it uses random (free) TCP port. On non-Windows systems you can use a unix-domain socket. Set `settings.unix_socket_name` to full path of socket node file, where it will be created.
 3. `settings.stdout` - allows to redirect PHP process echo output (see below).
+4. `settings.php_fpm.listen` - If set, `php_world` will use PHP-FPM service, not CLI. Set this to what appears in your PHP-FPM pool configuration file (see line that contains `listen = ...`).
+5. `settings.php_fpm.keep_alive_timeout` - Connections to PHP-FPM service will be reused for this number of milliseconds (deno script may not exit while there're idle connections - call `php.close_idle()` to close them).
 
 ### Interface
 
@@ -513,6 +514,47 @@ await g.exit();
 await int_1.g.exit();
 await int_2.g.exit();
 ```
+
+### Limitations of PHP-CLI
+
+Using PHP-CLI backend is simple, but there is one disadvantage.
+
+If some PHP script file declares a function, or some other kind of object, such file cannot be included (or required) multiple times. PHP complains on "Cannot redeclare function". Practically this means that to execute the same script multiple times, a new PHP interpreter must be spawned. Respawning process is slow, and you will not benefit from opcache.
+
+However, it's possible to reorganize the application in such a way, that script files you run directly don't declare objects, but call `require_once()` for files that do declare them.
+
+### Using PHP-FPM
+
+To use PHP-FPM backend (that must be installed on your system), set `settings.php_fpm.listen` to PHP-FPM service address. You can find it in your PHP-FPM pool configuration file.
+
+To get started you can create a new pool file like this (substitute `username` with the user from which you run your deno script):
+
+```ini
+[username]
+user = username
+group = username
+listen = [::1]:8989
+
+pm = dynamic
+pm.max_children = 5
+pm.start_servers = 2
+pm.min_spare_servers = 1
+pm.max_spare_servers = 3
+```
+
+```ts
+import {g, c, PhpInterpreter} from 'https://deno.land/x/php_world/mod.ts';
+
+settings.php_fpm.listen = '[::1]:8989';
+console.log(await g.php_sapi_name());
+await g.exit(); // in case of PHP-FPM, g.exit() doesn't actually call exit() on PHP side, but it terminates a FCGI request
+php.close_idle(); // close idle connection with PHP-FPM (otherwise deno script will not exit immediately)
+```
+
+Common problems:
+
+1. If using unix-domain socket for PHP-FPM service, the deno script must have access to it (`listen.owner = username` and/or `listen.group = username`).
+2. If using unix-domain socket for communication with PHP world (`settings.unix_socket_name`), the PHP interpreter must have access to this socket (`user = username` and/or `group = username`).
 
 ### How fast is deno_world?
 

@@ -6,15 +6,16 @@ export class ReaderMux
 
 	public is_reading = false;
 
-	constructor(private reader: Deno.Reader, public end_mark: Uint8Array)
+	constructor(private reader: Promise<Deno.Reader | null>, public end_mark: Uint8Array)
 	{	this.buffer = new Uint8Array(end_mark.length);
 	}
 
 	async get_reader(): Promise<Deno.Reader>
 	{	let that = this;
-		let {buffer} = this;
+		let {buffer, end_mark} = this;
 
 		await this.task; // let previous reader to complete
+		let reader : Deno.Reader | null;
 		let task_done: () => void;
 		this.task = new Promise(y => {task_done = y});
 		this.is_eof = false;
@@ -25,7 +26,11 @@ export class ReaderMux
 			if (that.is_eof)
 			{	return null;
 			}
-			let n_read = await that.reader.read(out_buffer);
+
+			if (!reader)
+			{	reader = await that.reader;
+			}
+			let n_read = await reader?.read(out_buffer);
 			if (n_read == null)
 			{	that.is_eof = true;
 				that.is_reading = false;
@@ -52,7 +57,7 @@ export class ReaderMux
 				that.buffer_len = buffer.length;
 			}
 			// 3. If last read bytes match end_mark, interrupt the stream
-			if (that.buffer_len==buffer.length && buffer.every((value, index) => value === that.end_mark[index]))
+			if (that.buffer_len==buffer.length && buffer.every((value, index) => value === end_mark[index]))
 			{	that.is_eof = true;
 				n_read -= buffer.length;
 				that.is_reading = false;

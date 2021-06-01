@@ -1,9 +1,8 @@
-export var PHP_INIT = String.raw
+export const PHP_INIT = String.raw
 `<?php
 
 class _PhpDenoBridge extends Exception
-{	private const REC_HELO = 0;
-	private const REC_CONST = 1;
+{	private const REC_CONST = 1;
 	private const REC_GET = 2;
 	private const REC_GET_THIS = 3;
 	private const REC_SET = 4;
@@ -238,17 +237,33 @@ class _PhpDenoBridge extends Exception
 
 	public static function main()
 	{	global $argc, $argv;
+
 		// Install error handler, that converts E_ERROR to Exception
 		self::$error_reporting = error_reporting(); // determine reporting level set by user
 		set_error_handler(__CLASS__.'::error_handler', self::$error_reporting);
+
+		// Read HELO, that is [key, end_mark, socket_name], and output the key back
+		$data = explode(' ', $_SERVER['DENO_WORLD_HELO'] ?? fread(fopen('php://stdin', 'r'), 8*1024));
+		if (count($data) != 3)
+		{	return;
+		}
+		$commands_io = stream_socket_client(trim($data[2]), $errno, $errstr);
+		if ($commands_io === false)
+		{	error_log("stream_socket_client(): errno=$errno $errstr");
+			return;
+		}
+		stream_set_timeout($commands_io, 0x7FFFFFFF);
+		self::$end_mark = base64_decode($data[1]);
+		$data = json_encode($data[0]);
+		fwrite($commands_io, pack('l', strlen($data)).$data);
+
 		// Proceed
-		$stdin = fopen('php://stdin', 'r');
-		while (!feof($stdin))
+		while (!feof($commands_io))
 		{	try
 			{	// 1. Read the request
-				$len = fread($stdin, 8);
+				$len = fread($commands_io, 8);
 				if (strlen($len) != 8)
-				{	if (strlen($len)==0 or $len=="\n" or $len=="\r" or $len=="\r\n")
+				{	if ($len===false or strlen($len)==0 or $len=="\n" or $len=="\r" or $len=="\r\n")
 					{	continue;
 					}
 					return; // Fatal error
@@ -256,7 +271,7 @@ class _PhpDenoBridge extends Exception
 				list('T' => $record_type, 'L' => $len) = unpack('NT/NL', $len);
 				$data = '';
 				while ($len > 0)
-				{	$read = fread($stdin, $len);
+				{	$read = fread($commands_io, $len);
 					$data .= $read;
 					$len -= strlen($read);
 				}
@@ -265,18 +280,7 @@ class _PhpDenoBridge extends Exception
 				$result = null;
 				$result_is_set = false;
 				switch ($record_type)
-				{	case self::REC_HELO:
-						$data = json_decode($data, true);
-						$output = stream_socket_client($data[0], $errno, $errstr);
-						if ($output === false)
-						{	error_log("stream_socket_client(): errno=$errno $errstr");
-							return;
-						}
-						self::$end_mark = implode(array_map(function($b) {return chr($b);}, $data[2]));
-						$result = $data[1];
-						$result_is_set = true;
-						break;
-					case self::REC_CONST:
+				{	case self::REC_CONST:
 						if (defined($data))
 						{	$result = constant($data);
 							$result_is_set = true;
@@ -516,22 +520,22 @@ class _PhpDenoBridge extends Exception
 
 				// 3. Send the result
 				if (!$result_is_set)
-				{	fwrite($output, "\xFF\xFF\xFF\xFF"); // undefined
+				{	fwrite($commands_io, "\xFF\xFF\xFF\xFF"); // undefined
 				}
 				else if ($result === null)
-				{	fwrite($output, "\0\0\0\0");
+				{	fwrite($commands_io, "\0\0\0\0");
 				}
 				else
 				{	$data = json_encode($result);
-					fwrite($output, pack('l', strlen($data)).$data);
+					fwrite($commands_io, pack('l', strlen($data)).$data);
 				}
 			}
 			catch (Throwable $e)
 			{	// 4. Error: send the exception
 				$data = json_encode([$e->getFile(), $e->getLine(), $e->getMessage(), $e->getTraceAsString()]);
-				fwrite($output, pack('l', -strlen($data)).$data);
+				fwrite($commands_io, pack('l', -strlen($data)).$data);
 			}
-			fflush($output);
+			fflush($commands_io);
 		}
 	}
 }
