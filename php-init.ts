@@ -243,10 +243,11 @@ class _PhpDenoBridge extends Exception
 		set_error_handler(__CLASS__.'::error_handler', self::$error_reporting);
 
 		// Read HELO, that is [key, end_mark, socket_name], and output the key back
-		$data = explode(' ', $_SERVER['DENO_WORLD_HELO'] ?? fread(fopen('php://stdin', 'r'), 8*1024));
+		$data = explode(' ', $_SERVER['DENO_WORLD_HELO'] ?? file_get_contents('php://stdin'));
 		if (count($data) != 3)
 		{	return;
 		}
+		unset($_SERVER['DENO_WORLD_HELO']);
 		$commands_io = stream_socket_client(trim($data[2]), $errno, $errstr);
 		if ($commands_io === false)
 		{	error_log("stream_socket_client(): errno=$errno $errstr");

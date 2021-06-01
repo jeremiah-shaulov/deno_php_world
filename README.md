@@ -459,7 +459,7 @@ There's setting that provides control on how PHP output is processed: `settings.
 ```ts
 stdout: 'inherit'|'piped'|'null'|number = 'inherit'
 ```
-It's default value is `inherit` that means to pass PHP output to Deno. So `g.echo("msg\n")` works like `console.log("msg")`.
+It's default value is `inherit`. For PHP-CLI this value means to pass PHP output to Deno. So `g.echo("msg\n")` works like `console.log("msg")`.
 
 As usual, it's possible to use PHP output buffering to catch the output.
 
@@ -498,6 +498,8 @@ If `settings.stdout` is set to something other that `piped`, calling `g.exit()` 
 
 Another options for `settings.stdout` are `null` (to ignore the output), and a numeric file descriptor (rid) of an opened file/stream.
 
+For PHP-FPM `settings.stdout` == `inherit` has special meaning. It allows to get FastCGI response in format similar to what `fetch()` returns, and read echo output there. Headers will also be available on the response. To get the response call `php.get_response()` (see below).
+
 ### Running several PHP interpreters in parallel
 
 ```ts
@@ -519,11 +521,13 @@ await int_2.g.exit();
 
 ### Limitations of PHP-CLI
 
-Using PHP-CLI backend is simple, but there is one disadvantage.
+Using PHP-CLI backend is simple, but there are disadvantages.
 
 If some PHP script file declares a function, or some other kind of object, such file cannot be included (or required) multiple times. PHP complains on "Cannot redeclare function". Practically this means that to execute the same script multiple times, new PHP interpreters must be spawned. Respawning process is slow, and you will not benefit from opcache.
 
 However, it's possible to reorganize the application in such a way, that script files you run directly don't declare objects, but call `require_once()` for files that do declare them.
+
+Another disadvantage is that functions like `header()` and `setcookie()` do nothing in PHP-CLI.
 
 ### Using PHP-FPM
 
@@ -545,7 +549,7 @@ pm.max_spare_servers = 3
 ```
 
 ```ts
-import {g, c, PhpInterpreter} from 'https://deno.land/x/php_world/mod.ts';
+import {g, c} from 'https://deno.land/x/php_world/mod.ts';
 
 settings.php_fpm.listen = '[::1]:8989';
 console.log(await g.php_sapi_name());
@@ -557,6 +561,28 @@ Common problems:
 
 1. If using unix-domain socket for PHP-FPM service, the deno script must have access to it (`listen.owner = username` and/or `listen.group = username`).
 2. If using unix-domain socket for communication with PHP world (`settings.unix_socket_name`), the PHP interpreter must have access to this socket (`user = username` and/or `group = username`).
+
+If `settings.stdout` is set to `inherit` (default value), echo output, together with headers set with `header()` or `setcookie()` can be taken as `Response` object.
+
+```ts
+import {g, c} from 'https://deno.land/x/php_world/mod.ts';
+
+settings.php_fpm.listen = '[::1]:8989';
+php.g.echo(`Hello`);
+php.g.exit(); // don't await, since it will destroy the response object
+let response = await php.get_response();
+console.log(await response.text()); // prints "Hello"
+await php.ready(); // await exit() completion
+php.close_idle();
+```
+
+The response is returned as soon as it's ready - usually after first echo from the remote PHP script, and maybe after a few more echoes, or at the end of the script (when `php.g.exit()` called).
+The response contains headers and body reader, that will read everything echoed from the script.
+The returned object is of class `ResponseWithCookies`. This class extends built-in `Response` (that `fetch()` returns) by adding `cookies` property, that contains all `Set-Cookie` headers.
+Also `response.body` object extends regular `ReadableStream<Uint8Array>` by adding `Deno.Reader` implementation.
+
+If you call `php.get_response()`, you're responsible to read the body to the end, to free resources.
+After `php.g.exit()` awaited, the `php.get_response()` throws error.
 
 ### How fast is deno_world?
 

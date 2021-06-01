@@ -115,8 +115,13 @@ export class InterpreterExitError extends Error
 	}
 }
 
-class Settings
-{	public php_cli_name = PHP_CLI_NAME_DEFAULT;
+/**	Settings that affect `PhpInterpreter` behavior.
+ **/
+export class Settings
+{	/**	Command that will be executed to spawn a PHP-CLI process. This setting is ignored if `php_fpm.listen` is set.
+	 **/
+	public php_cli_name = PHP_CLI_NAME_DEFAULT;
+
 	public php_fpm =
 	{	listen: '',
 		keep_alive_timeout: DEFAULT_KEEP_ALIVE_TIMEOUT
@@ -125,9 +130,23 @@ class Settings
 	public stdout: 'inherit'|'piped'|'null'|number = 'inherit';
 }
 
+/**	Each instance of this class represents a PHP interpreter. It can be spawned CLI process that runs in background, or it can be a FastCGI request to a PHP-FPM service.
+	The interpreter will be actually spawned on first remote call.
+	Calling `this.g.exit()` terminates the interpreter (or a FastCGI connection).
+	Further remote calls will respawn another interpreter.
+	It's alright to call `this.g.exit()` several times.
+ **/
 export class PhpInterpreter
-{	public g: any;
+{	/**	For accessing global remote PHP objects, except classes (functions, variables, constants).
+	 **/
+	public g: any;
+
+	/**	For accessing remote PHP classes.
+	 **/
 	public c: any;
+
+	/**	Modify settings before spawning interpreter (or connecting to PHP-FPM service).
+	 **/
 	public settings = new Settings;
 
 	private php_cli_proc: Deno.Process|undefined;
@@ -141,6 +160,8 @@ export class PhpInterpreter
 	private stdout_mux: ReaderMux|undefined;
 	private last_inst_id = -1;
 	private stack_frames: number[] = [];
+	private is_response_taken = false;
+	private oninit: (() => void) | undefined;
 
 	constructor()
 	{	this.g = get_global(this, false);
@@ -764,8 +785,7 @@ export class PhpInterpreter
 			}
 			this.php_fpm_response = fcgi.fetch
 			(	{	addr: this.settings.php_fpm.listen,
-					scriptFilename: php_init_file,
-					params: new Map(Object.entries({DENO_WORLD_HELO: rec_helo})),
+					params: new Map(Object.entries({SCRIPT_FILENAME: php_init_file, DENO_WORLD_HELO: rec_helo})),
 					timeout: Number.MAX_SAFE_INTEGER,
 					keepAliveTimeout: this.settings.php_fpm.keep_alive_timeout,
 					onLogError: msg =>
@@ -775,7 +795,9 @@ export class PhpInterpreter
 				'http://localhost/'
 			);
 			// Mux stdout
-			this.stdout_mux = new ReaderMux(this.php_fpm_response.then(r => r.body), end_mark);
+			if (this.settings.stdout != 'inherit')
+			{	this.stdout_mux = new ReaderMux(this.php_fpm_response.then(r => r.body), end_mark);
+			}
 		}
 		// 5. Accept connection from the interpreter. Identify it by the key.
 		while (true)
@@ -801,6 +823,11 @@ export class PhpInterpreter
 			{	console.error(e);
 			}
 			this.commands_io.close();
+		}
+		// 6. oninit
+		if (this.oninit)
+		{	this.oninit();
+			this.oninit = undefined;
 		}
 	}
 
@@ -877,22 +904,53 @@ export class PhpInterpreter
 	}
 
 	private async do_exit(is_eof=false)
-	{	await this.do_drop_stdout_reader(is_eof, true);
+	{	try
+		{	await this.do_drop_stdout_reader(is_eof, true);
+		}
+		catch (e)
+		{	console.error(e);
+		}
 		if (this.php_fpm_response)
-		{	let response = await this.php_fpm_response;
-			if (response.body)
-			{	await Deno.copy(response.body, {async write(p: Uint8Array) {return p.length}}); // read and discard
+		{	try
+			{	let response = await this.php_fpm_response;
+				if (!this.is_response_taken && response.body)
+				{	await Deno.copy(response.body, {async write(p: Uint8Array) {return p.length}}); // read and discard
+				}
+			}
+			catch (e)
+			{	console.error(e);
 			}
 			this.php_fpm_response = undefined;
 		}
 		if (this.stdout_mux)
-		{	this.php_cli_proc?.stdout!.close();
+		{	try
+			{	this.php_cli_proc?.stdout!.close();
+			}
+			catch (e)
+			{	console.error(e);
+			}
 			this.stdout_mux = undefined;
 		}
-		let status = await this.php_cli_proc?.status();
-		this.php_cli_proc?.close();
-		this.commands_io?.close();
-		this.listener?.close();
+		let status;
+		try
+		{	status = await this.php_cli_proc?.status();
+			this.php_cli_proc?.close();
+		}
+		catch (e)
+		{	console.error(e);
+		}
+		try
+		{	this.commands_io?.close();
+		}
+		catch (e)
+		{	console.error(e);
+		}
+		try
+		{	this.listener?.close();
+		}
+		catch (e)
+		{	console.error(e);
+		}
 		if (this.using_unix_socket)
 		{	if (await exists(this.using_unix_socket))
 			{	try
@@ -911,6 +969,8 @@ export class PhpInterpreter
 		this.is_inited = false;
 		this.last_inst_id = -1;
 		this.stack_frames.length = 0;
+		this.is_response_taken = false;
+		this.oninit = undefined;
 		return status;
 	}
 
@@ -976,6 +1036,9 @@ export class PhpInterpreter
 		return promise;
 	}
 
+	/**	Each remote function call or a variable fetch queues operation. All the operations will be executed in sequence.
+		This function returns promise that resolves when all current operations completed.
+	 **/
 	ready(): Promise<unknown>
 	{	return this.ongoing;
 	}
@@ -992,14 +1055,20 @@ export class PhpInterpreter
 	{	return this.schedule(() => this.do_exit());
 	}
 
+	/**	 All objects allocated after this call, can be freed at once.
+	 **/
 	push_frame()
 	{	this.schedule(() => this.do_push_frame());
 	}
 
+	/**	Free at once all the objects allocated after last `php.push_frame()` call.
+	 **/
 	pop_frame()
 	{	this.schedule(() => this.do_pop_frame());
 	}
 
+	/**	Number of allocated handles to remote PHP objects, that must be explicitly freed when not in use anymore.
+	 **/
 	n_objects()
 	{	return this.schedule(() => this.do_n_objects());
 	}
@@ -1012,7 +1081,36 @@ export class PhpInterpreter
 	{	return this.schedule(() => this.do_drop_stdout_reader());
 	}
 
+	/**	If PHP-FPM interface was used, and `settings.php_fpm.keep_alive_timeout` was > 0, connections to PHP-FPM service will be reused.
+		This can hold deno script from exiting the program. Call `php.close_idle()` to close all the idle connections.
+	 **/
 	close_idle()
 	{	fcgi.closeIdle();
+	}
+
+	/**	If PHP-CLI interface was used, this method throws error (rejects it's promise).
+		For PHP-FPM it returns `ResponseWithCookies` object (that extends built-in `Response`).
+		The response is returned as soon as it's ready - usually after first echo from the remote PHP script, and maybe after a few more echoes, or at the end of the script (when `this.g.exit()` called).
+		The response contains headers and body reader, that will read everything echoed from the script.
+		The returned `ResponseWithCookies` object extends built-in `Response` (that `fetch()` returns) by adding `cookies` property, that contains all `Set-Cookie` headers.
+		Also `response.body` object extends regular `ReadableStream<Uint8Array>` by adding `Deno.Reader` implementation.
+		If you call `this.get_response()`, you're responsible to read the body to the end, to free resources.
+		After `this.g.exit()` awaited, the `this.get_response()` throws error.
+	 **/
+	get_response(): Promise<ResponseWithCookies>
+	{	if (!this.is_inited && !this.is_response_taken)
+		{	this.is_response_taken = true;
+			return new Promise<void>(y => {this.oninit = y}).then
+			(	() =>
+				{	this.is_response_taken = false;
+					return this.get_response();
+				}
+			);
+		}
+		if (!this.php_fpm_response || this.is_response_taken)
+		{	return Promise.reject(new Error('No PHP-FPM response exists'));
+		}
+		this.is_response_taken = true;
+		return this.php_fpm_response;
 	}
 }
