@@ -485,10 +485,12 @@ import {php, settings} from 'https://deno.land/x/php_world/mod.ts';
 settings.stdout = 'piped';
 
 let stdout = await php.get_stdout_reader();
-php.g.echo("*".repeat(10));
-php.drop_stdout_reader();
+php.g.echo("*".repeat(10)); // no await
+php.g.echo("."); // queue another function call
+php.drop_stdout_reader(); // reader stream will end here
+
 let data = new TextDecoder().decode(await Deno.readAll(stdout));
-console.log(data == "*".repeat(10)); // prints "true"
+console.log(data == "*".repeat(10)+"."); // prints "true"
 
 await g.exit();
 ```
@@ -519,7 +521,7 @@ await int_2.g.exit();
 
 Using PHP-CLI backend is simple, but there is one disadvantage.
 
-If some PHP script file declares a function, or some other kind of object, such file cannot be included (or required) multiple times. PHP complains on "Cannot redeclare function". Practically this means that to execute the same script multiple times, a new PHP interpreter must be spawned. Respawning process is slow, and you will not benefit from opcache.
+If some PHP script file declares a function, or some other kind of object, such file cannot be included (or required) multiple times. PHP complains on "Cannot redeclare function". Practically this means that to execute the same script multiple times, new PHP interpreters must be spawned. Respawning process is slow, and you will not benefit from opcache.
 
 However, it's possible to reorganize the application in such a way, that script files you run directly don't declare objects, but call `require_once()` for files that do declare them.
 
@@ -548,7 +550,7 @@ import {g, c, PhpInterpreter} from 'https://deno.land/x/php_world/mod.ts';
 settings.php_fpm.listen = '[::1]:8989';
 console.log(await g.php_sapi_name());
 await g.exit(); // in case of PHP-FPM, g.exit() doesn't actually call exit() on PHP side, but it terminates a FCGI request
-php.close_idle(); // close idle connection with PHP-FPM (otherwise deno script will not exit immediately)
+php.close_idle(); // close idle connection to PHP-FPM (otherwise deno script will not exit immediately)
 ```
 
 Common problems:
