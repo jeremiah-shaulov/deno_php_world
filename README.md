@@ -62,6 +62,7 @@ There are several configurable settings:
 5. `settings` - the same as `php.settings`. Allows to modify interpreter settings.
 6. `InterpreterError` - class for exceptions propagated from PHP.
 7. `InterpreterExitError` - this error is thrown in case PHP interpreter exits or crashes.
+8. `ResponseWithCookies` - type that `php.get_response()` returns.
 
 ### Calling functions
 

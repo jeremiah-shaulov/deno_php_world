@@ -2,10 +2,7 @@ import {PHP_INIT} from './php-init.ts';
 import {create_proxy} from './proxy_object.ts';
 import {ReaderMux} from './reader_mux.ts';
 import {debug_assert} from './debug_assert.ts';
-import {fcgi, ResponseWithCookies} from 'https://deno.land/x/fcgi@v0.0.18/mod.ts';
-import {writeAll} from 'https://deno.land/std/io/util.ts';
-import {exists} from "https://deno.land/std/fs/mod.ts";
-import {dirname} from "https://deno.land/std/path/mod.ts";
+import {fcgi, ResponseWithCookies, writeAll, exists, dirname} from './deps.ts';
 
 const PHP_CLI_NAME_DEFAULT = 'php';
 const TMP_SCRIPT_FILENAME = 'deno-php-world.php';
@@ -115,6 +112,8 @@ export class InterpreterExitError extends Error
 	}
 }
 
+type SettingsPhpFpm = {listen: string, keep_alive_timeout: number, params: Map<string, string>, request: string|Request|URL, request_init?: RequestInit & {bodyIter?: AsyncIterable<Uint8Array>}};
+
 /**	Settings that affect `PhpInterpreter` behavior.
  **/
 export class Settings
@@ -122,9 +121,11 @@ export class Settings
 	 **/
 	public php_cli_name = PHP_CLI_NAME_DEFAULT;
 
-	public php_fpm =
+	public php_fpm: SettingsPhpFpm =
 	{	listen: '',
-		keep_alive_timeout: DEFAULT_KEEP_ALIVE_TIMEOUT
+		keep_alive_timeout: DEFAULT_KEEP_ALIVE_TIMEOUT,
+		params: new Map,
+		request: 'http://localhost/'
 	};
 	public unix_socket_name = '';
 	public stdout: 'inherit'|'piped'|'null'|number = 'inherit';
@@ -137,19 +138,7 @@ export class Settings
 	It's alright to call `this.g.exit()` several times.
  **/
 export class PhpInterpreter
-{	/**	For accessing global remote PHP objects, except classes (functions, variables, constants).
-	 **/
-	public g: any;
-
-	/**	For accessing remote PHP classes.
-	 **/
-	public c: any;
-
-	/**	Modify settings before spawning interpreter (or connecting to PHP-FPM service).
-	 **/
-	public settings = new Settings;
-
-	private php_cli_proc: Deno.Process|undefined;
+{	private php_cli_proc: Deno.Process|undefined;
 	private php_fpm_response: Promise<ResponseWithCookies>|undefined;
 	private listener: Deno.Listener|undefined;
 	private commands_io: Deno.Conn|undefined;
@@ -163,6 +152,20 @@ export class PhpInterpreter
 	private is_response_taken = false;
 	private oninit: (() => void) | undefined;
 
+	/**	For accessing global remote PHP objects, except classes (functions, variables, constants).
+	 **/
+	public g: any;
+
+	/**	For accessing remote PHP classes.
+	 **/
+	public c: any;
+
+	/**	Modify settings before spawning interpreter (or connecting to PHP-FPM service).
+	 **/
+	public settings = new Settings;
+
+	/**	You can have as many PHP interpreter instances as you want. Don't forget to call `this.g.exit()` to destroy the background interpreter.
+	 **/
 	constructor()
 	{	this.g = get_global(this, false);
 		this.c = get_global(this, true);
@@ -779,20 +782,35 @@ export class PhpInterpreter
 		}
 		else
 		{	// Connect to PHP-FPM service
+			// First create php file with init script
 			php_init_file = await create_tmp_script_file();
+			// Prepare params
+			let {params} = this.settings.php_fpm;
+			if (params.has('DENO_WORLD_HELO'))
+			{	// looks like object shared between requests
+				let params_clone = new Map;
+				for (let [k, v] of params)
+				{	params_clone.set(k, v);
+				}
+				params = params_clone;
+			}
+			params.set('DENO_WORLD_HELO', rec_helo);
+			params.set('SCRIPT_FILENAME', php_init_file);
+			// FCGI fetch
 			while (!fcgi.canFetch())
 			{	await fcgi.pollCanFetch();
 			}
 			this.php_fpm_response = fcgi.fetch
 			(	{	addr: this.settings.php_fpm.listen,
-					params: new Map(Object.entries({SCRIPT_FILENAME: php_init_file, DENO_WORLD_HELO: rec_helo})),
+					params,
 					timeout: Number.MAX_SAFE_INTEGER,
 					keepAliveTimeout: this.settings.php_fpm.keep_alive_timeout,
 					onLogError: msg =>
 					{	this.ongoing_stderr = this.ongoing_stderr.then(() => writeAll(Deno.stderr, encoder.encode(msg+'\n')));
 					}
 				},
-				'http://localhost/'
+				this.settings.php_fpm.request,
+				this.settings.php_fpm.request_init
 			);
 			// Mux stdout
 			if (this.settings.stdout != 'inherit')
@@ -1097,20 +1115,19 @@ export class PhpInterpreter
 		If you call `this.get_response()`, you're responsible to read the body to the end, to free resources.
 		After `this.g.exit()` awaited, the `this.get_response()` throws error.
 	 **/
-	get_response(): Promise<ResponseWithCookies>
+	async get_response(): Promise<ResponseWithCookies>
 	{	if (!this.is_inited && !this.is_response_taken)
 		{	this.is_response_taken = true;
-			return new Promise<void>(y => {this.oninit = y}).then
-			(	() =>
-				{	this.is_response_taken = false;
-					return this.get_response();
-				}
-			);
+			await new Promise<void>(y => {this.oninit = y});
+			this.is_response_taken = false;
 		}
-		if (!this.php_fpm_response || this.is_response_taken)
+		debug_assert(this.is_inited);
+		let {php_fpm_response} = this;
+		if (!php_fpm_response || this.is_response_taken)
 		{	return Promise.reject(new Error('No PHP-FPM response exists'));
 		}
 		this.is_response_taken = true;
-		return this.php_fpm_response;
+		await this.ongoing; // let exception be thrown
+		return php_fpm_response;
 	}
 }

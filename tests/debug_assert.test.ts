@@ -1,5 +1,5 @@
 import {ASSERTIONS_ENABLED, debug_assert} from '../debug_assert.ts';
-import {assert} from "https://deno.land/std@0.97.0/testing/asserts.ts";
+import {assert} from "../deps.ts";
 
 Deno.test
 (	'debug_assert',
