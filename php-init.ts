@@ -6,7 +6,8 @@ export const PHP_INIT = String.raw
 `<?php
 
 class _PhpDenoBridge extends Exception
-{	private const REC_CONST = 1;
+{	private const REC_NOREC = 0;
+	private const REC_CONST = 1;
 	private const REC_GET = 2;
 	private const REC_GET_THIS = 3;
 	private const REC_SET = 4;
@@ -33,21 +34,31 @@ class _PhpDenoBridge extends Exception
 	private const REC_POP_FRAME = 25;
 	private const REC_N_OBJECTS = 26;
 	private const REC_END_STDOUT = 27;
-	private const REC_CALL = 28;
-	private const REC_CALL_THIS = 29;
-	private const REC_CALL_EVAL = 30;
-	private const REC_CALL_EVAL_THIS = 31;
-	private const REC_CALL_ECHO = 32;
-	private const REC_CALL_INCLUDE = 33;
-	private const REC_CALL_INCLUDE_ONCE = 34;
-	private const REC_CALL_REQUIRE = 35;
-	private const REC_CALL_REQUIRE_ONCE = 36;
+	private const REC_DATA = 28;
+	private const REC_CALL = 29;
+	private const REC_CALL_THIS = 30;
+	private const REC_CALL_EVAL = 31;
+	private const REC_CALL_EVAL_THIS = 32;
+	private const REC_CALL_ECHO = 33;
+	private const REC_CALL_INCLUDE = 34;
+	private const REC_CALL_INCLUDE_ONCE = 35;
+	private const REC_CALL_REQUIRE = 36;
+	private const REC_CALL_REQUIRE_ONCE = 37;
+
+	public const RES_ERROR = 1;
+	public const RES_GET_CLASS = 2;
+	public const RES_CONSTRUCT = 3;
+	public const RES_CLASS_GET = 4;
+	public const RES_CLASS_SET = 5;
+	public const RES_CLASS_CALL = 6;
+	public const RES_CLASSSTATIC_CALL = 7;
 
 	private static ?int $error_reporting = null;
 	private static string $end_mark = '';
 	private static array $insts = [];
 	private static array $insts_iters = [];
 	private static int $inst_id_enum = 0;
+	private static $commands_io;
 
 	public function __construct($message=null, $code=null, $file=null, $line=null)
 	{	parent::__construct($message);
@@ -60,6 +71,51 @@ class _PhpDenoBridge extends Exception
 	{	if (error_reporting(self::$error_reporting) != 0) // error_reporting returns zero if "@" operator was used
 		{	throw new self($err_msg, $err_code, $file, $line);
 		}
+	}
+
+	public static function load_class($class_name)
+	{	if (strpos($class_name, 'DenoWorld\\') === 0)
+		{	$class_name_2 = substr($class_name, 10);
+			$value = self::write_read('['.self::RES_GET_CLASS.','.json_encode($class_name_2).']');
+			if ($value === 1)
+			{	$pos = strrpos($class_name, '\\');
+				$ns = substr($class_name, 0, $pos);
+				$basename = substr($class_name, $pos+1);
+				eval("namespace $ns; class $basename extends \\DenoWorld {}");
+			}
+		}
+	}
+
+	private static function read_record()
+	{	while (!feof(self::$commands_io))
+		{	$len = fread(self::$commands_io, 8);
+			if (strlen($len) != 8)
+			{	if ($len===false or strlen($len)==0 or $len=="\n" or $len=="\r" or $len=="\r\n")
+				{	continue;
+				}
+				return [self::REC_NOREC, '']; // Fatal error
+			}
+			list('T' => $record_type, 'L' => $len) = unpack('NT/NL', $len);
+			$data = '';
+			while ($len > 0)
+			{	$read = fread(self::$commands_io, $len);
+				$data .= $read;
+				$len -= strlen($read);
+			}
+			return [$record_type, $data];
+		}
+		return [self::REC_NOREC, ''];
+	}
+
+	public static function write_read($data)
+	{	fwrite(self::$commands_io, pack('l', -strlen($data)).$data);
+		list($record_type, $data) = self::read_record();
+		assert($record_type == self::REC_DATA);
+		list($value, $error) = json_decode($data, true);
+		if ($error)
+		{	throw new Exception($error['message']);
+		}
+		return $value;
 	}
 
 	private static function get_reflection($class_name)
@@ -246,6 +302,9 @@ class _PhpDenoBridge extends Exception
 		self::$error_reporting = error_reporting(); // determine reporting level set by user
 		set_error_handler(__CLASS__.'::error_handler', self::$error_reporting);
 
+		// Register class loader
+		spl_autoload_register(__CLASS__.'::load_class');
+
 		// Read HELO, that is [key, end_mark, socket_name], and output the key back
 		$data = explode(' ', $_SERVER['DENO_WORLD_HELO'] ?? file_get_contents('php://stdin'));
 		if (count($data) != 3)
@@ -257,35 +316,25 @@ class _PhpDenoBridge extends Exception
 		{	error_log("stream_socket_client(): errno=$errno $errstr");
 			return;
 		}
+		self::$commands_io = $commands_io;
 		stream_set_timeout($commands_io, 0x7FFFFFFF);
 		self::$end_mark = base64_decode($data[1]);
 		$data = json_encode($data[0]);
 		fwrite($commands_io, pack('l', strlen($data)).$data);
 
 		// Proceed
-		while (!feof($commands_io))
+		while (true)
 		{	try
 			{	// 1. Read the request
-				$len = fread($commands_io, 8);
-				if (strlen($len) != 8)
-				{	if ($len===false or strlen($len)==0 or $len=="\n" or $len=="\r" or $len=="\r\n")
-					{	continue;
-					}
-					return; // Fatal error
-				}
-				list('T' => $record_type, 'L' => $len) = unpack('NT/NL', $len);
-				$data = '';
-				while ($len > 0)
-				{	$read = fread($commands_io, $len);
-					$data .= $read;
-					$len -= strlen($read);
-				}
+				list($record_type, $data) = self::read_record();
 
 				// 2. Process the request
 				$result = null;
 				$result_is_set = false;
 				switch ($record_type)
-				{	case self::REC_CONST:
+				{	case self::REC_NOREC:
+						break 2;
+					case self::REC_CONST:
 						if (defined($data))
 						{	$result = constant($data);
 							$result_is_set = true;
@@ -537,7 +586,7 @@ class _PhpDenoBridge extends Exception
 			}
 			catch (Throwable $e)
 			{	// 4. Error: send the exception
-				$data = json_encode([$e->getFile(), $e->getLine(), $e->getMessage(), $e->getTraceAsString()]);
+				$data = json_encode([self::RES_ERROR, $e->getFile(), $e->getLine(), $e->getMessage(), $e->getTraceAsString()]);
 				fwrite($commands_io, pack('l', -strlen($data)).$data);
 			}
 			fflush($commands_io);
@@ -545,11 +594,39 @@ class _PhpDenoBridge extends Exception
 	}
 }
 
+class DenoWorld
+{	private $inst_id;
+
+	public function __construct()
+	{	$args = func_get_args();
+		$class_name = substr(get_class($this), 10); // cut DenoWorld\ prefix
+		$value = _PhpDenoBridge::write_read('['._PhpDenoBridge::RES_CONSTRUCT.','.json_encode($class_name).','.json_encode($args).']');
+		$this->inst_id = (int)$value;
+	}
+
+	public function __get($name)
+	{	return _PhpDenoBridge::write_read('['._PhpDenoBridge::RES_CLASS_GET.','.$this->inst_id.','.json_encode($name).']');
+	}
+
+	public function __set($name, $value)
+	{	_PhpDenoBridge::write_read('['._PhpDenoBridge::RES_CLASS_SET.','.$this->inst_id.','.json_encode($name).','.json_encode($value).']');
+	}
+
+	public function __call($name, $args)
+	{	return _PhpDenoBridge::write_read('['._PhpDenoBridge::RES_CLASS_CALL.','.$this->inst_id.','.json_encode($name).','.json_encode($args).']');
+	}
+
+	public static function __callStatic($name, $args)
+	{	$class_name = substr(get_called_class(), 10); // cut DenoWorld\ prefix
+		return _PhpDenoBridge::write_read('['._PhpDenoBridge::RES_CLASSSTATIC_CALL.','.json_encode($class_name).','.json_encode($name).','.json_encode($args).']');
+	}
+}
+
 _PhpDenoBridge::main();
 ?>`;
 
 let php_init_filename = '';
-export async function get_php_init_filename()
+export async function get_php_init_filename(is_debug=false)
 {	if (!php_init_filename)
 	{	// create a temp file
 		let tmp_name = await Deno.makeTempFile();
@@ -558,7 +635,7 @@ export async function get_php_init_filename()
 		tmp_dirname = tmp_name.slice(0, tmp_dirname.length+1); // inclide dir separator char
 		// form new tmp filename and store to php_init_filename
 		let suffix = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER).toString(36);
-		php_init_filename = `${tmp_dirname}${TMP_SCRIPT_FILENAME_PREFIX}-${suffix}-pid${Deno.pid}.php`;
+		php_init_filename = is_debug ? `${tmp_dirname}${TMP_SCRIPT_FILENAME_PREFIX}.php` : `${tmp_dirname}${TMP_SCRIPT_FILENAME_PREFIX}-${suffix}-pid${Deno.pid}.php`;
 		// rename the tmp file to the new name
 		await Deno.rename(tmp_name, php_init_filename);
 		// find files left from previous runs
@@ -593,12 +670,14 @@ export async function get_php_init_filename()
 			}
 		}
 		// register cleanup for my tmp file
-		addEventListener
-		(	'unload',
-			() =>
-			{	Deno.removeSync(php_init_filename);
-			}
-		);
+		if (!is_debug)
+		{	addEventListener
+			(	'unload',
+				() =>
+				{	Deno.removeSync(php_init_filename);
+				}
+			);
+		}
 	}
 	else
 	{	// if existing file is of valid size, use it

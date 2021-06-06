@@ -36,15 +36,24 @@ const REC_CLASS_ITERATE = 24;
 const REC_POP_FRAME = 25;
 const REC_N_OBJECTS = 26;
 const REC_END_STDOUT = 27;
-const REC_CALL = 28;
-const REC_CALL_THIS = 29;
-const REC_CALL_EVAL = 30;
-const REC_CALL_EVAL_THIS = 31;
-const REC_CALL_ECHO = 32;
-const REC_CALL_INCLUDE = 33;
-const REC_CALL_INCLUDE_ONCE = 34;
-const REC_CALL_REQUIRE = 35;
-const REC_CALL_REQUIRE_ONCE = 36;
+const REC_DATA = 28;
+const REC_CALL = 29;
+const REC_CALL_THIS = 30;
+const REC_CALL_EVAL = 31;
+const REC_CALL_EVAL_THIS = 32;
+const REC_CALL_ECHO = 33;
+const REC_CALL_INCLUDE = 34;
+const REC_CALL_INCLUDE_ONCE = 35;
+const REC_CALL_REQUIRE = 36;
+const REC_CALL_REQUIRE_ONCE = 37;
+
+const RES_ERROR = 1;
+const RES_GET_CLASS = 2;
+const RES_CONSTRUCT = 3;
+const RES_CLASS_GET = 4;
+const RES_CLASS_SET = 5;
+const RES_CLASS_CALL = 6;
+const RES_CLASSSTATIC_CALL = 7;
 
 const RE_BAD_CLASSNAME_FOR_EVAL = /[^\w\\]/;
 
@@ -98,6 +107,7 @@ export class InterpreterExitError extends Error
 type SettingsPhpFpm =
 {	listen: string;
 	keep_alive_timeout: number;
+	keep_alive_max: number;
 	params: Map<string, string>;
 	request: string|Request|URL;
 	request_init?: RequestInit & {bodyIter?: AsyncIterable<Uint8Array>};
@@ -110,6 +120,8 @@ type SettingsPhpFpm =
 		Also `response.body` object extends regular `ReadableStream<Uint8Array>` by adding `Deno.Reader` implementation.
 	 **/
 	onresponse?: (response: ResponseWithCookies) => Promise<unknown>;
+
+	max_conns: number;
 };
 
 /**	Settings that affect `PhpInterpreter` behavior.
@@ -122,11 +134,15 @@ export class Settings
 	public php_fpm: SettingsPhpFpm =
 	{	listen: '',
 		keep_alive_timeout: DEFAULT_KEEP_ALIVE_TIMEOUT,
+		keep_alive_max: Number.MAX_SAFE_INTEGER,
 		params: new Map,
-		request: 'http://localhost/'
+		request: 'http://localhost/',
+		max_conns: 128,
 	};
+
 	public unix_socket_name = '';
 	public stdout: 'inherit'|'piped'|'null'|number = 'inherit';
+	public onsymbol: (type: string, name: string) => any = () => {};
 }
 
 /**	Each instance of this class represents a PHP interpreter. It can be spawned CLI process that runs in background, or it can be a FastCGI request to a PHP-FPM service.
@@ -148,6 +164,8 @@ export class PhpInterpreter
 	private last_inst_id = -1;
 	private stack_frames: number[] = [];
 	private oninit: (() => void) | undefined;
+	private insts: Map<number, any> = new Map;
+	private inst_id_enum = 0;
 
 	/**	For accessing global remote PHP objects, except classes (functions, variables, constants).
 	 **/
@@ -764,7 +782,7 @@ export class PhpInterpreter
 		// 4. Run the PHP interpreter or connect to PHP-FPM service
 		if (!this.settings.php_fpm.listen)
 		{	// Run the PHP interpreter
-			let cmd = DEBUG_PHP_INIT ? [this.settings.php_cli_name, '-f', await get_php_init_filename()] : [this.settings.php_cli_name, '-r', PHP_INIT.slice('<?php\n\n'.length)];
+			let cmd = DEBUG_PHP_INIT ? [this.settings.php_cli_name, '-f', await get_php_init_filename(true)] : [this.settings.php_cli_name, '-r', PHP_INIT.slice('<?php\n\n'.length)];
 			if (Deno.args.length)
 			{	cmd.splice(cmd.length, 0, '--', ...Deno.args);
 			}
@@ -793,6 +811,8 @@ export class PhpInterpreter
 			}
 			params.set('DENO_WORLD_HELO', rec_helo);
 			params.set('SCRIPT_FILENAME', php_init_file);
+			// max_conns
+			fcgi_client.options({maxConns: this.settings.php_fpm.max_conns});
 			// FCGI fetch
 			while (!fcgi_client.canFetch())
 			{	await fcgi_client.pollCanFetch();
@@ -802,6 +822,7 @@ export class PhpInterpreter
 					params,
 					timeout: Number.MAX_SAFE_INTEGER,
 					keepAliveTimeout: this.settings.php_fpm.keep_alive_timeout,
+					keepAliveMax: this.settings.php_fpm.keep_alive_max,
 					onLogError: msg =>
 					{	this.ongoing_stderr = this.ongoing_stderr.then(() => writeAll(Deno.stderr, encoder.encode(msg+'\n')));
 					}
@@ -886,41 +907,105 @@ export class PhpInterpreter
 	}
 
 	private async do_read(): Promise<any>
-	{	let buffer = new Uint8Array(4);
-		let pos = 0;
-		while (pos < 4)
-		{	let n_read = await this.commands_io!.read(buffer);
-			if (n_read == null)
-			{	this.exit_status_to_exception(await this.do_exit(true));
+	{	while (true)
+		{	let buffer = new Uint8Array(4);
+			let pos = 0;
+			while (pos < 4)
+			{	let n_read = await this.commands_io!.read(buffer);
+				if (n_read == null)
+				{	this.exit_status_to_exception(await this.do_exit(true));
+				}
+				pos += n_read;
 			}
-			pos += n_read;
-		}
-		let [len] = new Int32Array(buffer.buffer);
-		if (len == 0)
-		{	return null;
-		}
-		let is_error = false;
-		if (len < 0)
-		{	if (len == -1)
-			{	return; // undefined
+			let [len] = new Int32Array(buffer.buffer);
+			if (len == 0)
+			{	return null;
 			}
-			is_error = true;
-			len = -len;
-		}
-		buffer = new Uint8Array(len);
-		pos = 0;
-		while (pos < len)
-		{	let n_read = await this.commands_io!.read(buffer.subarray(pos));
-			if (n_read == null)
-			{	this.exit_status_to_exception(await this.do_exit(true));
+			let is_result = true;
+			if (len < 0)
+			{	if (len == -1)
+				{	return; // undefined
+				}
+				is_result = false;
+				len = -len;
 			}
-			pos += n_read;
+			buffer = new Uint8Array(len);
+			pos = 0;
+			while (pos < len)
+			{	let n_read = await this.commands_io!.read(buffer.subarray(pos));
+				if (n_read == null)
+				{	this.exit_status_to_exception(await this.do_exit(true));
+				}
+				pos += n_read;
+			}
+			let result = JSON.parse(decoder.decode(buffer));
+			if (is_result)
+			{	return result;
+			}
+			let [type] = result;
+			if (type == RES_ERROR)
+			{	let [_, file, line, message, trace] = result;
+				throw new InterpreterError(message, file, Number(line), trace);
+			}
+			let promise: Promise<void> | undefined;
+			let data: string | undefined;
+			try
+			{	switch (type)
+				{	case RES_GET_CLASS:
+					{	let [_, class_name] = result;
+						let symbol = this.settings.onsymbol('class', class_name);
+						data = symbol?.prototype ? '[1,null]' : '[0,null]';
+						break;
+					}
+					case RES_CONSTRUCT:
+					{	let [_, class_name, args] = result;
+						let symbol = this.settings.onsymbol('class', class_name);
+						let inst = new symbol(...args); // can throw error
+						let inst_id = this.inst_id_enum++;
+						this.insts.set(inst_id, inst);
+						data = `[${inst_id},null]`;
+						break;
+					}
+					case RES_CLASS_GET:
+					{	let [_, inst_id, name] = result;
+						let inst = this.insts.get(inst_id);
+						let value = inst[name]; // can throw error
+						data = JSON.stringify([value, null]);
+						break;
+					}
+					case RES_CLASS_SET:
+					{	let [_, inst_id, name, value] = result;
+						let inst = this.insts.get(inst_id);
+						inst[name] = value; // can throw error
+						data = JSON.stringify([null, null]);
+						break;
+					}
+					case RES_CLASS_CALL:
+					{	let [_, inst_id, name, args] = result;
+						let inst = this.insts.get(inst_id);
+						let value = inst[name](...args); // can throw error
+						data = JSON.stringify([value, null]);
+						break;
+					}
+					case RES_CLASSSTATIC_CALL:
+					{	let [_, class_name, name, args] = result;
+						let symbol = this.settings.onsymbol('class', class_name);
+						let value = symbol[name](...args); // can throw error
+						data = JSON.stringify([value, null]);
+						break;
+					}
+				}
+				if (data != undefined)
+				{	promise = this.do_write(REC_DATA, data);
+				}
+			}
+			catch (e)
+			{	promise = this.do_write(REC_DATA, JSON.stringify({message: e.message}));
+			}
+			if (promise)
+			{	await promise;
+			}
 		}
-		if (is_error)
-		{	let [file, line, message, trace] = JSON.parse(decoder.decode(buffer));
-			throw new InterpreterError(message, file, Number(line), trace);
-		}
-		return JSON.parse(decoder.decode(buffer));
 	}
 
 	private async do_exit(is_eof=false)
@@ -995,6 +1080,8 @@ export class PhpInterpreter
 		this.last_inst_id = -1;
 		this.stack_frames.length = 0;
 		this.oninit = undefined;
+		this.insts.clear();
+		this.inst_id_enum = 0;
 		return status;
 	}
 
