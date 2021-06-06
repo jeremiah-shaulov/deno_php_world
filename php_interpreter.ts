@@ -54,6 +54,8 @@ let encoder = new TextEncoder;
 let decoder = new TextDecoder;
 let fcgi_client = new Client;
 
+fcgi_client.on('error', e => {console.error(e)});
+
 async function get_random_key(): Promise<string>
 {	if (await exists('/dev/urandom'))
 	{	let fh = await Deno.open('/dev/urandom', {read: true});

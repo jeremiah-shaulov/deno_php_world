@@ -563,18 +563,25 @@ export async function get_php_init_filename()
 		await Deno.rename(tmp_name, php_init_filename);
 		// find files left from previous runs
 		let unowned_filenames = [];
-		for await (const {isFile, name} of Deno.readDir(tmp_dirname))
-		{	if (isFile && name.startsWith(TMP_SCRIPT_FILENAME_PREFIX) && name.endsWith('.php'))
-			{	let pos = name.indexOf('-', TMP_SCRIPT_FILENAME_PREFIX.length+1);
-				if (pos!=-1 && name.substr(pos+1, 3)=='pid')
-				{	let pid = Number(name.slice(pos+4, -4));
-					if (pid)
-					{	if (!await exists(`/proc/${pid}`))
-						{	unowned_filenames.push(name);
+		try
+		{	if (await exists(`/proc`))
+			{	for await (const {isFile, name} of Deno.readDir(tmp_dirname))
+				{	if (isFile && name.startsWith(TMP_SCRIPT_FILENAME_PREFIX) && name.endsWith('.php'))
+					{	let pos = name.indexOf('-', TMP_SCRIPT_FILENAME_PREFIX.length+1);
+						if (pos!=-1 && name.substr(pos+1, 3)=='pid')
+						{	let pid = Number(name.slice(pos+4, -4));
+							if (pid)
+							{	if (!await exists(`/proc/${pid}`))
+								{	unowned_filenames.push(name);
+								}
+							}
 						}
 					}
 				}
 			}
+		}
+		catch (e)
+		{	console.error(e);
 		}
 		// delete unowned files
 		for (let f of unowned_filenames)
