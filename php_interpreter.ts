@@ -1,11 +1,10 @@
-import {PHP_INIT} from './php-init.ts';
+import {PHP_INIT, get_php_init_filename} from './php-init.ts';
 import {create_proxy} from './proxy_object.ts';
 import {ReaderMux} from './reader_mux.ts';
 import {debug_assert} from './debug_assert.ts';
-import {Client, ResponseWithCookies, writeAll, exists, dirname} from './deps.ts';
+import {Client, ResponseWithCookies, writeAll, exists} from './deps.ts';
 
 const PHP_CLI_NAME_DEFAULT = 'php';
-const TMP_SCRIPT_FILENAME = 'deno-php-world.php';
 const DEBUG_PHP_INIT = false;
 const READER_MUX_END_MARK_LEN = 32;
 const DEFAULT_KEEP_ALIVE_TIMEOUT = 10000;
@@ -80,25 +79,6 @@ function get_weak_random_bytes(n: number)
 	{	buffer[i] = Math.floor(Math.random()*256);
 	}
 	return buffer;
-}
-
-let tmp_dirname = '';
-async function get_tmp_dir()
-{	if (!tmp_dirname)
-	{	let tmp_name = await Deno.makeTempFile();
-		tmp_dirname = dirname(tmp_name);
-		tmp_dirname = tmp_name.slice(0, tmp_dirname.length+1); // inclide dir separator char
-		await Deno.remove(tmp_name);
-	}
-	return tmp_dirname;
-}
-
-async function create_tmp_script_file()
-{	let filename = (await get_tmp_dir()) + TMP_SCRIPT_FILENAME;
-	if (!await exists(filename))
-	{	await Deno.writeTextFile(filename, PHP_INIT, {mode: 0o640});
-	}
-	return filename;
 }
 
 export class InterpreterError extends Error
@@ -782,7 +762,7 @@ export class PhpInterpreter
 		// 4. Run the PHP interpreter or connect to PHP-FPM service
 		if (!this.settings.php_fpm.listen)
 		{	// Run the PHP interpreter
-			let cmd = DEBUG_PHP_INIT ? [this.settings.php_cli_name, '-f', await create_tmp_script_file()] : [this.settings.php_cli_name, '-r', PHP_INIT.slice('<?php\n\n'.length)];
+			let cmd = DEBUG_PHP_INIT ? [this.settings.php_cli_name, '-f', await get_php_init_filename()] : [this.settings.php_cli_name, '-r', PHP_INIT.slice('<?php\n\n'.length)];
 			if (Deno.args.length)
 			{	cmd.splice(cmd.length, 0, '--', ...Deno.args);
 			}
@@ -798,7 +778,7 @@ export class PhpInterpreter
 		else
 		{	// Connect to PHP-FPM service
 			// First create php file with init script
-			php_init_file = await create_tmp_script_file();
+			php_init_file = await get_php_init_filename();
 			// Prepare params
 			let {params} = this.settings.php_fpm;
 			if (params.has('DENO_WORLD_HELO'))

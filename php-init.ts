@@ -1,3 +1,7 @@
+import {dirname, exists} from './deps.ts';
+
+const TMP_SCRIPT_FILENAME_PREFIX = 'deno-php-world';
+
 export const PHP_INIT = String.raw
 `<?php
 
@@ -543,3 +547,66 @@ class _PhpDenoBridge extends Exception
 
 _PhpDenoBridge::main();
 ?>`;
+
+let php_init_filename = '';
+export async function get_php_init_filename()
+{	if (!php_init_filename)
+	{	// create a temp file
+		let tmp_name = await Deno.makeTempFile();
+		// figure out what is tmp dir
+		let tmp_dirname = dirname(tmp_name);
+		tmp_dirname = tmp_name.slice(0, tmp_dirname.length+1); // inclide dir separator char
+		// form new tmp filename and store to php_init_filename
+		let suffix = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER).toString(36);
+		php_init_filename = `${tmp_dirname}${TMP_SCRIPT_FILENAME_PREFIX}-${suffix}-pid${Deno.pid}.php`;
+		// rename the tmp file to the new name
+		await Deno.rename(tmp_name, php_init_filename);
+		// find files left from previous runs
+		let unowned_filenames = [];
+		for await (const {isFile, name} of Deno.readDir(tmp_dirname))
+		{	if (isFile && name.startsWith(TMP_SCRIPT_FILENAME_PREFIX) && name.endsWith('.php'))
+			{	let pos = name.indexOf('-', TMP_SCRIPT_FILENAME_PREFIX.length+1);
+				if (pos!=-1 && name.substr(pos+1, 3)=='pid')
+				{	let pid = Number(name.slice(pos+4, -4));
+					if (pid)
+					{	if (!await exists(`/proc/${pid}`))
+						{	unowned_filenames.push(name);
+						}
+					}
+				}
+			}
+		}
+		// delete unowned files
+		for (let f of unowned_filenames)
+		{	try
+			{	await Deno.remove(tmp_dirname+f);
+			}
+			catch (e)
+			{	console.error(e);
+			}
+		}
+		// register cleanup for my tmp file
+		addEventListener
+		(	'unload',
+			() =>
+			{	Deno.removeSync(php_init_filename);
+			}
+		);
+	}
+	else
+	{	// if existing file is of valid size, use it
+		try
+		{	let stat = await Deno.stat(php_init_filename);
+			if (stat.isFile && stat.size==PHP_INIT.length)
+			{	return php_init_filename;
+			}
+		}
+		catch
+		{
+		}
+	}
+	// write PHP_INIT file
+	await Deno.writeTextFile(php_init_filename, PHP_INIT, {mode: 0o640});
+	// done
+	return php_init_filename;
+}
