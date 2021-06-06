@@ -2,7 +2,7 @@ import {PHP_INIT} from './php-init.ts';
 import {create_proxy} from './proxy_object.ts';
 import {ReaderMux} from './reader_mux.ts';
 import {debug_assert} from './debug_assert.ts';
-import {fcgi, ResponseWithCookies, writeAll, exists, dirname} from './deps.ts';
+import {Client, ResponseWithCookies, writeAll, exists, dirname} from './deps.ts';
 
 const PHP_CLI_NAME_DEFAULT = 'php';
 const TMP_SCRIPT_FILENAME = 'deno-php-world.php';
@@ -53,6 +53,7 @@ let symbol_php_object = Symbol('php_object');
 
 let encoder = new TextEncoder;
 let decoder = new TextDecoder;
+let fcgi_client = new Client;
 
 async function get_random_key(): Promise<string>
 {	if (await exists('/dev/urandom'))
@@ -112,7 +113,22 @@ export class InterpreterExitError extends Error
 	}
 }
 
-type SettingsPhpFpm = {listen: string, keep_alive_timeout: number, params: Map<string, string>, request: string|Request|URL, request_init?: RequestInit & {bodyIter?: AsyncIterable<Uint8Array>}};
+type SettingsPhpFpm =
+{	listen: string;
+	keep_alive_timeout: number;
+	params: Map<string, string>;
+	request: string|Request|URL;
+	request_init?: RequestInit & {bodyIter?: AsyncIterable<Uint8Array>};
+
+	/**	Callback that will be called as soon as PHP-FPM response is ready - usually after first echo from the remote PHP script, and maybe after a few more echoes, or at the end of the script (when `g.exit()` called).
+		The callback receives a `ResponseWithCookies` object that extends built-in `Response`.
+		The response contains headers and body reader, that will read everything echoed from the script.
+		In this callback you need to await till you finished working with the response object, as it will be destroyed after this callback ends.
+		The returned `ResponseWithCookies` object extends built-in `Response` (that `fetch()` returns) by adding `cookies` property, that contains all `Set-Cookie` headers.
+		Also `response.body` object extends regular `ReadableStream<Uint8Array>` by adding `Deno.Reader` implementation.
+	 **/
+	onresponse?: (response: ResponseWithCookies) => Promise<unknown>;
+};
 
 /**	Settings that affect `PhpInterpreter` behavior.
  **/
@@ -149,7 +165,6 @@ export class PhpInterpreter
 	private stdout_mux: ReaderMux|undefined;
 	private last_inst_id = -1;
 	private stack_frames: number[] = [];
-	private is_response_taken = false;
 	private oninit: (() => void) | undefined;
 
 	/**	For accessing global remote PHP objects, except classes (functions, variables, constants).
@@ -797,10 +812,10 @@ export class PhpInterpreter
 			params.set('DENO_WORLD_HELO', rec_helo);
 			params.set('SCRIPT_FILENAME', php_init_file);
 			// FCGI fetch
-			while (!fcgi.canFetch())
-			{	await fcgi.pollCanFetch();
+			while (!fcgi_client.canFetch())
+			{	await fcgi_client.pollCanFetch();
 			}
-			this.php_fpm_response = fcgi.fetch
+			this.php_fpm_response = fcgi_client.fetch
 			(	{	addr: this.settings.php_fpm.listen,
 					params,
 					timeout: Number.MAX_SAFE_INTEGER,
@@ -815,6 +830,11 @@ export class PhpInterpreter
 			// Mux stdout
 			if (this.settings.stdout != 'inherit')
 			{	this.stdout_mux = new ReaderMux(this.php_fpm_response.then(r => r.body), end_mark);
+			}
+			// onresponse
+			if (this.settings.php_fpm.onresponse)
+			{	let {onresponse} = this.settings.php_fpm;
+				this.php_fpm_response = this.php_fpm_response.then(r => onresponse(r).then(() => r));
 			}
 		}
 		// 5. Accept connection from the interpreter. Identify it by the key.
@@ -931,8 +951,13 @@ export class PhpInterpreter
 		if (this.php_fpm_response)
 		{	try
 			{	let response = await this.php_fpm_response;
-				if (!this.is_response_taken && response.body)
-				{	await Deno.copy(response.body, {async write(p: Uint8Array) {return p.length}}); // read and discard
+				if (response.body)
+				{	try
+					{	await Deno.copy(response.body, {async write(p: Uint8Array) {return p.length}}); // read and discard
+					}
+					catch
+					{	// ok, maybe onresponse already read the body
+					}
 				}
 			}
 			catch (e)
@@ -987,7 +1012,6 @@ export class PhpInterpreter
 		this.is_inited = false;
 		this.last_inst_id = -1;
 		this.stack_frames.length = 0;
-		this.is_response_taken = false;
 		this.oninit = undefined;
 		return status;
 	}
@@ -1103,31 +1127,6 @@ export class PhpInterpreter
 		This can hold deno script from exiting the program. Call `php.close_idle()` to close all the idle connections.
 	 **/
 	close_idle()
-	{	fcgi.closeIdle();
-	}
-
-	/**	If PHP-CLI interface was used, this method throws error (rejects it's promise).
-		For PHP-FPM it returns `ResponseWithCookies` object (that extends built-in `Response`).
-		The response is returned as soon as it's ready - usually after first echo from the remote PHP script, and maybe after a few more echoes, or at the end of the script (when `this.g.exit()` called).
-		The response contains headers and body reader, that will read everything echoed from the script.
-		The returned `ResponseWithCookies` object extends built-in `Response` (that `fetch()` returns) by adding `cookies` property, that contains all `Set-Cookie` headers.
-		Also `response.body` object extends regular `ReadableStream<Uint8Array>` by adding `Deno.Reader` implementation.
-		If you call `this.get_response()`, you're responsible to read the body to the end, to free resources.
-		After `this.g.exit()` awaited, the `this.get_response()` throws error.
-	 **/
-	async get_response(): Promise<ResponseWithCookies>
-	{	if (!this.is_inited && !this.is_response_taken)
-		{	this.is_response_taken = true;
-			await new Promise<void>(y => {this.oninit = y});
-			this.is_response_taken = false;
-		}
-		debug_assert(this.is_inited);
-		let {php_fpm_response} = this;
-		if (!php_fpm_response || this.is_response_taken)
-		{	return Promise.reject(new Error('No PHP-FPM response exists'));
-		}
-		this.is_response_taken = true;
-		await this.ongoing; // let exception be thrown
-		return php_fpm_response;
+	{	fcgi_client.closeIdle();
 	}
 }
