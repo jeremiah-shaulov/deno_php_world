@@ -2,7 +2,7 @@ import {PHP_INIT, get_php_init_filename} from './php-init.ts';
 import {create_proxy} from './proxy_object.ts';
 import {ReaderMux} from './reader_mux.ts';
 import {debug_assert} from './debug_assert.ts';
-import {Client, ResponseWithCookies, writeAll, exists} from './deps.ts';
+import {fcgi, ResponseWithCookies, writeAll, exists} from './deps.ts';
 
 const PHP_CLI_NAME_DEFAULT = 'php';
 const DEBUG_PHP_INIT = false;
@@ -61,9 +61,8 @@ let symbol_php_object = Symbol('php_object');
 
 let encoder = new TextEncoder;
 let decoder = new TextDecoder;
-let fcgi_client = new Client;
 
-fcgi_client.on('error', e => {console.error(e)});
+fcgi.on('error', (e: Error) => {console.error(e)});
 
 async function get_random_key(): Promise<string>
 {	if (await exists('/dev/urandom'))
@@ -106,6 +105,7 @@ export class InterpreterExitError extends Error
 
 type SettingsPhpFpm =
 {	listen: string;
+	max_conns: number;
 	keep_alive_timeout: number;
 	keep_alive_max: number;
 	params: Map<string, string>;
@@ -120,8 +120,6 @@ type SettingsPhpFpm =
 		Also `response.body` object extends regular `ReadableStream<Uint8Array>` by adding `Deno.Reader` implementation.
 	 **/
 	onresponse?: (response: ResponseWithCookies) => Promise<unknown>;
-
-	max_conns: number;
 };
 
 /**	Settings that affect `PhpInterpreter` behavior.
@@ -812,12 +810,12 @@ export class PhpInterpreter
 			params.set('DENO_WORLD_HELO', rec_helo);
 			params.set('SCRIPT_FILENAME', php_init_file);
 			// max_conns
-			fcgi_client.options({maxConns: this.settings.php_fpm.max_conns});
+			fcgi.options({maxConns: this.settings.php_fpm.max_conns});
 			// FCGI fetch
-			while (!fcgi_client.canFetch())
-			{	await fcgi_client.pollCanFetch();
+			while (!fcgi.canFetch())
+			{	await fcgi.pollCanFetch();
 			}
-			this.php_fpm_response = fcgi_client.fetch
+			this.php_fpm_response = fcgi.fetch
 			(	{	addr: this.settings.php_fpm.listen,
 					params,
 					timeout: Number.MAX_SAFE_INTEGER,
@@ -1196,6 +1194,6 @@ export class PhpInterpreter
 		This can hold deno script from exiting the program. Call `php.close_idle()` to close all the idle connections.
 	 **/
 	close_idle()
-	{	fcgi_client.closeIdle();
+	{	fcgi.closeIdle();
 	}
 }

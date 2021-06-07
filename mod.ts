@@ -8,4 +8,7 @@ export const php = new PhpInterpreter;
 
 export const {g, c, settings} = php;
 
-export {ResponseWithCookies} from './deps.ts';
+export {ResponseWithCookies, ServerRequest} from './deps.ts';
+
+export {start_proxy} from './php_fpm.ts';
+export type {Options} from './php_fpm.ts';
