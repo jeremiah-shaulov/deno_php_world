@@ -1,11 +1,11 @@
-import {PHP_INIT, get_php_init_filename} from './php-init.ts';
+import {PHP_BOOT, get_php_boot_filename} from './php-init.ts';
 import {create_proxy} from './proxy_object.ts';
 import {ReaderMux} from './reader_mux.ts';
 import {debug_assert} from './debug_assert.ts';
 import {fcgi, ResponseWithCookies, writeAll, exists} from './deps.ts';
 
 const PHP_CLI_NAME_DEFAULT = 'php';
-const DEBUG_PHP_INIT = false;
+const DEBUG_PHP_BOOT = false;
 const READER_MUX_END_MARK_LEN = 32;
 const DEFAULT_KEEP_ALIVE_TIMEOUT = 10000;
 
@@ -140,6 +140,13 @@ export class Settings
 
 	public unix_socket_name = '';
 	public stdout: 'inherit'|'piped'|'null'|number = 'inherit';
+
+	/**	If set to existing PHP file, will chdir() to this file's directory, and execute this file before doing first requested operation (including `g.exit()`).
+		Then this setting will be reset to empty string, so next call to `g.exit()` will not rerun the file.
+		If you want to rerun, set `init_php_file` again.
+	 **/
+	public init_php_file = '';
+
 	public onsymbol: (type: string, name: string) => any = () => {};
 }
 
@@ -161,7 +168,6 @@ export class PhpInterpreter
 	private stdout_mux: ReaderMux|undefined;
 	private last_inst_id = -1;
 	private stack_frames: number[] = [];
-	private oninit: (() => void) | undefined;
 	private insts: Map<number, any> = new Map;
 	private inst_id_enum = 0;
 
@@ -775,12 +781,14 @@ export class PhpInterpreter
 		// 3. REC_HELO (generate random key)
 		let key = await get_random_key();
 		let end_mark = get_weak_random_bytes(READER_MUX_END_MARK_LEN);
-		let rec_helo = key+' '+btoa(String.fromCharCode.apply(null, end_mark as any))+' '+php_socket;
-		let php_init_file = '';
+		let {init_php_file} = this.settings;
+		this.settings.init_php_file = ''; // so second call to `exit()` will not reexecute the init script. if reexecution is needed, reassign `this.settings.init_php_file`
+		let rec_helo = key+' '+btoa(String.fromCharCode.apply(null, end_mark as any))+' '+btoa(php_socket)+' '+btoa(init_php_file);
+		let php_boot_file = '';
 		// 4. Run the PHP interpreter or connect to PHP-FPM service
 		if (!this.settings.php_fpm.listen)
 		{	// Run the PHP interpreter
-			let cmd = DEBUG_PHP_INIT ? [this.settings.php_cli_name, '-f', await get_php_init_filename(true)] : [this.settings.php_cli_name, '-r', PHP_INIT.slice('<?php\n\n'.length)];
+			let cmd = DEBUG_PHP_BOOT ? [this.settings.php_cli_name, '-f', await get_php_boot_filename(true)] : [this.settings.php_cli_name, '-r', PHP_BOOT.slice('<?php\n\n'.length)];
 			if (Deno.args.length)
 			{	cmd.splice(cmd.length, 0, '--', ...Deno.args);
 			}
@@ -796,7 +804,7 @@ export class PhpInterpreter
 		else
 		{	// Connect to PHP-FPM service
 			// First create php file with init script
-			php_init_file = await get_php_init_filename();
+			php_boot_file = await get_php_boot_filename(DEBUG_PHP_BOOT);
 			// Prepare params
 			let {params} = this.settings.php_fpm;
 			if (params.has('DENO_WORLD_HELO'))
@@ -808,12 +816,12 @@ export class PhpInterpreter
 				params = params_clone;
 			}
 			params.set('DENO_WORLD_HELO', rec_helo);
-			params.set('SCRIPT_FILENAME', php_init_file);
+			params.set('SCRIPT_FILENAME', php_boot_file);
 			// max_conns
 			fcgi.options({maxConns: this.settings.php_fpm.max_conns});
 			// FCGI fetch
-			while (!fcgi.canFetch())
-			{	await fcgi.pollCanFetch();
+			if (!fcgi.canFetch())
+			{	await fcgi.waitCanFetch();
 			}
 			this.php_fpm_response = fcgi.fetch
 			(	{	addr: this.settings.php_fpm.listen,
@@ -835,7 +843,17 @@ export class PhpInterpreter
 			// onresponse
 			if (this.settings.php_fpm.onresponse)
 			{	let {onresponse} = this.settings.php_fpm;
-				this.php_fpm_response = this.php_fpm_response.then(r => onresponse(r).then(() => r));
+				this.php_fpm_response = this.php_fpm_response.then
+				(	async r =>
+					{	try
+						{	await onresponse(r);
+						}
+						catch (e)
+						{	console.error(e);
+						}
+						return r;
+					}
+				);
 			}
 		}
 		// 5. Accept connection from the interpreter. Identify it by the key.
@@ -848,7 +866,7 @@ export class PhpInterpreter
 			{	let result = await Promise.race([accept, this.php_fpm_response]);
 				if (result instanceof ResponseWithCookies)
 				{	accept.then(s => s.close());
-					throw new Error(`Failed to execute PHP-FPM script "${php_init_file}" through socket "${this.settings.php_fpm.listen}": status ${result.status}, ${await result.text()}`);
+					throw new Error(`Failed to execute PHP-FPM script "${php_boot_file}" through socket "${this.settings.php_fpm.listen}": status ${result.status}, ${await result.text()}`);
 				}
 				this.commands_io = result;
 			}
@@ -863,10 +881,11 @@ export class PhpInterpreter
 			}
 			this.commands_io.close();
 		}
-		// 6. oninit
-		if (this.oninit)
-		{	this.oninit();
-			this.oninit = undefined;
+		// 6. init_php_file
+		if (init_php_file)
+		{	// i executed init_php_file that produced result (and maybe deno calls)
+			let result = await this.do_read();
+			debug_assert(result == null);
 		}
 	}
 
@@ -1007,11 +1026,23 @@ export class PhpInterpreter
 	}
 
 	private async do_exit(is_eof=false)
-	{	try
+	{	if (!this.is_inited && this.settings.init_php_file)
+		{	await this.do_init();
+		}
+		try
 		{	await this.do_drop_stdout_reader(is_eof, true);
 		}
 		catch (e)
 		{	console.error(e);
+		}
+		try
+		{	this.commands_io?.close();
+		}
+		catch (e)
+		{	console.error(e);
+		}
+		if (this.stdout_mux)
+		{	await this.stdout_mux.set_none();
 		}
 		if (this.php_fpm_response)
 		{	try
@@ -1048,12 +1079,6 @@ export class PhpInterpreter
 		{	console.error(e);
 		}
 		try
-		{	this.commands_io?.close();
-		}
-		catch (e)
-		{	console.error(e);
-		}
-		try
 		{	this.listener?.close();
 		}
 		catch (e)
@@ -1077,7 +1102,6 @@ export class PhpInterpreter
 		this.is_inited = false;
 		this.last_inst_id = -1;
 		this.stack_frames.length = 0;
-		this.oninit = undefined;
 		this.insts.clear();
 		this.inst_id_enum = 0;
 		return status;
@@ -1123,18 +1147,14 @@ export class PhpInterpreter
 		return await this.stdout_mux.get_reader();
 	}
 
-	private async do_drop_stdout_reader(is_eof=false, and_close_write=false)
+	private async do_drop_stdout_reader(is_eof=false, no_set_none=false)
 	{	if (this.stdout_mux)
 		{	if (this.stdout_mux.is_reading && !is_eof)
 			{	await this.do_write(REC_END_STDOUT, '');
 			}
-			if (and_close_write)
-			{	this.commands_io?.closeWrite();
+			if (!no_set_none)
+			{	await this.stdout_mux.set_none();
 			}
-			await this.stdout_mux.set_none();
-		}
-		else if (and_close_write)
-		{	this.commands_io?.closeWrite();
 		}
 	}
 

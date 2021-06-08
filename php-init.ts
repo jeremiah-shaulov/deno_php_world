@@ -2,7 +2,7 @@ import {dirname, exists} from './deps.ts';
 
 const TMP_SCRIPT_FILENAME_PREFIX = 'deno-php-world';
 
-export const PHP_INIT = String.raw
+export const PHP_BOOT = String.raw
 `<?php
 
 class _PhpDenoBridge extends Exception
@@ -305,13 +305,13 @@ class _PhpDenoBridge extends Exception
 		// Register class loader
 		spl_autoload_register(__CLASS__.'::load_class');
 
-		// Read HELO, that is [key, end_mark, socket_name], and output the key back
+		// Read HELO, that is [key, end_mark, socket_name, init_php_file], and output the key back
 		$data = explode(' ', $_SERVER['DENO_WORLD_HELO'] ?? file_get_contents('php://stdin'));
-		if (count($data) != 3)
+		if (count($data) != 4)
 		{	return;
 		}
 		unset($_SERVER['DENO_WORLD_HELO']);
-		$commands_io = stream_socket_client(trim($data[2]), $errno, $errstr);
+		$commands_io = stream_socket_client(base64_decode($data[2]), $errno, $errstr);
 		if ($commands_io === false)
 		{	error_log("stream_socket_client(): errno=$errno $errstr");
 			return;
@@ -319,8 +319,15 @@ class _PhpDenoBridge extends Exception
 		self::$commands_io = $commands_io;
 		stream_set_timeout($commands_io, 0x7FFFFFFF);
 		self::$end_mark = base64_decode($data[1]);
-		$data = json_encode($data[0]);
-		fwrite($commands_io, pack('l', strlen($data)).$data);
+		$value = json_encode($data[0]);
+		fwrite($commands_io, pack('l', strlen($value)).$value);
+		if (strlen($data[3]) != 0)
+		{	$value = base64_decode($data[3]);
+			$_SERVER['SCRIPT_FILENAME'] = $value;
+			chdir(dirname($value));
+			require $value;
+			fwrite($commands_io, "\0\0\0\0"); // null result
+		}
 
 		// Proceed
 		while (true)
@@ -625,19 +632,19 @@ class DenoWorld
 _PhpDenoBridge::main();
 ?>`;
 
-let php_init_filename = '';
-export async function get_php_init_filename(is_debug=false)
-{	if (!php_init_filename)
+let php_boot_filename = '';
+export async function get_php_boot_filename(is_debug=false)
+{	if (!php_boot_filename)
 	{	// create a temp file
 		let tmp_name = await Deno.makeTempFile();
 		// figure out what is tmp dir
 		let tmp_dirname = dirname(tmp_name);
 		tmp_dirname = tmp_name.slice(0, tmp_dirname.length+1); // inclide dir separator char
-		// form new tmp filename and store to php_init_filename
+		// form new tmp filename and store to php_boot_filename
 		let suffix = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER).toString(36);
-		php_init_filename = is_debug ? `${tmp_dirname}${TMP_SCRIPT_FILENAME_PREFIX}.php` : `${tmp_dirname}${TMP_SCRIPT_FILENAME_PREFIX}-${suffix}-pid${Deno.pid}.php`;
+		php_boot_filename = is_debug ? `${tmp_dirname}${TMP_SCRIPT_FILENAME_PREFIX}.php` : `${tmp_dirname}${TMP_SCRIPT_FILENAME_PREFIX}-${suffix}-pid${Deno.pid}.php`;
 		// rename the tmp file to the new name
-		await Deno.rename(tmp_name, php_init_filename);
+		await Deno.rename(tmp_name, php_boot_filename);
 		// find files left from previous runs
 		let unowned_filenames = [];
 		try
@@ -674,7 +681,7 @@ export async function get_php_init_filename(is_debug=false)
 		{	addEventListener
 			(	'unload',
 				() =>
-				{	Deno.removeSync(php_init_filename);
+				{	Deno.removeSync(php_boot_filename);
 				}
 			);
 		}
@@ -682,17 +689,17 @@ export async function get_php_init_filename(is_debug=false)
 	else
 	{	// if existing file is of valid size, use it
 		try
-		{	let stat = await Deno.stat(php_init_filename);
-			if (stat.isFile && stat.size==PHP_INIT.length)
-			{	return php_init_filename;
+		{	let stat = await Deno.stat(php_boot_filename);
+			if (stat.isFile && stat.size==PHP_BOOT.length)
+			{	return php_boot_filename;
 			}
 		}
 		catch
 		{
 		}
 	}
-	// write PHP_INIT file
-	await Deno.writeTextFile(php_init_filename, PHP_INIT, {mode: 0o640});
+	// write PHP_BOOT file
+	await Deno.writeTextFile(php_boot_filename, PHP_BOOT, {mode: 0o640});
 	// done
-	return php_init_filename;
+	return php_boot_filename;
 }

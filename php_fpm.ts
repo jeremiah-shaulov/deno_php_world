@@ -23,9 +23,7 @@ export type Options =
 };
 
 export function start_proxy(options: Options)
-{	let {frontend_listen} = options;
-
-	if (options.onerror)
+{	if (options.onerror)
 	{	fcgi.on('error', options.onerror);
 	}
 
@@ -38,8 +36,8 @@ export function start_proxy(options: Options)
 		}
 	);
 
-	fcgi.listen
-	(	frontend_listen,
+	let listener = fcgi.listen
+	(	options.frontend_listen,
 		'',
 		async request =>
 		{	let script_filename = request.params.get('SCRIPT_FILENAME') ?? '';
@@ -82,8 +80,7 @@ export function start_proxy(options: Options)
 						}
 					);
 				};
-				php.g.chdir(dirname(script_filename));
-				php.g.require(script_filename);
+				php.settings.init_php_file = script_filename;
 				await php.g.exit();
 				return;
 			}
@@ -106,7 +103,7 @@ export function start_proxy(options: Options)
 
 	let handle =
 	{	stop()
-		{	fcgi.unlisten(frontend_listen);
+		{	fcgi.unlisten(listener.addr);
 		}
 	};
 
