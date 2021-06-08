@@ -15,7 +15,7 @@ export type Options =
 	max_name_length?: number,
 	max_value_length?: number,
 	max_file_size?: number,
-	onisphp?: (script_filename: string) => Promise<boolean>;
+	onisphp?: (script_filename: string) => boolean | Promise<boolean>;
 	onsymbol?: (type: string, name: string) => any;
 	onrequest?: (request: ServerRequest, php: PhpInterpreter) => Promise<unknown>;
 	onerror?: (error: Error) => void;
@@ -63,7 +63,10 @@ export function start_proxy(options: Options)
 			{	php.settings.onsymbol = options.onsymbol;
 			}
 
-			let is_php = options.onisphp ? (await options.onisphp(script_filename)) : script_filename.endsWith('.php');
+			let is_php = options.onisphp ? options.onisphp(script_filename) : script_filename.endsWith('.php');
+			if (typeof(is_php) != 'boolean')
+			{	is_php = await is_php;
+			}
 
 			if (is_php)
 			{	php.settings.php_fpm.request_init =
@@ -102,7 +105,8 @@ export function start_proxy(options: Options)
 	);
 
 	let handle =
-	{	stop()
+	{	addr: listener.addr,
+		stop()
 		{	fcgi.unlisten(listener.addr);
 		}
 	};

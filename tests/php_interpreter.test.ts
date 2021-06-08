@@ -1,14 +1,17 @@
 import {g, c, php, settings, PhpInterpreter, InterpreterExitError} from '../mod.ts';
-import {assert, assertEquals, sleep, readAll} from "../deps.ts";
+import {assert, assertEquals, sleep, readAll, fcgi, ServerRequest} from "../deps.ts";
 import {Settings} from '../php_interpreter.ts';
+import {start_proxy} from '../php_fpm.ts';
 
 const {eval: php_eval, ob_start, ob_get_clean, echo, json_encode, exit} = g;
 const {MainNs, C} = c;
 const PHP_FPM_LISTEN = '/run/php/php-fpm.jeremiah.sock';
+const UNIX_SOCKET_NAME = '/tmp/deno-php-world-test.sock';
 
 function *settings_iter(settings: Settings)
 {	for (let listen of ['', PHP_FPM_LISTEN])
 	{	settings.php_fpm.listen = listen;
+		settings.unix_socket_name = '';
 		settings.stdout = 'inherit';
 		yield;
 		settings.stdout = 'piped';
@@ -17,6 +20,10 @@ function *settings_iter(settings: Settings)
 		yield;
 		settings.stdout = 1;
 		yield;
+		if (listen == '')
+		{	settings.unix_socket_name = UNIX_SOCKET_NAME;
+			yield;
+		}
 	}
 }
 
@@ -242,6 +249,10 @@ Deno.test
 						public function get_twice_var()
 						{	return $this->var * 2;
 						}
+
+						public function __invoke($a='default a', $b='default b')
+						{	return "$a/$b";
+						}
 					}
 
 					class C2
@@ -259,7 +270,7 @@ Deno.test
 
 			obj.var = 12;
 			assertEquals(await obj.var, 12);
-			assertEquals(await obj.get_twice_var(), 24);
+			assertEquals(await obj.get_twice_var('hello'), 24);
 
 			obj.a.b.cc = [true];
 			obj.a.bb = [true];
@@ -275,6 +286,9 @@ Deno.test
 
 			obj.for_c2 = null;
 			assertEquals(await obj_2.key.twice(6), 12);
+
+			assertEquals(await obj('a', 3), 'a/3');
+			assertEquals(await obj(), 'default a/default b');
 
 			delete obj.this;
 			delete obj_2.this;
@@ -653,6 +667,7 @@ Deno.test
 			assertEquals(obj instanceof MainNs.C, true);
 			assertEquals(obj instanceof c.Exception, false);
 			assertEquals(obj instanceof g.intval, false);
+			assertEquals(obj.var instanceof obj.var, false);
 			delete obj.this;
 
 			await g.exit();
@@ -862,6 +877,24 @@ Deno.test
 		{	error = e;
 		}
 		assertEquals(error?.message, 'Property name must not contain spaces: inva prop');
+
+		error = undefined;
+		try
+		{	await obj.var['inva func']();
+		}
+		catch (e)
+		{	error = e;
+		}
+		assertEquals(error?.message, 'Function name must not contain spaces: inva func');
+
+		error = undefined;
+		try
+		{	await new obj.var();
+		}
+		catch (e)
+		{	error = e;
+		}
+		assertEquals(error?.message, 'Cannot construct such object');
 
 		error = undefined;
 		try
@@ -1207,6 +1240,89 @@ Deno.test
 		finally
 		{	await Deno.remove(tmp_name);
 		}
+		php.close_idle();
+	}
+);
+
+Deno.test
+(	'Proxy',
+	async () =>
+	{	settings.php_fpm.listen = '';
+		settings.unix_socket_name = '';
+		settings.stdout = 'inherit';
+
+		let tmp_name = await Deno.makeTempFile({suffix: '.php'});
+
+		try
+		{	await Deno.writeTextFile(tmp_name, `<?php echo 'Hello all';`);
+
+			let proxy = start_proxy
+			(	{	frontend_listen: UNIX_SOCKET_NAME,
+					backend_listen: PHP_FPM_LISTEN,
+					max_conns: 128,
+					keep_alive_timeout: 10000,
+					keep_alive_max: Number.MAX_SAFE_INTEGER,
+					unix_socket_name: '',
+					max_name_length: 256,
+					max_value_length: 4*1024, // "HTTP_COOKIE" param can have this length
+					max_file_size: 10*1024*1024,
+					async onisphp(script_filename)
+					{	return script_filename.endsWith('.php');
+					},
+					onsymbol(type: string, name: string)
+					{
+					},
+					async onrequest(request: ServerRequest, php: PhpInterpreter)
+					{
+					}
+				}
+			);
+
+			let response = await fcgi.fetch
+			(	{	addr: proxy.addr,
+					scriptFilename: tmp_name,
+				},
+				'http://localhost'
+			);
+
+			assertEquals(await response.text(), 'Hello all');
+
+			proxy.stop();
+
+			await fcgi.on('end');
+		}
+		finally
+		{	await Deno.remove(tmp_name);
+		}
+		php.close_idle();
+	}
+);
+
+Deno.test
+(	'Access Deno from PHP',
+	async () =>
+	{	settings.onsymbol = (type, name) =>
+		{	if (type == 'class')
+			{	if (name == '')
+				{
+				}
+			}
+		};
+
+		await g.eval(`$GLOBALS['val'] = DenoWorld::parseInt('123 abc');`);
+		assertEquals(await g.$val, 123);
+
+		await g.eval
+		(	`	$m = new DenoWorld\\Map;
+				$m->set('k1', 'v1');
+				$m->set('k2', 'v2');
+				$GLOBALS['val'] = $m->size;
+			`
+		);
+		assertEquals(await g.$val, 2);
+		//assertEquals(await g.$val, ['k1', 'k2']);
+
+		await g.exit();
 		php.close_idle();
 	}
 );

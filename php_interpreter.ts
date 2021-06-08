@@ -31,29 +31,36 @@ const REC_CLASS_UNSET = 19;
 const REC_CLASS_UNSET_PATH = 20;
 const REC_CLASS_CALL = 21;
 const REC_CLASS_CALL_PATH = 22;
-const REC_CLASS_ITERATE_BEGIN = 23;
-const REC_CLASS_ITERATE = 24;
-const REC_POP_FRAME = 25;
-const REC_N_OBJECTS = 26;
-const REC_END_STDOUT = 27;
-const REC_DATA = 28;
-const REC_CALL = 29;
-const REC_CALL_THIS = 30;
-const REC_CALL_EVAL = 31;
-const REC_CALL_EVAL_THIS = 32;
-const REC_CALL_ECHO = 33;
-const REC_CALL_INCLUDE = 34;
-const REC_CALL_INCLUDE_ONCE = 35;
-const REC_CALL_REQUIRE = 36;
-const REC_CALL_REQUIRE_ONCE = 37;
+const REC_CLASS_INVOKE = 23;
+const REC_CLASS_ITERATE_BEGIN = 24;
+const REC_CLASS_ITERATE = 25;
+const REC_POP_FRAME = 26;
+const REC_N_OBJECTS = 27;
+const REC_END_STDOUT = 28;
+const REC_DATA = 29;
+const REC_CALL = 30;
+const REC_CALL_THIS = 31;
+const REC_CALL_EVAL = 32;
+const REC_CALL_EVAL_THIS = 33;
+const REC_CALL_ECHO = 34;
+const REC_CALL_INCLUDE = 35;
+const REC_CALL_INCLUDE_ONCE = 36;
+const REC_CALL_REQUIRE = 37;
+const REC_CALL_REQUIRE_ONCE = 38;
 
 const RES_ERROR = 1;
 const RES_GET_CLASS = 2;
 const RES_CONSTRUCT = 3;
-const RES_CLASS_GET = 4;
-const RES_CLASS_SET = 5;
-const RES_CLASS_CALL = 6;
-const RES_CLASSSTATIC_CALL = 7;
+const RES_DESTRUCT = 4;
+const RES_CLASS_GET = 5;
+const RES_CLASS_SET = 6;
+const RES_CLASS_CALL = 7;
+const RES_CLASSSTATIC_CALL = 8;
+const RES_CALL = 9;
+
+const RESTYPE_OK = 0;
+const RESTYPE_INST = 1;
+const RESTYPE_ERROR = 2;
 
 const RE_BAD_CLASSNAME_FOR_EVAL = /[^\w\\]/;
 
@@ -705,7 +712,9 @@ export class PhpInterpreter
 				// apply
 				path =>
 				{	if (path.length == 0)
-					{	throw new Error('Cannot use such object like this');
+					{	return function(args)
+						{	return php.write_read(REC_CLASS_INVOKE, args.length==0 ? inst_id+'' : inst_id+' '+JSON.stringify([...args]));
+						};
 					}
 					if (path.length == 1)
 					{	if (path[0] == 'toJSON')
@@ -964,64 +973,77 @@ export class PhpInterpreter
 			{	let [_, file, line, message, trace] = result;
 				throw new InterpreterError(message, file, Number(line), trace);
 			}
-			let promise: Promise<void> | undefined;
-			let data: string | undefined;
+			let data: any;
+			let data_str;
+			let g: any = globalThis;
 			try
 			{	switch (type)
 				{	case RES_GET_CLASS:
 					{	let [_, class_name] = result;
-						let symbol = this.settings.onsymbol('class', class_name);
-						data = symbol?.prototype ? '[1,null]' : '[0,null]';
+						let symbol = g[class_name] || await this.settings.onsymbol('class', class_name);
+						data = symbol?.prototype ? 1 : 0;
 						break;
 					}
 					case RES_CONSTRUCT:
 					{	let [_, class_name, args] = result;
-						let symbol = this.settings.onsymbol('class', class_name);
+						let symbol = g[class_name] || await this.settings.onsymbol('class', class_name);
 						let inst = new symbol(...args); // can throw error
 						let inst_id = this.inst_id_enum++;
 						this.insts.set(inst_id, inst);
-						data = `[${inst_id},null]`;
+						data = inst_id;
 						break;
+					}
+					case RES_DESTRUCT:
+					{	let [_, inst_id] = result;
+						this.insts.delete(inst_id);
+						continue;
 					}
 					case RES_CLASS_GET:
 					{	let [_, inst_id, name] = result;
 						let inst = this.insts.get(inst_id);
-						let value = inst[name]; // can throw error
-						data = JSON.stringify([value, null]);
+						data = inst[name]; // can throw error
 						break;
 					}
 					case RES_CLASS_SET:
 					{	let [_, inst_id, name, value] = result;
 						let inst = this.insts.get(inst_id);
 						inst[name] = value; // can throw error
-						data = JSON.stringify([null, null]);
+						data = null;
 						break;
 					}
 					case RES_CLASS_CALL:
 					{	let [_, inst_id, name, args] = result;
 						let inst = this.insts.get(inst_id);
-						let value = inst[name](...args); // can throw error
-						data = JSON.stringify([value, null]);
+						data = inst[name](...args); // can throw error
 						break;
 					}
 					case RES_CLASSSTATIC_CALL:
 					{	let [_, class_name, name, args] = result;
-						let symbol = this.settings.onsymbol('class', class_name);
-						let value = symbol[name](...args); // can throw error
-						data = JSON.stringify([value, null]);
+						let symbol = g[class_name] || await this.settings.onsymbol('class', class_name);
+						data = symbol[name](...args); // can throw error
 						break;
 					}
+					case RES_CALL:
+					{	let [_, name, args] = result;
+						data = g[name](...args); // can throw error
+						break;
+					}
+					default:
+						debug_assert(false);
 				}
-				if (data != undefined)
-				{	promise = this.do_write(REC_DATA, data);
+				let result_type = RESTYPE_OK;
+				if (data!=null && typeof(data)=='object')
+				{	result_type = RESTYPE_INST;
+					let inst_id = this.inst_id_enum++;
+					this.insts.set(inst_id, data);
+					data = inst_id;
 				}
+				data_str = JSON.stringify([result_type, data]);
 			}
 			catch (e)
-			{	promise = this.do_write(REC_DATA, JSON.stringify({message: e.message}));
+			{	data_str = JSON.stringify([RESTYPE_ERROR, {message: e.message}]);
 			}
-			if (promise)
-			{	await promise;
-			}
+			await this.do_write(REC_DATA, data_str);
 		}
 	}
 

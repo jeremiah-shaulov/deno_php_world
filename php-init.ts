@@ -29,36 +29,43 @@ class _PhpDenoBridge extends Exception
 	private const REC_CLASS_UNSET_PATH = 20;
 	private const REC_CLASS_CALL = 21;
 	private const REC_CLASS_CALL_PATH = 22;
-	private const REC_CLASS_ITERATE_BEGIN = 23;
-	private const REC_CLASS_ITERATE = 24;
-	private const REC_POP_FRAME = 25;
-	private const REC_N_OBJECTS = 26;
-	private const REC_END_STDOUT = 27;
-	private const REC_DATA = 28;
-	private const REC_CALL = 29;
-	private const REC_CALL_THIS = 30;
-	private const REC_CALL_EVAL = 31;
-	private const REC_CALL_EVAL_THIS = 32;
-	private const REC_CALL_ECHO = 33;
-	private const REC_CALL_INCLUDE = 34;
-	private const REC_CALL_INCLUDE_ONCE = 35;
-	private const REC_CALL_REQUIRE = 36;
-	private const REC_CALL_REQUIRE_ONCE = 37;
+	private const REC_CLASS_INVOKE = 23;
+	private const REC_CLASS_ITERATE_BEGIN = 24;
+	private const REC_CLASS_ITERATE = 25;
+	private const REC_POP_FRAME = 26;
+	private const REC_N_OBJECTS = 27;
+	private const REC_END_STDOUT = 28;
+	private const REC_DATA = 29;
+	private const REC_CALL = 30;
+	private const REC_CALL_THIS = 31;
+	private const REC_CALL_EVAL = 32;
+	private const REC_CALL_EVAL_THIS = 33;
+	private const REC_CALL_ECHO = 34;
+	private const REC_CALL_INCLUDE = 35;
+	private const REC_CALL_INCLUDE_ONCE = 36;
+	private const REC_CALL_REQUIRE = 37;
+	private const REC_CALL_REQUIRE_ONCE = 38;
 
 	public const RES_ERROR = 1;
 	public const RES_GET_CLASS = 2;
 	public const RES_CONSTRUCT = 3;
-	public const RES_CLASS_GET = 4;
-	public const RES_CLASS_SET = 5;
-	public const RES_CLASS_CALL = 6;
-	public const RES_CLASSSTATIC_CALL = 7;
+	public const RES_DESTRUCT = 4;
+	public const RES_CLASS_GET = 5;
+	public const RES_CLASS_SET = 6;
+	public const RES_CLASS_CALL = 7;
+	public const RES_CLASSSTATIC_CALL = 8;
+	public const RES_CALL = 9;
+
+	private const RESTYPE_OK = 0;
+	private const RESTYPE_INST = 1;
+	private const RESTYPE_ERROR = 2;
 
 	private static ?int $error_reporting = null;
 	private static string $end_mark = '';
 	private static array $insts = [];
 	private static array $insts_iters = [];
 	private static int $inst_id_enum = 0;
-	private static $commands_io;
+	public static $commands_io;
 
 	public function __construct($message=null, $code=null, $file=null, $line=null)
 	{	parent::__construct($message);
@@ -111,11 +118,11 @@ class _PhpDenoBridge extends Exception
 	{	fwrite(self::$commands_io, pack('l', -strlen($data)).$data);
 		list($record_type, $data) = self::read_record();
 		assert($record_type == self::REC_DATA);
-		list($value, $error) = json_decode($data, true);
-		if ($error)
-		{	throw new Exception($error['message']);
+		list($type, $value) = json_decode($data, true);
+		if ($type == self::RESTYPE_ERROR)
+		{	throw new Exception($value['message']);
 		}
-		return $value;
+		return $type==self::RESTYPE_INST ? DenoWorld::inst($value) : $value;
 	}
 
 	private static function get_reflection($class_name)
@@ -500,6 +507,11 @@ class _PhpDenoBridge extends Exception
 						$value = null;
 						$result_is_set = true;
 						break;
+					case self::REC_CLASS_INVOKE:
+						$data = self::decode_ident_value($data, $inst_id);
+						$result = $data===null ? self::$insts[$inst_id]() : call_user_func_array(self::$insts[$inst_id], self::subst_insts($data));
+						$result_is_set = true;
+						break;
 					case self::REC_CLASS_ITERATE_BEGIN:
 						$result = self::iterate_begin($data);
 						$result_is_set = true;
@@ -604,11 +616,25 @@ class _PhpDenoBridge extends Exception
 class DenoWorld
 {	private $inst_id;
 
+	public static function inst($inst_id)
+	{	$self = new self;
+		$self->inst_id = $inst_id;
+		return $self;
+	}
+
 	public function __construct()
 	{	$args = func_get_args();
-		$class_name = substr(get_class($this), 10); // cut DenoWorld\ prefix
-		$value = _PhpDenoBridge::write_read('['._PhpDenoBridge::RES_CONSTRUCT.','.json_encode($class_name).','.json_encode($args).']');
-		$this->inst_id = (int)$value;
+		$class_name = get_class($this);
+		if ($class_name !== __CLASS__)
+		{	$class_name = substr($class_name, 10); // cut DenoWorld\ prefix
+			$value = _PhpDenoBridge::write_read('['._PhpDenoBridge::RES_CONSTRUCT.','.json_encode($class_name).','.json_encode($args).']');
+			$this->inst_id = (int)$value;
+		}
+	}
+
+	function __destruct()
+	{	$data = '['._PhpDenoBridge::RES_DESTRUCT.','.$this->inst_id.']';
+		fwrite(_PhpDenoBridge::$commands_io, pack('l', -strlen($data)).$data);
 	}
 
 	public function __get($name)
@@ -624,8 +650,14 @@ class DenoWorld
 	}
 
 	public static function __callStatic($name, $args)
-	{	$class_name = substr(get_called_class(), 10); // cut DenoWorld\ prefix
-		return _PhpDenoBridge::write_read('['._PhpDenoBridge::RES_CLASSSTATIC_CALL.','.json_encode($class_name).','.json_encode($name).','.json_encode($args).']');
+	{	$class_name = get_called_class();
+		if ($class_name === __CLASS__)
+		{	return _PhpDenoBridge::write_read('['._PhpDenoBridge::RES_CALL.','.json_encode($name).','.json_encode($args).']');
+		}
+		else
+		{	$class_name = substr($class_name, 10); // cut DenoWorld\ prefix
+			return _PhpDenoBridge::write_read('['._PhpDenoBridge::RES_CLASSSTATIC_CALL.','.json_encode($class_name).','.json_encode($name).','.json_encode($args).']');
+		}
 	}
 }
 
