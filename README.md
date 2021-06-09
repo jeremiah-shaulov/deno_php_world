@@ -1,6 +1,6 @@
 # php_world
 
-This module extends Deno world with PHP, by running commandline PHP interpreter in background, or by connecting to a PHP-FPM service.
+This module extends Deno world with PHP, by running command-line PHP interpreter in background, or by connecting to a PHP-FPM service.
 
 There are several possible reasons to use `php_world`:
 
@@ -29,7 +29,7 @@ await g.exit();
 Run the script as follows:
 
 ```bash
-deno run --unstable --allow-read --allow-write --allow-net --allow-run=php main.ts
+deno run --unstable --allow-net --allow-run=php main.ts
 ```
 
 By default `php_world` will execute `php` CLI command.
@@ -66,8 +66,7 @@ There are several configurable settings:
 5. `settings` - the same as `php.settings`. Allows to modify interpreter settings.
 6. `InterpreterError` - class for exceptions propagated from PHP.
 7. `InterpreterExitError` - this error is thrown in case PHP interpreter exits or crashes.
-8. `ResponseWithCookies` - type that `php.get_response()` returns.
-9. `start_proxy` - function that creates FastCGI proxy node between Web server and PHP-FPM, where PHP script can access Deno environment, and vise versa.
+8. `start_proxy` - function that creates FastCGI proxy node between Web server and PHP-FPM, where PHP script can access Deno environment, and vise versa.
 
 ### Calling functions
 
@@ -83,9 +82,7 @@ console.log(await class_exists('Hello'));
 await exit();
 ```
 
-At the end of Deno script, it's nice to call `exit()`. This function terminates the interpreter, and frees all the resources. After this function called, the `php_world` can be used again, and a new instance of the interpreter will be spawned. It's OK to call `exit()` several times. If `settings.stdout` is set to `piped` (see below), calling `exit()` may be necessary to let Deno script exit naturally at it's end, and not awaiting for PHP output.
-
-If function's result is not awaited-for, the function will work in the background, and if it throws exception, this exception will come out on next operation awaiting. After exception occures, all further operations in current microtask iteration will be skipped (see below).
+It's important to call `exit()` at the end of Deno script. This function terminates the interpreter, and frees all the resources. After this function called, `php_world` can be used again, and a new interpreter instance will be spawned. It's OK to call `exit()` several times.
 
 ### Global constants
 
@@ -100,7 +97,7 @@ console.log((await g.FAKE) === undefined); // unexisting constants have "undefin
 
 ### Global variables
 
-Like constants, variables are present in the `g` namespace, but their names must begin with a '$'.
+Like constants, variables are present in the `g` namespace, but their names must begin with '$'.
 
 Variable's value must be awaited-for. But setting new value returns immediately (and doesn't imply synchronous operations - the value will be set in the background, and there's no result that we need to await for).
 
@@ -179,7 +176,7 @@ console.log(await Value.get_ten());
 
 ### Class construction and destruction
 
-To create a class instance, call the constructor, and await the result. It returns handler to remote PHP object.
+To create a class instance, call class constructor, and await for the result. It returns handle to remote PHP object.
 
 ```ts
 import {g, c} from 'https://deno.land/x/php_world/mod.ts';
@@ -206,7 +203,7 @@ console.log(await php.n_objects()); // prints 1
 delete obj.this;
 console.log(await php.n_objects()); // prints 0
 ```
-To help you free memory, there's 2 helper functions:
+To help you free memory, there're 2 helper functions:
 
 1. `php.push_frame()` - All objects allocated after this call, can be freed at once.
 2. `php.pop_frame()` - Free at once all the objects allocated after last `php.push_frame()` call.
@@ -267,7 +264,7 @@ delete value.this;
 When a function is called, and returned a value, this value is JSON-serialized on PHP side, and JSON-parsed in the Deno world.
 Objects returned from functions are dumb default objects, without methods.
 
-However it's possible to get object handler as in example with instance construction. To do so need to get special property called `this` from the object, before awaiting for the result.
+However it's possible to get object handle as in example with instance construction. To do so you need to get special property called `this` from the object, before awaiting for the result.
 
 ```ts
 import {g, c} from 'https://deno.land/x/php_world/mod.ts';
@@ -284,29 +281,25 @@ console.log(await ex.getMessage()); // prints 'The message'
 delete ex.this;
 ```
 
-At last, the object must be deleted. This doesn't necessarily destroys the object on PHP side, but it stops holding the handler to the object.
+At last, the object must be deleted. This doesn't necessarily destroy the object on PHP side, but it stops holding the object reference.
 
 ### Get variables as objects
 
-In the same fashion, it's possible to get an object-handler to a variable.
+In the same fashion, it's possible to get object-handle to a variable.
 
 ```ts
 import {g, c} from 'https://deno.land/x/php_world/mod.ts';
 
 await g.eval
-(	`	function init()
-		{	global $e;
-			$e = new Exception('The message');
-		}
+(	`	global $e;
+		$e = new Exception('The message');
 	`
 );
-await g.init();
 
 let ex = await g.$e.this;
 console.log(await ex.getMessage()); // prints 'The message'
 delete ex.this;
 ```
-In this example, i use function `init()` to create a global variable. Just setting a variable inside `eval()` doesn't make it global.
 
 ### Objects behavior
 
@@ -359,32 +352,134 @@ console.log(await value.get_triple_var());
 delete value.this;
 ```
 
-### Exceptions
+### Accessing Deno world from PHP
 
-PHP exceptions are propagated to Deno as instances of InterpreterError class.
+On PHP side 2 global variables get defined: `$globalThis` and `$window`. They are identical, so you can use whatever you prefer.
 
 ```ts
-import {g, c, InterpreterError} from 'https://deno.land/x/php_world/mod.ts';
+import {g, c} from 'https://deno.land/x/php_world/mod.ts';
 
 await g.eval
-(	`	function failure($msg)
-		{	throw new Exception($msg);
-		}
+(	`	global $window;
+
+		var_dump($window->parseInt('123 abc'));
+
+		var_dump($window->Math->pow(10, 3));
+
+		var_dump($window->Deno->pid);
+
+		var_dump($window->eval('Deno.pid'));
+	`
+);
+await g.exit();
+```
+
+Javascript functions and classes are not distinguishable entities (functions can be used as classes). They both can be referred to from PHP through `DenoWorld` namespace.
+
+```ts
+import {g, c} from 'https://deno.land/x/php_world/mod.ts';
+
+await g.eval
+(	`	global $keys_func;
+
+		use DenoWorld\\Map;
+
+		$m = new Map;
+		$m->set('k1', 'v1');
+		$m->set('k2', 'v2');
+
+		var_dump($m->size);
+		var_dump(count($m));
+		var_dump(iterator_to_array($m->keys()));
+		$keys_func = $m->keys->bind($m);
+	`
+);
+let keys_func = await g.$keys_func;
+console.log([...keys_func()]);
+await g.exit();
+```
+
+Some class names are invalid in PHP, and cause errors. Classes called "Array" and "Object" are such.
+
+```ts
+import {g, c} from 'https://deno.land/x/php_world/mod.ts';
+
+try
+{	await g.eval
+	(	`	var_dump(new DenoWorld\\Array('a', 'b', 'c'));
+		`
+	);
+}
+catch (e)
+{	console.error(e); // Error: syntax error, unexpected 'Array' (T_ARRAY), expecting identifier (T_STRING)
+}
+
+await g.exit();
+```
+
+But you can rename them.
+
+```ts
+import {g, c} from 'https://deno.land/x/php_world/mod.ts';
+
+await g.eval
+(	`	global $window;
+
+		$window->Arr = $window->Array;
+		$a = new DenoWorld\\Arr('a', 'b', 'c');
+		var_dump($a);
+		$a->splice(1, 1, 'B', 'B');
+		var_dump($a);
+		var_dump($window->JSON->stringify($a));
 	`
 );
 
-try
-{	await g.failure('Test');
-}
-catch (e)
-{	console.log(e instanceof InterpreterError);
-	console.log(e.message);
-}
+await g.exit();
 ```
 
-InterpreterError has the following fields: `message`, `fileName`, `lineNumber`, `trace` (string).
+The following object features are supported:
 
-If a function throws exception, and you don't await for the result, it's error will be returned to the next awaited operation within current microtask iteration.
+1. Getting and setting properties. They can be accessed as `$obj->prop` or `$obj['prop']`.
+2. `isset($obj->prop)` and `unset($obj->prop)`.
+3. Calling object methods. And calling objects as functions (like `$window->Number('123')`), if this makes sense.
+4. When converting a Deno-world object to string, it's `toString()` will be called on Deno side.
+5. `foreach` iteration. If Deno object has `Symbol.iterator` or `Symbol.asyncIterator`, they will be used. Otherwise object properties will be iterated (as usual in PHP).
+6. If Deno object has property called `length`, or `size`, `count($obj)` will return it's value.
+
+If a requested Deno class doesn't exist, you can handle this situation, and maybe load it before accessing.
+
+```ts
+import {g, c, settings} from 'https://deno.land/x/php_world/mod.ts';
+
+settings.onsymbol = name =>
+{	if (name == 'Scientific')
+	{	class Scientific
+		{	constructor(public n=0)
+			{
+			}
+
+			twice()
+			{	return this.n*2;
+			}
+		}
+		return Scientific;
+	}
+};
+
+await g.eval
+(	`	use DenoWorld\\Scientific;
+
+		$obj = new Scientific(10);
+		var_dump($obj->twice());
+	`
+);
+
+await g.exit();
+```
+
+### Execution flow and exceptions
+
+When you call PHP functions, if function's result is not awaited-for, the function will work in background. You can continue calling functions, and they all will be executed in the same sequence they requested. If a function threw exception, all subsequent operations will be skipped till the end of current microtask iteration.
 
 ```ts
 import {g, c, php} from 'https://deno.land/x/php_world/mod.ts';
@@ -412,7 +507,7 @@ catch (e)
 console.log(await g.$n); // prints 1
 ```
 
-But if you don't await any other `php_world` operation within the current microtask iteration, the exception will be lost.
+If you don't await any operation within current microtask iteration, the exception will be lost.
 
 ```ts
 import {g, c, php} from 'https://deno.land/x/php_world/mod.ts';
@@ -441,6 +536,30 @@ queueMicrotask
 	}
 );
 ```
+
+PHP exceptions are propagated to Deno as instances of InterpreterError class.
+
+```ts
+import {g, c, InterpreterError} from 'https://deno.land/x/php_world/mod.ts';
+
+await g.eval
+(	`	function failure($msg)
+		{	throw new Exception($msg);
+		}
+	`
+);
+
+try
+{	await g.failure('Test');
+}
+catch (e)
+{	console.log(e instanceof InterpreterError);
+	console.log(e.message);
+}
+```
+
+InterpreterError has the following fields: `message`, `fileName`, `lineNumber`, `trace` (string).
+
 If PHP interpreter exits (not as result of calling `g.exit()`), `InterpreterExitError` exception is thrown.
 
 ```ts
@@ -457,6 +576,171 @@ catch (e)
 ```
 
 The InterpreterExitError class has the following fields: `message`, `code` (process exit status code).
+
+### Running several PHP interpreters in parallel
+
+Exported `php` symbol is a default instance of `PhpInterpreter` class that created by calling `export const php = new PhpInterpreter` inside the library. `PhpInterpreter` class allows you to run more instances of PHP interpreter, either PHP-CLI, or PHP-FPM.
+
+```ts
+import {g, c, PhpInterpreter} from 'https://deno.land/x/php_world/mod.ts';
+
+let int_1 = new PhpInterpreter;
+let int_2 = new PhpInterpreter;
+
+let pid_0 = await g.posix_getpid();
+let pid_1 = await int_1.g.posix_getpid();
+let pid_2 = await int_2.g.posix_getpid();
+
+console.log(`${pid_0}, ${pid_1}, ${pid_2}`);
+
+await g.exit();
+await int_1.g.exit();
+await int_2.g.exit();
+```
+
+### Limitations of PHP-CLI
+
+Using PHP-CLI backend is simple, but there are disadvantages.
+
+If some PHP script file declares a function, or some other kind of object, such file cannot be included (or required) multiple times. PHP complains on "Cannot redeclare function". Practically this means that to execute the same script multiple times, new PHP interpreters must be spawned. Respawning process is slow, and you will not benefit from opcache.
+
+However, it's possible to reorganize the application in such a way, that script files you run directly don't declare objects, but call `require_once()` for files that do declare them.
+
+Another disadvantage is that functions like `header()` and `setcookie()` do nothing in PHP-CLI.
+
+### Using PHP-FPM
+
+To use PHP-FPM backend (that must be installed on your system), set `settings.php_fpm.listen` to PHP-FPM service address. You can find it in your PHP-FPM pool configuration file.
+
+To get started you can create a new pool file like this (substitute `username` with the user from which you run your deno script):
+
+```ini
+[username]
+user = username
+group = username
+listen = [::1]:8989
+
+# if "listen" is unix-domain socket, set also the following:
+#listen.owner = username
+#listen.group = username
+
+pm = dynamic
+pm.max_children = 5
+pm.start_servers = 2
+pm.min_spare_servers = 1
+pm.max_spare_servers = 3
+```
+
+```ts
+import {g, c, php, settings} from 'https://deno.land/x/php_world/mod.ts';
+
+settings.php_fpm.listen = '[::1]:8989';
+console.log(await g.php_sapi_name());
+await g.exit(); // in case of PHP-FPM, g.exit() doesn't actually call exit() on PHP side, but it terminates a FCGI request
+php.close_idle(); // close idle connection to PHP-FPM (otherwise deno script will not exit immediately)
+```
+
+Common problems:
+
+1. If using unix-domain socket for PHP-FPM service, it must be accessible by deno script. In PHP-FPM pool configuration one of `listen.owner` or `listen.group` must be set to deno script user.
+2. If using unix-domain socket for communication with PHP world (`settings.unix_socket_name`), it must be accessible by PHP interpreter. One of `user` or `group` must be set to deno script user.
+
+If `settings.stdout` is set to `inherit` (default value), echo output, together with headers set with `header()` or `setcookie()` can be taken as `Response` object.
+
+```ts
+import {g, c, php, settings} from 'https://deno.land/x/php_world/mod.ts';
+
+settings.php_fpm.listen = '[::1]:8989';
+
+php.g.echo(`Hello`);
+
+await php.g.exit();
+php.close_idle();
+```
+
+Each `PhpInterpreter` instance (including the default one, that was used in the example above) establishes connection with PHP-FPM service by making a FastCGI request to it.
+PHP script will run till you call `g.exit()`. In case of PHP-FPM `g.exit()` works specially: it doesn't call `exit()` on PHP side, but it terminates the FastCGI request.
+PHP `echo` output will be received as FastCGI response. The response can start arriving before you call `g.exit()` - usually it happens after echoing some portion of output.
+
+The response can be caught and examined in a callback function set to `settings.php_fpm.onresponse`.
+This callback will be called when headers and the first portion of body were received.
+The callback will get `ResponseWithCookies` object that is subclass of `Response` (that built-in `fetch()` returns).
+This object will contain headers and body reader, that you can use to read everything echoed from the script.
+
+If you want to read the response body in the callback, you need not return till you read all the response body. After returning from the callback, the response can be destroyed (it will be destroyed if you called `g.exit()` earlier).
+
+The body can be read in regular way, as you do with `fetch()`, or it can be read as `Deno.Reader`, because `response.body` object extends regular `ReadableStream<Uint8Array>` by adding `Deno.Reader` implementation.
+
+```ts
+import {g, c, php, settings} from 'https://deno.land/x/php_world/mod.ts';
+import {readAll} from 'https://deno.land/std@0.97.0/io/util.ts';
+
+settings.php_fpm.listen = '/run/php/php-fpm.jeremiah.sock';
+settings.php_fpm.onresponse = async (response) =>
+{	console.log(response.headers);
+	if (response.body)
+	{	let body = await readAll(response.body);
+		console.log('BODY: ' + new TextDecoder().decode(body));
+	}
+};
+
+await g.eval
+(	`	header('X-Hello: All');
+		echo "Response body";
+	`
+);
+
+console.log('Essentially this is it');
+await g.exit();
+console.log('Exited');
+php.close_idle();
+```
+
+By default this library reuses connections to PHP-FPM. This can be controlled by adjusting `settings.php_fpm.keep_alive_timeout`.
+This number of milliseconds each connection will remain idle after the request, so Deno script would not exit naturally if you don't call `php.close_idle()`.
+
+### Creating FastCGI proxy
+
+If you have Apache (or Nginx) + PHP-FPM setup, you can create Deno node in the middle, so Apache will connect to your Deno application, and it will proxy the request further to PHP-FPM.
+And by default this will work as there was no Deno at all. But PHP scrips will be able to access Deno world, and vise versa.
+
+```ts
+import {start_proxy, ServerRequest, PhpInterpreter} from 'https://deno.land/x/php_world/mod.ts';
+
+console.log(`Server started`);
+
+let proxy = start_proxy
+(	{	frontend_listen: '/tmp/jeremiah.sock',
+		backend_listen: '/run/php/php-fpm.jeremiah.sock',
+		max_conns: 128,
+		keep_alive_timeout: 10_000,
+		keep_alive_max: Number.MAX_SAFE_INTEGER,
+		unix_socket_name: '',
+		max_name_length: 256,
+		max_value_length: 4*1024, // "HTTP_COOKIE" param can have this length
+		max_file_size: 10*1024*1024,
+		async onisphp(script_filename)
+		{	console.log(script_filename);
+			return script_filename.endsWith('.php');
+		},
+		onsymbol(name: string)
+		{
+		},
+		async onrequest(request: ServerRequest, php: PhpInterpreter)
+		{	console.log(request.url);
+			await request.post.parse(); // if you want to access POST parameters and uploaded files (otherwise request.post will contain nothing)
+			request.responseHeaders.set('content-type', 'text/html');
+			await request.respond({status: 200, body: 'Empty page'});
+		}
+	}
+);
+```
+
+For each incoming request, first `onisphp()` will be called, to check is this a PHP script. If you return true, the request will be forwarded to the backend PHP-FPM service.
+If you return false, then `onrequest()` will be called, where you can handle this request.
+To handle it, you need to call `await request.respond()`, and if you don't do that, a 404 response will be sent the client (await is required).
+
+For more information on `ServerRequest` object see [x/fcgi](https://deno.land/x/fcgi) library;
 
 ### Dealing with PHP echo output
 
@@ -498,97 +782,12 @@ php.drop_stdout_reader(); // reader stream will end here
 let data = new TextDecoder().decode(await Deno.readAll(stdout));
 console.log(data == "*".repeat(10)+"."); // prints "true"
 
-await g.exit();
+await php.g.exit();
 ```
-If `settings.stdout` is set to something other that `piped`, calling `g.exit()` at the end of script is not required, but in case of `piped` not calling it may cause Deno script not exiting at the end, because the task that reads from PHP STDOUT may not know that there's no more output expected.
+
+This technique doesn't work good with PHP-FPM, because output can be buffered in the middle between PHP and Deno.
 
 Another options for `settings.stdout` are `null` (to ignore the output), and a numeric file descriptor (rid) of an opened file/stream.
-
-For PHP-FPM `settings.stdout` == `inherit` has special meaning. It allows to get FastCGI response in format similar to what `fetch()` returns, and read echo output there. Headers will also be available on the response. To get the response call `php.get_response()` (see below).
-
-### Running several PHP interpreters in parallel
-
-```ts
-import {g, c, PhpInterpreter} from 'https://deno.land/x/php_world/mod.ts';
-
-let int_1 = new PhpInterpreter;
-let int_2 = new PhpInterpreter;
-
-let pid_0 = await g.posix_getpid();
-let pid_1 = await int_1.g.posix_getpid();
-let pid_2 = await int_2.g.posix_getpid();
-
-console.log(`${pid_0}, ${pid_1}, ${pid_2}`);
-
-await g.exit();
-await int_1.g.exit();
-await int_2.g.exit();
-```
-
-### Limitations of PHP-CLI
-
-Using PHP-CLI backend is simple, but there are disadvantages.
-
-If some PHP script file declares a function, or some other kind of object, such file cannot be included (or required) multiple times. PHP complains on "Cannot redeclare function". Practically this means that to execute the same script multiple times, new PHP interpreters must be spawned. Respawning process is slow, and you will not benefit from opcache.
-
-However, it's possible to reorganize the application in such a way, that script files you run directly don't declare objects, but call `require_once()` for files that do declare them.
-
-Another disadvantage is that functions like `header()` and `setcookie()` do nothing in PHP-CLI.
-
-### Using PHP-FPM
-
-To use PHP-FPM backend (that must be installed on your system), set `settings.php_fpm.listen` to PHP-FPM service address. You can find it in your PHP-FPM pool configuration file.
-
-To get started you can create a new pool file like this (substitute `username` with the user from which you run your deno script):
-
-```ini
-[username]
-user = username
-group = username
-listen = [::1]:8989
-
-pm = dynamic
-pm.max_children = 5
-pm.start_servers = 2
-pm.min_spare_servers = 1
-pm.max_spare_servers = 3
-```
-
-```ts
-import {g, c} from 'https://deno.land/x/php_world/mod.ts';
-
-settings.php_fpm.listen = '[::1]:8989';
-console.log(await g.php_sapi_name());
-await g.exit(); // in case of PHP-FPM, g.exit() doesn't actually call exit() on PHP side, but it terminates a FCGI request
-php.close_idle(); // close idle connection to PHP-FPM (otherwise deno script will not exit immediately)
-```
-
-Common problems:
-
-1. If using unix-domain socket for PHP-FPM service, the deno script must have access to it (`listen.owner = username` and/or `listen.group = username`).
-2. If using unix-domain socket for communication with PHP world (`settings.unix_socket_name`), the PHP interpreter must have access to this socket (`user = username` and/or `group = username`).
-
-If `settings.stdout` is set to `inherit` (default value), echo output, together with headers set with `header()` or `setcookie()` can be taken as `Response` object.
-
-```ts
-import {g, c} from 'https://deno.land/x/php_world/mod.ts';
-
-settings.php_fpm.listen = '[::1]:8989';
-php.g.echo(`Hello`);
-php.g.exit(); // don't await, since it will destroy the response object
-let response = await php.get_response();
-console.log(await response.text()); // prints "Hello"
-await php.ready(); // await exit() completion
-php.close_idle();
-```
-
-The response is returned as soon as it's ready - usually after first echo from the remote PHP script, and maybe after a few more echoes, or at the end of the script (when `php.g.exit()` called).
-The response contains headers and body reader, that will read everything echoed from the script.
-The returned object is of class `ResponseWithCookies`. This class extends built-in `Response` (that `fetch()` returns) by adding `cookies` property, that contains all `Set-Cookie` headers.
-Also `response.body` object extends regular `ReadableStream<Uint8Array>` by adding `Deno.Reader` implementation.
-
-If you call `php.get_response()`, you're responsible to read the body to the end, to free resources.
-After `php.g.exit()` awaited, the `php.get_response()` throws error.
 
 ### How fast is deno_world?
 

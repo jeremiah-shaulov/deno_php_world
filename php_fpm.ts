@@ -16,7 +16,7 @@ export type Options =
 	max_value_length?: number,
 	max_file_size?: number,
 	onisphp?: (script_filename: string) => boolean | Promise<boolean>;
-	onsymbol?: (type: string, name: string) => any;
+	onsymbol?: (name: string) => any;
 	onrequest?: (request: ServerRequest, php: PhpInterpreter) => Promise<unknown>;
 	onerror?: (error: Error) => void;
 	onend?: () => void;
@@ -89,8 +89,7 @@ export function start_proxy(options: Options)
 			}
 
 			if (options.onrequest)
-			{	await request.post.parse();
-				await options.onrequest(request, php);
+			{	await options.onrequest(request, php);
 				return;
 			}
 		}

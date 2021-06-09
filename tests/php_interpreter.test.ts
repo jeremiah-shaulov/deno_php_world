@@ -1220,6 +1220,153 @@ Deno.test
 );
 
 Deno.test
+(	'Access Deno from PHP',
+	async () =>
+	{	settings.php_fpm.listen = '';
+		settings.unix_socket_name = '';
+		settings.stdout = 'inherit';
+
+		await g.eval
+		(	`	global $window, $val, $val2;
+				$val = $window->parseInt('123 abc');
+				$val2 = DenoWorld::parseInt('123 abc');
+			`
+		);
+		assertEquals(await g.$val, 123);
+		assertEquals(await g.$val2, 123);
+
+		await g.eval
+		(	`	global $window, $thousand, $thousand2;
+				$thousand = $window->Math->pow(10, 3);
+				$thousand2 = DenoWorld\\Math::pow(10, 3);
+			`
+		);
+		assertEquals(await g.$thousand, 1000);
+		assertEquals(await g.$thousand2, 1000);
+
+		await g.eval
+		(	`	global $window, $deno_pid, $deno_pid_2;
+				$deno_pid = $window->Deno->pid;
+				$deno_pid_2 = $window->eval('Deno.pid');
+			`
+		);
+		assertEquals(await g.$deno_pid, Deno.pid);
+		assertEquals(await g.$deno_pid_2, Deno.pid);
+
+		await g.eval
+		(	`	use DenoWorld\\Map;
+
+				$m = new Map;
+				$m->set('k1', 'v1');
+				$m->set('k2', 'v2');
+				$GLOBALS['m_size'] = $m->size;
+				$GLOBALS['m_keys'] = $m->keys();
+				$GLOBALS['m_keys_func'] = $m->keys->bind($m);
+				$GLOBALS['m_arr'] = iterator_to_array($m);
+				$GLOBALS['m_keys_arr'] = iterator_to_array($m->keys());
+				$GLOBALS['count_m'] = count($m);
+			`
+		);
+		assertEquals(await g.$m_size, 2);
+		assertEquals([...await g.$m_keys], ['k1', 'k2']);
+		let m_keys_func = await g.$m_keys_func;
+		assertEquals([...m_keys_func()], ['k1', 'k2']);
+		assertEquals(await g.$m_arr, [["k1", "v1"], ["k2", "v2"]]);
+		assertEquals(await g.$m_keys_arr, ["k1", "k2"]);
+		assertEquals(await g.$count_m, 2);
+
+		await g.eval
+		(	`	global $window, $val;
+				$window->Ar = $window->Array;
+				$a = new DenoWorld\\Ar('a', 'b');
+				$a[] = 'c';
+				$val = $a->indexOf('c');
+			`
+		);
+		assertEquals(await g.$val, 2);
+
+		await g.eval
+		(	`	global $window, $a, $val;
+
+				$window->eval("window.User = class User {name = 'Default name'; email = ''}");
+				$a = new DenoWorld\\User;
+				$a->phone = 111;
+				$a['zip'] = 222;
+
+				$val = $window->JSON->stringify($a);
+			`
+		);
+		assertEquals(JSON.parse(await g.$val), {name: "Default name", email: "", phone: 111, zip: 222});
+		await g.eval
+		(	`	global $window, $a, $val, $val2, $phone_isset, $phone2_isset, $name_isset;
+				unset($a['name']);
+
+				$val = $window->JSON->stringify($a);
+
+				$native = [];
+				foreach ($a as $k => $v)
+				{	$native[$k] = $v;
+				}
+				$val2 = json_encode($native);
+
+				$phone_isset = isset($a['phone']);
+				$phone2_isset = isset($a['phone2']);
+				$name_isset = isset($a['name']);
+			`
+		);
+		assertEquals(JSON.parse(await g.$val), {email: "", phone: 111, zip: 222});
+		assertEquals(JSON.parse(await g.$val2), {email: "", phone: 111, zip: 222});
+		assertEquals(await g.$phone_isset, true);
+		assertEquals(await g.$phone2_isset, false);
+		assertEquals(await g.$name_isset, false);
+
+		let error;
+		try
+		{	await g.eval(`$GLOBALS['val'] = DenoWorld::eval('JUNK');`);
+		}
+		catch (e)
+		{	error = e;
+		}
+		assert(error);
+
+		await g.exit();
+		php.close_idle();
+	}
+);
+
+Deno.test
+(	'Variables from PHP',
+	async () =>
+	{	settings.php_fpm.listen = '';
+		settings.unix_socket_name = '';
+		settings.stdout = 'inherit';
+
+		await g.eval
+		(	`	class User
+				{	public $name;
+
+					function get_name()
+					{	return $this->name;
+					}
+				}
+
+				function get_user_name(User $user)
+				{	return $user->get_name();
+				}
+			`
+		);
+
+		let user = await new c.User;
+		user.name = 'Me';
+		assertEquals(await g.get_user_name(user), 'Me');
+		delete user.this;
+
+		await g.exit();
+		php.close_idle();
+	}
+);
+
+Deno.test
 (	'Include',
 	async () =>
 	{	let tmp_name = await Deno.makeTempFile();
@@ -1269,7 +1416,7 @@ Deno.test
 					async onisphp(script_filename)
 					{	return script_filename.endsWith('.php');
 					},
-					onsymbol(type: string, name: string)
+					onsymbol(name: string)
 					{
 					},
 					async onrequest(request: ServerRequest, php: PhpInterpreter)
@@ -1294,46 +1441,6 @@ Deno.test
 		finally
 		{	await Deno.remove(tmp_name);
 		}
-		php.close_idle();
-	}
-);
-
-Deno.test
-(	'Access Deno from PHP',
-	async () =>
-	{	await g.eval(`$GLOBALS['val'] = DenoWorld::parseInt('123 abc');`);
-		assertEquals(await g.$val, 123);
-
-		await g.eval(`$GLOBALS['thousand'] = DenoWorld\\Math::pow(10, 3);`);
-		assertEquals(await g.$thousand, 1000);
-
-		await g.eval(`$GLOBALS['deno_pid'] = DenoWorld::eval('Deno.pid');`);
-		assertEquals(await g.$deno_pid, Deno.pid);
-
-		await g.eval
-		(	`	$m = new DenoWorld\\Map;
-				$m->set('k1', 'v1');
-				$m->set('k2', 'v2');
-				$GLOBALS['m_size'] = $m->size;
-				$GLOBALS['m_keys'] = $m->keys();
-				$GLOBALS['m_keys_func'] = $m->keys->bind($m);
-			`
-		);
-		assertEquals(await g.$m_size, 2);
-		assertEquals([...await g.$m_keys], ['k1', 'k2']);
-		let m_keys_func = await g.$m_keys_func;
-		assertEquals([...m_keys_func()], ['k1', 'k2']);
-
-		let error;
-		try
-		{	await g.eval(`$GLOBALS['val'] = DenoWorld::eval('JUNK');`);
-		}
-		catch (e)
-		{	error = e;
-		}
-		assert(error);
-
-		await g.exit();
 		php.close_idle();
 	}
 );

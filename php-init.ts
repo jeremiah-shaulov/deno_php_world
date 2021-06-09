@@ -5,22 +5,27 @@ const TMP_SCRIPT_FILENAME_PREFIX = 'deno-php-world';
 export const PHP_BOOT = String.raw
 `<?php
 
-class DenoWorldException extends Exception
-{	public function __construct($message=null, $code=null, $file=null, $line=null)
-	{	parent::__construct($message);
-		if ($code !== null) $this->code = $code;
-		if ($file) $this->file = $file;
-		if ($line !== null) $this->line = $line;
-	}
-}
+class DenoWorld implements ArrayAccess
+{	protected int $deno_inst_id;
 
-class DenoWorld
-{	protected $deno_inst_id;
+	public static function __callStatic($name, $args)
+	{	$class_name = get_called_class();
+		if ($class_name === __CLASS__)
+		{	return DenoWorldMain::write_read('['.DenoWorldMain::RES_CALL.','.json_encode($name).','.json_encode(DenoWorldMain::serialize_insts($args)).']');
+		}
+		else
+		{	$class_name = substr($class_name, 10); // cut DenoWorld\ prefix
+			return DenoWorldMain::write_read('['.DenoWorldMain::RES_CLASSSTATIC_CALL.','.json_encode($class_name).','.json_encode($name).','.json_encode(DenoWorldMain::serialize_insts($args)).']');
+		}
+	}
 
 	public function __construct()
 	{	$args = func_get_args();
 		$class_name = get_class($this);
-		if ($class_name !== 'DenoWorldMain') // if not from DenoWorldMain::inst()
+		if (substr($class_name, 0, 10) !== "DenoWorld\\")
+		{	$this->deno_inst_id = $args[0];
+		}
+		else
 		{	$class_name = substr($class_name, 10); // cut DenoWorld\ prefix
 			$value = DenoWorldMain::write_read('['.DenoWorldMain::RES_CONSTRUCT.','.json_encode($class_name).','.json_encode(DenoWorldMain::serialize_insts($args)).']');
 			$this->deno_inst_id = (int)$value;
@@ -43,15 +48,168 @@ class DenoWorld
 	{	return DenoWorldMain::write_read('['.DenoWorldMain::RES_CLASS_CALL.','.$this->deno_inst_id.','.json_encode($name).','.json_encode(DenoWorldMain::serialize_insts($args)).']');
 	}
 
-	public static function __callStatic($name, $args)
-	{	$class_name = get_called_class();
-		if ($class_name === __CLASS__)
-		{	return DenoWorldMain::write_read('['.DenoWorldMain::RES_CALL.','.json_encode($name).','.json_encode(DenoWorldMain::serialize_insts($args)).']');
+	public function __invoke()
+	{	$args = func_get_args();
+		return DenoWorldMain::write_read('['.DenoWorldMain::RES_CLASS_INVOKE.','.$this->deno_inst_id.','.json_encode(DenoWorldMain::serialize_insts($args)).']');
+	}
+
+	public function __toString()
+	{	return DenoWorldMain::write_read('['.DenoWorldMain::RES_CLASS_TO_STRING.','.$this->deno_inst_id.']');
+	}
+
+	public function __isset($name)
+	{	return DenoWorldMain::write_read('['.DenoWorldMain::RES_CLASS_ISSET.','.$this->deno_inst_id.','.json_encode($name).']');
+	}
+
+	public function __unset($name)
+	{	return DenoWorldMain::write_read('['.DenoWorldMain::RES_CLASS_UNSET.','.$this->deno_inst_id.','.json_encode($name).']');
+	}
+
+	public function __debugInfo()
+	{	$props = json_decode(DenoWorldMain::write_read('['.DenoWorldMain::RES_CLASS_PROPS.','.$this->deno_inst_id.']'), true);
+		$info = [];
+		foreach ($props as $prop)
+		{	try
+			{	$val = $this->$prop;
+			}
+			catch (Throwable $e)
+			{	$val = '(Invalid)';
+			}
+			$info[$prop] = $val;
 		}
-		else
-		{	$class_name = substr($class_name, 10); // cut DenoWorld\ prefix
-			return DenoWorldMain::write_read('['.DenoWorldMain::RES_CLASSSTATIC_CALL.','.json_encode($class_name).','.json_encode($name).','.json_encode(DenoWorldMain::serialize_insts($args)).']');
+		return $info;
+	}
+
+	public function offsetSet($offset, $value)
+	{	if ($offset === null)
+		{	if ($this instanceof Countable)
+			{	$offset = $this->count();
+			}
+			if (!is_int($offset))
+			{	throw new Exception("Cannot append to this object");
+			}
 		}
+		$this->$offset = $value;
+	}
+
+	public function offsetExists($offset)
+	{	return DenoWorldMain::write_read('['.DenoWorldMain::RES_CLASS_ISSET.','.$this->deno_inst_id.','.json_encode($offset).']');
+	}
+
+	public function offsetUnset($offset)
+	{	return DenoWorldMain::write_read('['.DenoWorldMain::RES_CLASS_UNSET.','.$this->deno_inst_id.','.json_encode($offset).']');
+	}
+
+	public function offsetGet($offset)
+	{	return DenoWorldMain::write_read('['.DenoWorldMain::RES_CLASS_GET.','.$this->deno_inst_id.','.json_encode($offset).']');
+	}
+}
+
+class DenoWorldDefaultIterator implements Iterator
+{	private int $deno_inst_id;
+	private DenoWorld $it;
+	private $result;
+
+	public function __construct(int $deno_inst_id)
+	{	$this->deno_inst_id = $deno_inst_id;
+	}
+
+	public function rewind()
+	{	$this->it = DenoWorldMain::write_read('['.DenoWorldMain::RES_CLASS_GET_ITERATOR.','.$this->deno_inst_id.']');
+		$this->result = $this->it->next();
+	}
+
+	public function valid()
+	{	return !($this->result->done ?? true);
+	}
+
+	public function current()
+	{	return $this->result->value[1] ?? null;
+	}
+
+	public function key()
+	{	return $this->result->value[0] ?? null;
+	}
+
+	public function next()
+	{	$this->result = $this->it->next();
+	}
+}
+
+class DenoWorldIterator implements Iterator
+{	private int $deno_inst_id;
+	private DenoWorld $it;
+	private $result;
+	private int $key = 0;
+
+	public function __construct(int $deno_inst_id)
+	{	$this->deno_inst_id = $deno_inst_id;
+	}
+
+	public function rewind()
+	{	$this->it = DenoWorldMain::write_read('['.DenoWorldMain::RES_CLASS_GET_ITERATOR.','.$this->deno_inst_id.']');
+		$this->result = $this->it->next();
+		$this->key = 0;
+	}
+
+	public function valid()
+	{	return !($this->result->done ?? true);
+	}
+
+	public function current()
+	{	return $this->result->value ?? null;
+	}
+
+	public function key()
+	{	return $this->key;
+	}
+
+	public function next()
+	{	$this->result = $this->it->next();
+		$this->key++;
+	}
+}
+
+trait DenoWorldHasDefaultIterator
+{	public function getIterator() {return new DenoWorldDefaultIterator($this->deno_inst_id);}
+}
+trait DenoWorldHasIterator
+{	public function getIterator() {return new DenoWorldIterator($this->deno_inst_id);}
+}
+trait DenoWorldHasLength
+{	public function count() {return $this->length;}
+}
+trait DenoWorldHasSize
+{	public function count() {return $this->size;}
+}
+
+/*	RESTYPE_HAS_ITERATOR = 1;
+	RESTYPE_HAS_LENGTH = 2;
+	RESTYPE_HAS_SIZE = 4;
+ */
+class DenoWorld_0
+	extends DenoWorld implements IteratorAggregate {use DenoWorldHasDefaultIterator;}
+class DenoWorld_1 // assume: RESTYPE_HAS_ITERATOR == 1
+	extends DenoWorld implements IteratorAggregate {use DenoWorldHasIterator;}
+class DenoWorld_2 // assume: RESTYPE_HAS_LENGTH == 2
+	extends DenoWorld implements IteratorAggregate, Countable {use DenoWorldHasDefaultIterator, DenoWorldHasLength;}
+class DenoWorld_3 // assume: RESTYPE_HAS_ITERATOR | RESTYPE_HAS_LENGTH == 3
+	extends DenoWorld implements IteratorAggregate, Countable {use DenoWorldHasIterator, DenoWorldHasLength;}
+class DenoWorld_4 // assume: RESTYPE_HAS_SIZE == 4
+	extends DenoWorld implements IteratorAggregate, Countable {use DenoWorldHasDefaultIterator, DenoWorldHasSize;}
+class DenoWorld_5 // assume: RESTYPE_HAS_ITERATOR | RESTYPE_HAS_SIZE == 5
+	extends DenoWorld implements IteratorAggregate, Countable {use DenoWorldHasIterator, DenoWorldHasSize;}
+class DenoWorld_6 // assume: RESTYPE_HAS_LENGTH | RESTYPE_HAS_SIZE == 6
+	extends DenoWorld implements IteratorAggregate, Countable {use DenoWorldHasDefaultIterator, DenoWorldHasLength;}
+class DenoWorld_7 // assume: RESTYPE_HAS_ITERATOR | RESTYPE_HAS_LENGTH | RESTYPE_HAS_SIZE == 7
+	extends DenoWorld implements IteratorAggregate, Countable {use DenoWorldHasIterator, DenoWorldHasLength;}
+
+class DenoWorldException extends Exception
+{	public function __construct($message=null, $code=null, $file=null, $line=null)
+	{	parent::__construct($message);
+		if ($code !== null) $this->code = $code;
+		if ($file) $this->file = $file;
+		if ($line !== null) $this->line = $line;
 	}
 }
 
@@ -103,12 +261,20 @@ class DenoWorldMain extends DenoWorld
 	public const RES_CLASS_GET = 5;
 	public const RES_CLASS_SET = 6;
 	public const RES_CLASS_CALL = 7;
-	public const RES_CLASSSTATIC_CALL = 8;
-	public const RES_CALL = 9;
+	public const RES_CLASS_INVOKE = 8;
+	public const RES_CLASS_GET_ITERATOR = 9;
+	public const RES_CLASS_TO_STRING = 10;
+	public const RES_CLASS_ISSET = 11;
+	public const RES_CLASS_UNSET = 12;
+	public const RES_CLASS_PROPS = 13;
+	public const RES_CLASSSTATIC_CALL = 14;
+	public const RES_CALL = 15;
 
-	private const RESTYPE_OK = 0;
-	private const RESTYPE_DENO_INST = 1;
-	private const RESTYPE_ERROR = 2;
+	private const RESTYPE_HAS_ITERATOR = 1;
+	private const RESTYPE_HAS_LENGTH = 2;
+	private const RESTYPE_HAS_SIZE = 4;
+	private const RESTYPE_IS_SCALAR = 8;
+	private const RESTYPE_IS_ERROR = 16;
 
 	private static ?int $error_reporting = null;
 	private static string $end_mark = '';
@@ -116,13 +282,7 @@ class DenoWorldMain extends DenoWorld
 	private static array $php_insts_iters = [];
 	private static int $php_inst_id_enum = 0;
 	private static $commands_io;
-	private static $is_complete = false;
-
-	public static function inst($deno_inst_id)
-	{	$self = new self;
-		$self->deno_inst_id = $deno_inst_id;
-		return $self;
-	}
+	private static bool $is_complete = false;
 
 	public static function error_handler($err_code, $err_msg, $file, $line)
 	{	if (error_reporting(self::$error_reporting) != 0) // error_reporting returns zero if "@" operator was used
@@ -133,12 +293,12 @@ class DenoWorldMain extends DenoWorld
 	public static function load_class($class_name)
 	{	if (strpos($class_name, 'DenoWorld\\') === 0)
 		{	$class_name_2 = substr($class_name, 10);
-			$value = self::write_read('['.self::RES_GET_CLASS.','.json_encode($class_name_2).']');
-			if ($value === 1)
+			$type = self::write_read('['.self::RES_GET_CLASS.','.json_encode($class_name_2).']');
+			if (!($type & self::RESTYPE_IS_ERROR))
 			{	$pos = strrpos($class_name, '\\');
 				$ns = substr($class_name, 0, $pos);
 				$basename = substr($class_name, $pos+1);
-				eval("namespace $ns; class $basename extends \\DenoWorld {}");
+				eval("namespace $ns; class $basename extends \\DenoWorld_$type {}");
 			}
 		}
 	}
@@ -176,10 +336,14 @@ class DenoWorldMain extends DenoWorld
 		list($record_type, $data) = self::read_record();
 		assert($record_type == self::REC_DATA);
 		list($type, $value) = json_decode($data, true);
-		if ($type == self::RESTYPE_ERROR)
+		if ($type & self::RESTYPE_IS_ERROR)
 		{	throw new Exception($value['message']);
 		}
-		return $type==self::RESTYPE_DENO_INST ? self::inst($value) : $value;
+		if ($type & self::RESTYPE_IS_SCALAR)
+		{	return $value;
+		}
+		$class = "DenoWorld_$type";
+		return new $class($value);
 	}
 
 	private static function get_reflection($class_name)
@@ -199,7 +363,7 @@ class DenoWorldMain extends DenoWorld
 	}
 
 	private static function eval($code)
-	{	return eval($code);
+	{	return eval($code); // eval in empty scope
 	}
 
 	private static function follow_path(&$value, $path)
@@ -377,7 +541,10 @@ class DenoWorldMain extends DenoWorld
 	}
 
 	public static function main()
-	{	global $argc, $argv;
+	{	global $argc, $argv, $globalThis, $window;
+
+		$globalThis = new DenoWorld(0);
+		$window = $globalThis;
 
 		// Install error handler, that converts E_ERROR to Exception
 		self::$error_reporting = error_reporting(); // determine reporting level set by user

@@ -55,12 +55,20 @@ const RES_DESTRUCT = 4;
 const RES_CLASS_GET = 5;
 const RES_CLASS_SET = 6;
 const RES_CLASS_CALL = 7;
-const RES_CLASSSTATIC_CALL = 8;
-const RES_CALL = 9;
+const RES_CLASS_INVOKE = 8;
+const RES_CLASS_GET_ITERATOR = 9;
+const RES_CLASS_TO_STRING = 10;
+const RES_CLASS_ISSET = 11;
+const RES_CLASS_UNSET = 12;
+const RES_CLASS_PROPS = 13;
+const RES_CLASSSTATIC_CALL = 14;
+const RES_CALL = 15;
 
-const RESTYPE_OK = 0;
-const RESTYPE_DENO_INST = 1;
-const RESTYPE_ERROR = 2;
+const RESTYPE_HAS_ITERATOR = 1;
+const RESTYPE_HAS_LENGTH = 2;
+const RESTYPE_HAS_SIZE = 4;
+const RESTYPE_IS_SCALAR = 8;
+const RESTYPE_IS_ERROR = 16;
 
 const RE_BAD_CLASSNAME_FOR_EVAL = /[^\w\\]/;
 
@@ -96,6 +104,39 @@ function get_weak_random_bytes(n: number)
 	{	buffer[i] = Math.floor(Math.random()*256);
 	}
 	return buffer;
+}
+
+function get_class_features(symbol: any)
+{	let features = 0;
+	if (symbol.prototype)
+	{	let desc = Object.getOwnPropertyDescriptors(symbol.prototype);
+		if (desc.length)
+		{	features |= RESTYPE_HAS_LENGTH;
+		}
+		if (desc.size) // accessing symbol.prototype.size directly throws error on Map
+		{	features |= RESTYPE_HAS_SIZE;
+		}
+		if (typeof(symbol.prototype[Symbol.iterator])=='function' || typeof(symbol.prototype[Symbol.asyncIterator])=='function')
+		{	features |= RESTYPE_HAS_ITERATOR;
+		}
+	}
+	return features;
+}
+
+function get_inst_features(value: any)
+{	let features = 0;
+	if (value)
+	{	if (typeof(value.length) == 'number')
+		{	features |= RESTYPE_HAS_LENGTH;
+		}
+		if (typeof(value.size) == 'number')
+		{	features |= RESTYPE_HAS_SIZE;
+		}
+		if (typeof(value[Symbol.iterator])=='function' || typeof(value[Symbol.asyncIterator])=='function')
+		{	features |= RESTYPE_HAS_ITERATOR;
+		}
+	}
+	return features;
 }
 
 export class InterpreterError extends Error
@@ -158,7 +199,7 @@ export class Settings
 	 **/
 	public init_php_file = '';
 
-	public onsymbol: (type: string, name: string) => any = () => {};
+	public onsymbol: (name: string) => any = () => {};
 }
 
 /**	Each instance of this class represents a PHP interpreter. It can be spawned CLI process that runs in background, or it can be a FastCGI request to a PHP-FPM service.
@@ -180,7 +221,7 @@ export class PhpInterpreter
 	private last_inst_id = -1;
 	private stack_frames: number[] = [];
 	private deno_insts: Map<number, any> = new Map; // php has handles to these objects
-	private deno_inst_id_enum = 0;
+	private deno_inst_id_enum = 1; // later will do: deno_insts.set(0, globalThis)
 
 	/**	For accessing global remote PHP objects, except classes (functions, variables, constants).
 	 **/
@@ -197,7 +238,9 @@ export class PhpInterpreter
 	/**	You can have as many PHP interpreter instances as you want. Don't forget to call `this.g.exit()` to destroy the background interpreter.
 	 **/
 	constructor()
-	{	this.g = get_global(this, false);
+	{	this.deno_insts.set(0, globalThis);
+
+		this.g = get_global(this, false);
 		this.c = get_global(this, true);
 
 		function get_global(php: PhpInterpreter, is_class: boolean)
@@ -987,13 +1030,13 @@ export class PhpInterpreter
 			{	switch (type)
 				{	case RES_GET_CLASS:
 					{	let [_, class_name] = result;
-						let symbol = class_name in g ? g[class_name] : await this.settings.onsymbol('class', class_name);
-						data = symbol ? 1 : 0;
+						let symbol = class_name in g ? g[class_name] : await this.settings.onsymbol(class_name);
+						data = !symbol ? RESTYPE_IS_ERROR : get_class_features(symbol);
 						break;
 					}
 					case RES_CONSTRUCT:
 					{	let [_, class_name, args] = result;
-						let symbol = class_name in g ? g[class_name] : await this.settings.onsymbol('class', class_name);
+						let symbol = class_name in g ? g[class_name] : await this.settings.onsymbol(class_name);
 						let deno_inst = new symbol(...args); // can throw error
 						let deno_inst_id = this.deno_inst_id_enum++;
 						this.deno_insts.set(deno_inst_id, deno_inst);
@@ -1008,7 +1051,7 @@ export class PhpInterpreter
 					case RES_CLASS_GET:
 					{	let [_, deno_inst_id, name] = result;
 						let deno_inst = this.deno_insts.get(deno_inst_id);
-						data = deno_inst[name]; // can throw error
+						data = await deno_inst[name]; // can throw error
 						break;
 					}
 					case RES_CLASS_SET:
@@ -1021,26 +1064,67 @@ export class PhpInterpreter
 					case RES_CLASS_CALL:
 					{	let [_, deno_inst_id, name, args] = result;
 						let deno_inst = this.deno_insts.get(deno_inst_id);
-						data = deno_inst[name](...args); // can throw error
+						data = await deno_inst[name](...args); // can throw error
+						break;
+					}
+					case RES_CLASS_INVOKE:
+					{	let [_, deno_inst_id, args] = result;
+						let deno_inst = this.deno_insts.get(deno_inst_id);
+						data = await deno_inst(...args); // can throw error
+						break;
+					}
+					case RES_CLASS_GET_ITERATOR:
+					{	let [_, deno_inst_id] = result;
+						let deno_inst = this.deno_insts.get(deno_inst_id);
+						data = deno_inst[Symbol.asyncIterator] ? deno_inst[Symbol.asyncIterator]() : deno_inst[Symbol.iterator] ? deno_inst[Symbol.iterator]() : Object.entries(deno_inst)[Symbol.iterator](); // can throw error
+						break;
+					}
+					case RES_CLASS_TO_STRING:
+					{	let [_, deno_inst_id] = result;
+						let deno_inst = this.deno_insts.get(deno_inst_id);
+						data = deno_inst+''; // can throw error
+						break;
+					}
+					case RES_CLASS_ISSET:
+					{	let [_, deno_inst_id, name] = result;
+						let deno_inst = this.deno_insts.get(deno_inst_id);
+						data = deno_inst[name] != null; // can throw error
+						break;
+					}
+					case RES_CLASS_UNSET:
+					{	let [_, deno_inst_id, name] = result;
+						let deno_inst = this.deno_insts.get(deno_inst_id);
+						delete deno_inst[name]; // can throw error
+						break;
+					}
+					case RES_CLASS_PROPS:
+					{	let [_, deno_inst_id] = result;
+						let deno_inst = this.deno_insts.get(deno_inst_id);
+						let props = [];
+						for (let prop in deno_inst)
+						{	props[props.length] = prop;
+						}
+						data = JSON.stringify(props);
 						break;
 					}
 					case RES_CLASSSTATIC_CALL:
 					{	let [_, class_name, name, args] = result;
-						let symbol = class_name in g ? g[class_name] : await this.settings.onsymbol('class', class_name);
-						data = symbol[name](...args); // can throw error
+						let symbol = class_name in g ? g[class_name] : await this.settings.onsymbol(class_name);
+						data = await symbol[name](...args); // can throw error
 						break;
 					}
 					case RES_CALL:
 					{	let [_, name, args] = result;
-						data = g[name](...args); // can throw error
+						let symbol = name in g ? g[name] : await this.settings.onsymbol(name);
+						data = await symbol(...args); // can throw error
 						break;
 					}
 					default:
 						debug_assert(false);
 				}
-				let result_type = RESTYPE_OK;
+				let result_type = RESTYPE_IS_SCALAR;
 				if (data!=null && (typeof(data)=='object' || typeof(data)=='function'))
-				{	result_type = RESTYPE_DENO_INST;
+				{	result_type = get_inst_features(data);
 					let deno_inst_id = this.deno_inst_id_enum++;
 					this.deno_insts.set(deno_inst_id, data);
 					data = deno_inst_id;
@@ -1048,7 +1132,7 @@ export class PhpInterpreter
 				data_str = JSON.stringify([result_type, data]);
 			}
 			catch (e)
-			{	data_str = JSON.stringify([RESTYPE_ERROR, {message: e.message}]);
+			{	data_str = JSON.stringify([RESTYPE_IS_ERROR, {message: e.message}]);
 			}
 			await this.do_write(REC_DATA, data_str);
 		}
@@ -1132,7 +1216,8 @@ export class PhpInterpreter
 		this.last_inst_id = -1;
 		this.stack_frames.length = 0;
 		this.deno_insts.clear();
-		this.deno_inst_id_enum = 0;
+		this.deno_insts.set(0, globalThis);
+		this.deno_inst_id_enum = 1;
 		return status;
 	}
 
