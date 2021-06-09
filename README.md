@@ -620,9 +620,9 @@ user = username
 group = username
 listen = [::1]:8989
 
-# if "listen" is unix-domain socket, set also the following:
-#listen.owner = username
-#listen.group = username
+; if "listen" is unix-domain socket, set also the following:
+;listen.owner = username
+;listen.group = username
 
 pm = dynamic
 pm.max_children = 5
