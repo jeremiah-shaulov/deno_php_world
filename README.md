@@ -1,6 +1,6 @@
 # php_world
 
-This module extends Deno world with PHP, by running commandline PHP interpreter in the background, or by connecting to a PHP-FPM service.
+This module extends Deno world with PHP, by running commandline PHP interpreter in background, or by connecting to a PHP-FPM service.
 
 There are several possible reasons to use `php_world`:
 
@@ -32,7 +32,9 @@ Run the script as follows:
 deno run --unstable --allow-read --allow-write --allow-net --allow-run=php main.ts
 ```
 
-By default `php_world` will execute the `php` CLI command. If in your system PHP appears under different name, you need to set it before accessing `php_world` interfaces.
+By default `php_world` will execute `php` CLI command.
+If in your system PHP appears under different name, you need to set `settings.php_cli_name` before accessing `php_world` interfaces.
+If you wish to use PHP-FPM instead, set `settings.php_fpm.listen`.
 
 ```ts
 import {g, c, settings} from 'https://deno.land/x/php_world/mod.ts';
@@ -46,10 +48,12 @@ await g.exit();
 There are several configurable settings:
 
 1. `settings.php_cli_name` - PHP-CLI command name (default `php`).
-2. `settings.unix_socket_name` - `php_world` uses socket channel to communicate with the remote interpreter. By default it uses random (free) TCP port. On non-Windows systems you can use a unix-domain socket. Set `settings.unix_socket_name` to full path of socket node file, where it will be created.
+2. `settings.unix_socket_name` - `php_world` uses socket channel to communicate with the remote interpreter. By default it uses random (free) TCP port. On non-Windows systems you can use unix-domain socket. Set `settings.unix_socket_name` to full path of socket node file, where it will be created.
 3. `settings.stdout` - allows to redirect PHP process echo output (see below).
 4. `settings.php_fpm.listen` - If set, `php_world` will use PHP-FPM service, not CLI. Set this to what appears in your PHP-FPM pool configuration file (see line that contains `listen = ...`).
-5. `settings.php_fpm.keep_alive_timeout` - Connections to PHP-FPM service will be reused for this number of milliseconds (deno script may not exit while there're idle connections - call `php.close_idle()` to close them).
+5. `settings.php_fpm.*` - There are some more PHP-FPM related settings that will be explained below.
+6. `settings.init_php_file` - path to PHP script file. If specified, will `chdir()` to it's directory, and execute this script as part of initialization process.
+7. `onsymbol` - callback that resolves Deno world entities, that can be accessed from PHP.
 
 ### Interface
 
@@ -63,6 +67,7 @@ There are several configurable settings:
 6. `InterpreterError` - class for exceptions propagated from PHP.
 7. `InterpreterExitError` - this error is thrown in case PHP interpreter exits or crashes.
 8. `ResponseWithCookies` - type that `php.get_response()` returns.
+9. `start_proxy` - function that creates FastCGI proxy node between Web server and PHP-FPM, where PHP script can access Deno environment, and vise versa.
 
 ### Calling functions
 

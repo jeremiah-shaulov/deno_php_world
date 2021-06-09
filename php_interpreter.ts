@@ -59,7 +59,7 @@ const RES_CLASSSTATIC_CALL = 8;
 const RES_CALL = 9;
 
 const RESTYPE_OK = 0;
-const RESTYPE_INST = 1;
+const RESTYPE_DENO_INST = 1;
 const RESTYPE_ERROR = 2;
 
 const RE_BAD_CLASSNAME_FOR_EVAL = /[^\w\\]/;
@@ -113,7 +113,11 @@ export class InterpreterExitError extends Error
 type SettingsPhpFpm =
 {	listen: string;
 	max_conns: number;
+
+	/**	Connections to PHP-FPM service will be reused for this number of milliseconds (deno script may not exit while there're idle connections - call `php.close_idle()` to close them).
+	 **/
 	keep_alive_timeout: number;
+
 	keep_alive_max: number;
 	params: Map<string, string>;
 	request: string|Request|URL;
@@ -175,8 +179,8 @@ export class PhpInterpreter
 	private stdout_mux: ReaderMux|undefined;
 	private last_inst_id = -1;
 	private stack_frames: number[] = [];
-	private insts: Map<number, any> = new Map;
-	private inst_id_enum = 0;
+	private deno_insts: Map<number, any> = new Map; // php has handles to these objects
+	private deno_inst_id_enum = 0;
 
 	/**	For accessing global remote PHP objects, except classes (functions, variables, constants).
 	 **/
@@ -624,8 +628,8 @@ export class PhpInterpreter
 					result = result.slice(0, pos);
 				}
 			}
-			let inst_id = Number(result);
-			php.last_inst_id = inst_id;
+			let php_inst_id = Number(result);
+			php.last_inst_id = php_inst_id;
 			return create_proxy
 			(	[],
 				class_name,
@@ -633,7 +637,7 @@ export class PhpInterpreter
 				// get
 				path =>
 				{	if (path.length == 0)
-					{	let path_str = inst_id+' ';
+					{	let path_str = php_inst_id+' ';
 						return function(prop_name)
 						{	if (prop_name.indexOf(' ') != -1)
 							{	throw new Error(`Property name must not contain spaces: $${prop_name}`);
@@ -642,7 +646,7 @@ export class PhpInterpreter
 						};
 					}
 					else
-					{	let path_str = inst_id+' '+path[0];
+					{	let path_str = php_inst_id+' '+path[0];
 						let path_2 = path.slice(1).concat(['']);
 						return async function(prop_name)
 						{	if (prop_name != 'this')
@@ -662,7 +666,7 @@ export class PhpInterpreter
 				// set
 				path =>
 				{	if (path.length == 0)
-					{	let path_str = inst_id+' ';
+					{	let path_str = php_inst_id+' ';
 						return function(prop_name, value)
 						{	if (prop_name.indexOf(' ') != -1)
 							{	throw new Error(`Property name must not contain spaces: ${prop_name}`);
@@ -672,7 +676,7 @@ export class PhpInterpreter
 						};
 					}
 					else
-					{	let path_str = inst_id+' '+path[0]+' [';
+					{	let path_str = php_inst_id+' '+path[0]+' [';
 						if (path.length > 1)
 						{	path_str += JSON.stringify(path.slice(1)).slice(0, -1)+',';
 						}
@@ -689,7 +693,7 @@ export class PhpInterpreter
 				// deleteProperty
 				path =>
 				{	if (path.length == 0)
-					{	let path_str = inst_id+'';
+					{	let path_str = php_inst_id+'';
 						return function(prop_name)
 						{	if (prop_name == 'this')
 							{	php.write(REC_DESTRUCT, path_str);
@@ -700,7 +704,7 @@ export class PhpInterpreter
 						};
 					}
 					else
-					{	let path_str = inst_id+' ';
+					{	let path_str = php_inst_id+' ';
 						let path_str_2 = ' '+JSON.stringify(path);
 						return function(prop_name)
 						{	php.write(REC_CLASS_UNSET_PATH, path_str+prop_name+path_str_2);
@@ -713,17 +717,17 @@ export class PhpInterpreter
 				path =>
 				{	if (path.length == 0)
 					{	return function(args)
-						{	return php.write_read(REC_CLASS_INVOKE, args.length==0 ? inst_id+'' : inst_id+' '+JSON.stringify([...args]));
+						{	return php.write_read(REC_CLASS_INVOKE, args.length==0 ? php_inst_id+'' : php_inst_id+' '+JSON.stringify([...args]));
 						};
 					}
 					if (path.length == 1)
 					{	if (path[0] == 'toJSON')
 						{	return function()
-							{	return {DENO_PHP_WORLD_INST_ID: inst_id};
+							{	return {PHP_WORLD_INST_ID: php_inst_id};
 							};
 						}
 						else
-						{	let path_str = inst_id+' '+path[0];
+						{	let path_str = php_inst_id+' '+path[0];
 							return function(args)
 							{	return php.write_read(REC_CLASS_CALL, args.length==0 ? path_str : path_str+' '+JSON.stringify([...args]));
 							};
@@ -733,7 +737,7 @@ export class PhpInterpreter
 					{	if (path[path.length-1].indexOf(' ') != -1)
 						{	throw new Error(`Function name must not contain spaces: ${path[path.length-1]}`);
 						}
-						let path_str = inst_id+' '+path[path.length-1]+' ['+JSON.stringify(path.slice(0, -1))+',';
+						let path_str = php_inst_id+' '+path[path.length-1]+' ['+JSON.stringify(path.slice(0, -1))+',';
 						return function(args)
 						{	return php.write_read(REC_CLASS_CALL_PATH, path_str+JSON.stringify([...args])+']');
 						};
@@ -752,7 +756,7 @@ export class PhpInterpreter
 
 				// asyncIterator
 				path =>
-				{	let path_str = inst_id+'';
+				{	let path_str = php_inst_id+'';
 					return async function*()
 					{	let [value, done] = await php.write_read(REC_CLASS_ITERATE_BEGIN, path_str);
 						while (true)
@@ -964,7 +968,10 @@ export class PhpInterpreter
 				}
 				pos += n_read;
 			}
-			let result = JSON.parse(decoder.decode(buffer));
+			let result = JSON.parse
+			(	decoder.decode(buffer),
+				(key, value) => typeof(value)=='object' && value?.DENO_WORLD_INST_ID>=0 ? this.deno_insts.get(value.DENO_WORLD_INST_ID) : value
+			);
 			if (is_result)
 			{	return result;
 			}
@@ -980,46 +987,46 @@ export class PhpInterpreter
 			{	switch (type)
 				{	case RES_GET_CLASS:
 					{	let [_, class_name] = result;
-						let symbol = g[class_name] || await this.settings.onsymbol('class', class_name);
-						data = symbol?.prototype ? 1 : 0;
+						let symbol = class_name in g ? g[class_name] : await this.settings.onsymbol('class', class_name);
+						data = symbol ? 1 : 0;
 						break;
 					}
 					case RES_CONSTRUCT:
 					{	let [_, class_name, args] = result;
-						let symbol = g[class_name] || await this.settings.onsymbol('class', class_name);
-						let inst = new symbol(...args); // can throw error
-						let inst_id = this.inst_id_enum++;
-						this.insts.set(inst_id, inst);
-						data = inst_id;
+						let symbol = class_name in g ? g[class_name] : await this.settings.onsymbol('class', class_name);
+						let deno_inst = new symbol(...args); // can throw error
+						let deno_inst_id = this.deno_inst_id_enum++;
+						this.deno_insts.set(deno_inst_id, deno_inst);
+						data = deno_inst_id;
 						break;
 					}
 					case RES_DESTRUCT:
-					{	let [_, inst_id] = result;
-						this.insts.delete(inst_id);
+					{	let [_, deno_inst_id] = result;
+						this.deno_insts.delete(deno_inst_id);
 						continue;
 					}
 					case RES_CLASS_GET:
-					{	let [_, inst_id, name] = result;
-						let inst = this.insts.get(inst_id);
-						data = inst[name]; // can throw error
+					{	let [_, deno_inst_id, name] = result;
+						let deno_inst = this.deno_insts.get(deno_inst_id);
+						data = deno_inst[name]; // can throw error
 						break;
 					}
 					case RES_CLASS_SET:
-					{	let [_, inst_id, name, value] = result;
-						let inst = this.insts.get(inst_id);
-						inst[name] = value; // can throw error
+					{	let [_, deno_inst_id, name, value] = result;
+						let deno_inst = this.deno_insts.get(deno_inst_id);
+						deno_inst[name] = value; // can throw error
 						data = null;
 						break;
 					}
 					case RES_CLASS_CALL:
-					{	let [_, inst_id, name, args] = result;
-						let inst = this.insts.get(inst_id);
-						data = inst[name](...args); // can throw error
+					{	let [_, deno_inst_id, name, args] = result;
+						let deno_inst = this.deno_insts.get(deno_inst_id);
+						data = deno_inst[name](...args); // can throw error
 						break;
 					}
 					case RES_CLASSSTATIC_CALL:
 					{	let [_, class_name, name, args] = result;
-						let symbol = g[class_name] || await this.settings.onsymbol('class', class_name);
+						let symbol = class_name in g ? g[class_name] : await this.settings.onsymbol('class', class_name);
 						data = symbol[name](...args); // can throw error
 						break;
 					}
@@ -1032,11 +1039,11 @@ export class PhpInterpreter
 						debug_assert(false);
 				}
 				let result_type = RESTYPE_OK;
-				if (data!=null && typeof(data)=='object')
-				{	result_type = RESTYPE_INST;
-					let inst_id = this.inst_id_enum++;
-					this.insts.set(inst_id, data);
-					data = inst_id;
+				if (data!=null && (typeof(data)=='object' || typeof(data)=='function'))
+				{	result_type = RESTYPE_DENO_INST;
+					let deno_inst_id = this.deno_inst_id_enum++;
+					this.deno_insts.set(deno_inst_id, data);
+					data = deno_inst_id;
 				}
 				data_str = JSON.stringify([result_type, data]);
 			}
@@ -1124,8 +1131,8 @@ export class PhpInterpreter
 		this.is_inited = false;
 		this.last_inst_id = -1;
 		this.stack_frames.length = 0;
-		this.insts.clear();
-		this.inst_id_enum = 0;
+		this.deno_insts.clear();
+		this.deno_inst_id_enum = 0;
 		return status;
 	}
 

@@ -1301,26 +1301,37 @@ Deno.test
 Deno.test
 (	'Access Deno from PHP',
 	async () =>
-	{	settings.onsymbol = (type, name) =>
-		{	if (type == 'class')
-			{	if (name == '')
-				{
-				}
-			}
-		};
-
-		await g.eval(`$GLOBALS['val'] = DenoWorld::parseInt('123 abc');`);
+	{	await g.eval(`$GLOBALS['val'] = DenoWorld::parseInt('123 abc');`);
 		assertEquals(await g.$val, 123);
+
+		await g.eval(`$GLOBALS['thousand'] = DenoWorld\\Math::pow(10, 3);`);
+		assertEquals(await g.$thousand, 1000);
+
+		await g.eval(`$GLOBALS['deno_pid'] = DenoWorld::eval('Deno.pid');`);
+		assertEquals(await g.$deno_pid, Deno.pid);
 
 		await g.eval
 		(	`	$m = new DenoWorld\\Map;
 				$m->set('k1', 'v1');
 				$m->set('k2', 'v2');
-				$GLOBALS['val'] = $m->size;
+				$GLOBALS['m_size'] = $m->size;
+				$GLOBALS['m_keys'] = $m->keys();
+				$GLOBALS['m_keys_func'] = $m->keys->bind($m);
 			`
 		);
-		assertEquals(await g.$val, 2);
-		//assertEquals(await g.$val, ['k1', 'k2']);
+		assertEquals(await g.$m_size, 2);
+		assertEquals([...await g.$m_keys], ['k1', 'k2']);
+		let m_keys_func = await g.$m_keys_func;
+		assertEquals([...m_keys_func()], ['k1', 'k2']);
+
+		let error;
+		try
+		{	await g.eval(`$GLOBALS['val'] = DenoWorld::eval('JUNK');`);
+		}
+		catch (e)
+		{	error = e;
+		}
+		assert(error);
 
 		await g.exit();
 		php.close_idle();

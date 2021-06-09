@@ -5,7 +5,57 @@ const TMP_SCRIPT_FILENAME_PREFIX = 'deno-php-world';
 export const PHP_BOOT = String.raw
 `<?php
 
-class _PhpDenoBridge extends Exception
+class DenoWorldException extends Exception
+{	public function __construct($message=null, $code=null, $file=null, $line=null)
+	{	parent::__construct($message);
+		if ($code !== null) $this->code = $code;
+		if ($file) $this->file = $file;
+		if ($line !== null) $this->line = $line;
+	}
+}
+
+class DenoWorld
+{	protected $deno_inst_id;
+
+	public function __construct()
+	{	$args = func_get_args();
+		$class_name = get_class($this);
+		if ($class_name !== 'DenoWorldMain') // if not from DenoWorldMain::inst()
+		{	$class_name = substr($class_name, 10); // cut DenoWorld\ prefix
+			$value = DenoWorldMain::write_read('['.DenoWorldMain::RES_CONSTRUCT.','.json_encode($class_name).','.json_encode(DenoWorldMain::serialize_insts($args)).']');
+			$this->deno_inst_id = (int)$value;
+		}
+	}
+
+	function __destruct()
+	{	DenoWorldMain::write_destruct($this->deno_inst_id);
+	}
+
+	public function __get($name)
+	{	return DenoWorldMain::write_read('['.DenoWorldMain::RES_CLASS_GET.','.$this->deno_inst_id.','.json_encode($name).']');
+	}
+
+	public function __set($name, $value)
+	{	DenoWorldMain::write_read('['.DenoWorldMain::RES_CLASS_SET.','.$this->deno_inst_id.','.json_encode($name).','.json_encode(DenoWorldMain::serialize_insts($value)).']');
+	}
+
+	public function __call($name, $args)
+	{	return DenoWorldMain::write_read('['.DenoWorldMain::RES_CLASS_CALL.','.$this->deno_inst_id.','.json_encode($name).','.json_encode(DenoWorldMain::serialize_insts($args)).']');
+	}
+
+	public static function __callStatic($name, $args)
+	{	$class_name = get_called_class();
+		if ($class_name === __CLASS__)
+		{	return DenoWorldMain::write_read('['.DenoWorldMain::RES_CALL.','.json_encode($name).','.json_encode(DenoWorldMain::serialize_insts($args)).']');
+		}
+		else
+		{	$class_name = substr($class_name, 10); // cut DenoWorld\ prefix
+			return DenoWorldMain::write_read('['.DenoWorldMain::RES_CLASSSTATIC_CALL.','.json_encode($class_name).','.json_encode($name).','.json_encode(DenoWorldMain::serialize_insts($args)).']');
+		}
+	}
+}
+
+class DenoWorldMain extends DenoWorld
 {	private const REC_NOREC = 0;
 	private const REC_CONST = 1;
 	private const REC_GET = 2;
@@ -57,26 +107,26 @@ class _PhpDenoBridge extends Exception
 	public const RES_CALL = 9;
 
 	private const RESTYPE_OK = 0;
-	private const RESTYPE_INST = 1;
+	private const RESTYPE_DENO_INST = 1;
 	private const RESTYPE_ERROR = 2;
 
 	private static ?int $error_reporting = null;
 	private static string $end_mark = '';
-	private static array $insts = [];
-	private static array $insts_iters = [];
-	private static int $inst_id_enum = 0;
-	public static $commands_io;
+	private static array $php_insts = []; // deno has handles to these objects
+	private static array $php_insts_iters = [];
+	private static int $php_inst_id_enum = 0;
+	private static $commands_io;
+	private static $is_complete = false;
 
-	public function __construct($message=null, $code=null, $file=null, $line=null)
-	{	parent::__construct($message);
-		if ($code !== null) $this->code = $code;
-		if ($file) $this->file = $file;
-		if ($line !== null) $this->line = $line;
+	public static function inst($deno_inst_id)
+	{	$self = new self;
+		$self->deno_inst_id = $deno_inst_id;
+		return $self;
 	}
 
 	public static function error_handler($err_code, $err_msg, $file, $line)
 	{	if (error_reporting(self::$error_reporting) != 0) // error_reporting returns zero if "@" operator was used
-		{	throw new self($err_msg, $err_code, $file, $line);
+		{	throw new DenoWorldException($err_msg, $err_code, $file, $line);
 		}
 	}
 
@@ -114,6 +164,13 @@ class _PhpDenoBridge extends Exception
 		return [self::REC_NOREC, ''];
 	}
 
+	public static function write_destruct($deno_inst_id)
+	{	if (!self::$is_complete)
+		{	$data = '['.DenoWorldMain::RES_DESTRUCT.','.$deno_inst_id.']';
+			fwrite(self::$commands_io, pack('l', -strlen($data)).$data);
+		}
+	}
+
 	public static function write_read($data)
 	{	fwrite(self::$commands_io, pack('l', -strlen($data)).$data);
 		list($record_type, $data) = self::read_record();
@@ -122,7 +179,7 @@ class _PhpDenoBridge extends Exception
 		if ($type == self::RESTYPE_ERROR)
 		{	throw new Exception($value['message']);
 		}
-		return $type==self::RESTYPE_INST ? DenoWorld::inst($value) : $value;
+		return $type==self::RESTYPE_DENO_INST ? self::inst($value) : $value;
 	}
 
 	private static function get_reflection($class_name)
@@ -247,18 +304,35 @@ class _PhpDenoBridge extends Exception
 		}
 	}
 
-	private static function subst_insts($value)
+	private static function unserialize_insts($value)
 	{	if (is_array($value))
-		{	if (count($value)==1 and ($inst_id = $value['DENO_PHP_WORLD_INST_ID'] ?? -1)>=0)
-			{	return self::$insts[$inst_id];
+		{	if (count($value)==1 and ($php_inst_id = $value['PHP_WORLD_INST_ID'] ?? -1)>=0)
+			{	return self::$php_insts[$php_inst_id];
 			}
 			foreach ($value as $k => $v)
-			{	$value[$k] = self::subst_insts($v);
+			{	$value[$k] = self::unserialize_insts($v);
 			}
 		}
 		else if (is_object($value))
 		{	foreach ($value as $k => $v)
-			{	$value->$k = self::subst_insts($v);
+			{	$value->$k = self::unserialize_insts($v);
+			}
+		}
+		return $value;
+	}
+
+	public static function serialize_insts($value)
+	{	if (is_array($value))
+		{	foreach ($value as $k => $v)
+			{	$value[$k] = self::serialize_insts($v);
+			}
+		}
+		else if (is_object($value))
+		{	if ($value instanceof DenoWorld)
+			{	return ['DENO_WORLD_INST_ID' => $value->deno_inst_id];
+			}
+			foreach ($value as $k => $v)
+			{	$value->$k = self::serialize_insts($v);
 			}
 		}
 		return $value;
@@ -270,11 +344,11 @@ class _PhpDenoBridge extends Exception
 		}
 	}
 
-	private static function iterate_begin($inst_id)
-	{	if (!isset(self::$insts[$inst_id]))
+	private static function iterate_begin($php_inst_id)
+	{	if (!isset(self::$php_insts[$php_inst_id]))
 		{	throw new Exception("Object destroyed");
 		}
-		$obj = self::$insts[$inst_id];
+		$obj = self::$php_insts[$php_inst_id];
 		if (!($obj instanceof Traversable))
 		{	throw new Exception("Object is not iterable");
 		}
@@ -282,19 +356,19 @@ class _PhpDenoBridge extends Exception
 		if (!$iter->valid())
 		{	return [null, true];
 		}
-		self::$insts_iters[$inst_id] = $iter;
+		self::$php_insts_iters[$php_inst_id] = $iter;
 		$value = $iter->current();
 		$iter->next();
 		return [$value, false];
 	}
 
-	private static function iterate($inst_id)
-	{	$iter = self::$insts_iters[$inst_id] ?? null;
+	private static function iterate($php_inst_id)
+	{	$iter = self::$php_insts_iters[$php_inst_id] ?? null;
 		if (!$iter)
 		{	throw new Exception("Object destroyed");
 		}
 		if (!$iter->valid())
-		{	unset(self::$insts_iters[$inst_id]);
+		{	unset(self::$php_insts_iters[$php_inst_id]);
 			return [null, true];
 		}
 		$value = $iter->current();
@@ -307,10 +381,10 @@ class _PhpDenoBridge extends Exception
 
 		// Install error handler, that converts E_ERROR to Exception
 		self::$error_reporting = error_reporting(); // determine reporting level set by user
-		set_error_handler(__CLASS__.'::error_handler', self::$error_reporting);
+		set_error_handler('DenoWorldMain::error_handler', self::$error_reporting);
 
 		// Register class loader
-		spl_autoload_register(__CLASS__.'::load_class');
+		spl_autoload_register('DenoWorldMain::load_class');
 
 		// Read HELO, that is [key, end_mark, socket_name, init_php_file], and output the key back
 		$data = explode(' ', $_SERVER['DENO_WORLD_HELO'] ?? file_get_contents('php://stdin'));
@@ -337,331 +411,288 @@ class _PhpDenoBridge extends Exception
 		}
 
 		// Proceed
-		while (true)
-		{	try
-			{	// 1. Read the request
-				list($record_type, $data) = self::read_record();
+		try
+		{	while (true)
+			{	try
+				{	// 1. Read the request
+					list($record_type, $data) = self::read_record();
 
-				// 2. Process the request
-				$result = null;
-				$result_is_set = false;
-				switch ($record_type)
-				{	case self::REC_NOREC:
-						break 2;
-					case self::REC_CONST:
-						if (defined($data))
-						{	$result = constant($data);
-							$result_is_set = true;
-						}
-						break;
-					case self::REC_GET:
-						$data = self::decode_ident_value($data, $prop_name);
-						$result_is_set = array_key_exists($prop_name, $GLOBALS);
-						if ($result_is_set)
-						{	$result = $GLOBALS[$prop_name];
-							if ($data !== null)
-							{	$result_is_set = self::follow_path($result, $data);
+					// 2. Process the request
+					$result = null;
+					$result_is_set = false;
+					switch ($record_type)
+					{	case self::REC_NOREC:
+							break 2;
+						case self::REC_CONST:
+							if (defined($data))
+							{	$result = constant($data);
+								$result_is_set = true;
 							}
-						}
-						break;
-					case self::REC_GET_THIS:
-						$data = self::decode_ident_value($data, $prop_name);
-						if (array_key_exists($prop_name, $GLOBALS))
-						{	$result = $GLOBALS[$prop_name];
-							if ($data!==null and !self::follow_path($result, $data))
-							{	throw new Exception('Value is not set');
-							}
-							$class_name = is_object($result) ? ' '.get_class($result) : '';
-							self::$insts[self::$inst_id_enum] = $result;
-							$result = self::$inst_id_enum++.$class_name;
-							$result_is_set = true;
 							break;
-						}
-						throw new Exception('Value is not set');
-					case self::REC_SET:
-						$data = self::decode_ident_value($data, $prop_name);
-						$GLOBALS[$prop_name] = self::subst_insts($data);
-						continue 2;
-					case self::REC_SET_PATH:
-						list($data, $result) = self::decode_ident_value($data, $prop_name);
-						self::follow_path_set($GLOBALS[$prop_name], $data, self::subst_insts($result));
-						continue 2;
-					case self::REC_UNSET:
-						unset($GLOBALS[$data]);
-						continue 2;
-					case self::REC_UNSET_PATH:
-						$data = self::decode_ident_ident_value($data, $class_name, $prop_name); // $class_name is the first path element, and $prop_name is the last
-						if ($data === null)
-						{	unset($GLOBALS[$class_name][$prop_name]);
-						}
-						else
-						{	self::follow_path_unset($GLOBALS[$class_name], $data, $prop_name);
-						}
-						continue 2;
-					case self::REC_CLASSSTATIC_GET:
-						$data = self::decode_ident_ident_value($data, $class_name, $prop_name);
-						try
-						{	$result = self::get_reflection($class_name)->getStaticPropertyValue($prop_name);
-							$result_is_set = true;
-						}
-						catch (Throwable $e)
-						{	if (self::has_static_property($class_name, $prop_name))
-							{	throw $e;
-							}
-						}
-						if ($result_is_set and $data!==null)
-						{	$result_is_set = self::follow_path($result, $data);
-						}
-						break;
-					case self::REC_CLASSSTATIC_GET_THIS:
-						$data = self::decode_ident_ident_value($data, $class_name, $prop_name);
-						$result = self::get_reflection($class_name)->getStaticPropertyValue($prop_name);
-						if ($data!==null and !self::follow_path($result, $data))
-						{	throw new Exception('Value is not set');
-						}
-						$class_name = is_object($result) ? ' '.get_class($result) : '';
-						self::$insts[self::$inst_id_enum] = $result;
-						$result = self::$inst_id_enum++.$class_name;
-						$result_is_set = true;
-						break;
-					case self::REC_CLASSSTATIC_SET:
-						$data = self::decode_ident_ident_value($data, $class_name, $prop_name);
-						self::get_reflection($class_name)->setStaticPropertyValue($prop_name, self::subst_insts($data));
-						continue 2;
-					case self::REC_CLASSSTATIC_SET_PATH:
-						list($data, $result) = self::decode_ident_ident_value($data, $class_name, $prop_name);
-						$result = self::subst_insts($result);
-						eval('self::follow_path_set('.$class_name.'::$'.'{$prop_name}, $data, $result);');
-						continue 2;
-					case self::REC_CLASSSTATIC_UNSET:
-						$data = self::decode_ident_ident_value($data, $class_name, $prop_name);
-						$value = array_pop($data);
-						eval('self::follow_path_unset('.$class_name.'::$'.'{$prop_name}, $data, $value);');
-						$value = null;
-						continue 2;
-					case self::REC_CONSTRUCT:
-						$data = self::decode_ident_value($data, $class_name);
-						$data = $data===null ? self::get_reflection($class_name)->newInstance() : self::get_reflection($class_name)->newInstanceArgs(self::subst_insts($data));
-						self::$insts[self::$inst_id_enum] = $data;
-						$result = self::$inst_id_enum++;
-						$result_is_set = true;
-						break;
-					case self::REC_DESTRUCT:
-						unset(self::$insts[$data]);
-						unset(self::$insts_iters[$data]);
-						continue 2;
-					case self::REC_CLASS_GET:
-						$data = self::decode_ident_ident_value($data, $inst_id, $prop_name);
-						$result = self::$insts[$inst_id];
-						$result_is_set = isset($result->$prop_name) || property_exists($result, $prop_name);
-						if ($result_is_set)
-						{	try
-							{	$result = $result->$prop_name;
+						case self::REC_GET:
+							$data = self::decode_ident_value($data, $prop_name);
+							$result_is_set = array_key_exists($prop_name, $GLOBALS);
+							if ($result_is_set)
+							{	$result = $GLOBALS[$prop_name];
 								if ($data !== null)
 								{	$result_is_set = self::follow_path($result, $data);
 								}
 							}
+							break;
+						case self::REC_GET_THIS:
+							$data = self::decode_ident_value($data, $prop_name);
+							if (array_key_exists($prop_name, $GLOBALS))
+							{	$result = $GLOBALS[$prop_name];
+								if ($data!==null and !self::follow_path($result, $data))
+								{	throw new Exception('Value is not set');
+								}
+								$class_name = is_object($result) ? ' '.get_class($result) : '';
+								self::$php_insts[self::$php_inst_id_enum] = $result;
+								$result = self::$php_inst_id_enum++.$class_name;
+								$result_is_set = true;
+								break;
+							}
+							throw new Exception('Value is not set');
+						case self::REC_SET:
+							$data = self::decode_ident_value($data, $prop_name);
+							$GLOBALS[$prop_name] = self::unserialize_insts($data);
+							continue 2;
+						case self::REC_SET_PATH:
+							list($data, $result) = self::decode_ident_value($data, $prop_name);
+							self::follow_path_set($GLOBALS[$prop_name], $data, self::unserialize_insts($result));
+							continue 2;
+						case self::REC_UNSET:
+							unset($GLOBALS[$data]);
+							continue 2;
+						case self::REC_UNSET_PATH:
+							$data = self::decode_ident_ident_value($data, $class_name, $prop_name); // $class_name is the first path element, and $prop_name is the last
+							if ($data === null)
+							{	unset($GLOBALS[$class_name][$prop_name]);
+							}
+							else
+							{	self::follow_path_unset($GLOBALS[$class_name], $data, $prop_name);
+							}
+							continue 2;
+						case self::REC_CLASSSTATIC_GET:
+							$data = self::decode_ident_ident_value($data, $class_name, $prop_name);
+							try
+							{	$result = self::get_reflection($class_name)->getStaticPropertyValue($prop_name);
+								$result_is_set = true;
+							}
 							catch (Throwable $e)
-							{	$result_is_set = false;
+							{	if (self::has_static_property($class_name, $prop_name))
+								{	throw $e;
+								}
 							}
-						}
-						break;
-					case self::REC_CLASS_GET_THIS:
-						$data = self::decode_ident_ident_value($data, $inst_id, $prop_name);
-						$result = self::$insts[$inst_id];
-						$result = $result->$prop_name;
-						if ($data!==null and !self::follow_path($result, $data))
-						{	throw new Exception('Value is not set');
-						}
-						$class_name = is_object($result) ? ' '.get_class($result) : '';
-						self::$insts[self::$inst_id_enum] = $result;
-						$result = self::$inst_id_enum++.$class_name;
-						$result_is_set = true;
-						break;
-					case self::REC_CLASS_SET:
-						$data = self::decode_ident_ident_value($data, $inst_id, $prop_name);
-						self::$insts[$inst_id]->$prop_name = self::subst_insts($data);
-						continue 2;
-					case self::REC_CLASS_SET_PATH:
-						list($data, $result) = self::decode_ident_ident_value($data, $inst_id, $prop_name);
-						self::follow_path_set(self::$insts[$inst_id]->$prop_name, $data, self::subst_insts($result));
-						continue 2;
-					case self::REC_CLASS_UNSET:
-						$prop_name = self::decode_ident_ident($data, $inst_id);
-						unset(self::$insts[$inst_id]->$prop_name);
-						continue 2;
-					case self::REC_CLASS_UNSET_PATH:
-						$data = self::decode_ident_ident_value($data, $inst_id, $prop_name);
-						self::follow_path_unset(self::$insts[$inst_id], $data, $prop_name);
-						continue 2;
-					case self::REC_CLASS_CALL:
-						$data = self::decode_ident_ident_value($data, $inst_id, $prop_name);
-						$result = $data===null ? call_user_func([self::$insts[$inst_id], $prop_name]) : call_user_func_array([self::$insts[$inst_id], $prop_name], self::subst_insts($data));
-						$result_is_set = true;
-						break;
-					case self::REC_CLASS_CALL_PATH:
-						list($data, $result) = self::decode_ident_ident_value($data, $inst_id, $prop_name);
-						$value = self::$insts[$inst_id];
-						self::follow_path($value, $data);
-						$result = call_user_func_array([$value, $prop_name], self::subst_insts($result));
-						$value = null;
-						$result_is_set = true;
-						break;
-					case self::REC_CLASS_INVOKE:
-						$data = self::decode_ident_value($data, $inst_id);
-						$result = $data===null ? self::$insts[$inst_id]() : call_user_func_array(self::$insts[$inst_id], self::subst_insts($data));
-						$result_is_set = true;
-						break;
-					case self::REC_CLASS_ITERATE_BEGIN:
-						$result = self::iterate_begin($data);
-						$result_is_set = true;
-						break;
-					case self::REC_CLASS_ITERATE:
-						$result = self::iterate($data);
-						$result_is_set = true;
-						break;
-					case self::REC_POP_FRAME:
-						foreach (self::$insts as $inst_id => $result)
-						{	if ($inst_id > $data)
-							{	unset(self::$insts[$inst_id]);
-								unset(self::$insts_iters[$inst_id]);
+							if ($result_is_set and $data!==null)
+							{	$result_is_set = self::follow_path($result, $data);
 							}
-						}
-						self::$inst_id_enum = $data + 1;
-						continue 2;
-					case self::REC_N_OBJECTS:
-						$result = count(self::$insts);
-						$result_is_set = true;
-						break;
-					case self::REC_END_STDOUT:
-						echo self::$end_mark;
-						flush();
-						continue 2;
-					case self::REC_CALL:
-						$data = self::decode_ident_value($data, $prop_name);
-						$result = $data===null ? call_user_func($prop_name) : call_user_func_array($prop_name, self::subst_insts($data));
-						$result_is_set = true;
-						break;
-					case self::REC_CALL_THIS:
-						$data = self::decode_ident_value($data, $prop_name);
-						$data = $data===null ? call_user_func($prop_name) : call_user_func_array($prop_name, self::subst_insts($data));
-						$class_name = is_object($data) ? ' '.get_class($data) : '';
-						self::$insts[self::$inst_id_enum] = $data;
-						$result = self::$inst_id_enum++.$class_name;
-						$result_is_set = true;
-						break;
-					case self::REC_CALL_EVAL:
-						$data = self::decode_value($data);
-						$result = self::eval(self::subst_insts($data));
-						$result_is_set = true;
-						break;
-					case self::REC_CALL_EVAL_THIS:
-						$data = self::decode_value($data);
-						$data = self::eval(self::subst_insts($data));
-						$class_name = is_object($data) ? ' '.get_class($data) : '';
-						self::$insts[self::$inst_id_enum] = $data;
-						$result = self::$inst_id_enum++.$class_name;
-						$result_is_set = true;
-						break;
-					case self::REC_CALL_ECHO:
-						$data = self::subst_insts(self::decode_value($data));
-						foreach ($data as $arg)
-						{	echo $arg;
-						}
-						break;
-					case self::REC_CALL_INCLUDE:
-						$data = self::decode_value($data);
-						$result = include(self::subst_insts($data));
-						$result_is_set = true;
-						break;
-					case self::REC_CALL_INCLUDE_ONCE:
-						$data = self::decode_value($data);
-						$result = include_once(self::subst_insts($data));
-						$result_is_set = true;
-						break;
-					case self::REC_CALL_REQUIRE:
-						$data = self::decode_value($data);
-						$result = require(self::subst_insts($data));
-						$result_is_set = true;
-						break;
-					case self::REC_CALL_REQUIRE_ONCE:
-						$data = self::decode_value($data);
-						$result = require_once(self::subst_insts($data));
-						$result_is_set = true;
-						break;
-				}
+							break;
+						case self::REC_CLASSSTATIC_GET_THIS:
+							$data = self::decode_ident_ident_value($data, $class_name, $prop_name);
+							$result = self::get_reflection($class_name)->getStaticPropertyValue($prop_name);
+							if ($data!==null and !self::follow_path($result, $data))
+							{	throw new Exception('Value is not set');
+							}
+							$class_name = is_object($result) ? ' '.get_class($result) : '';
+							self::$php_insts[self::$php_inst_id_enum] = $result;
+							$result = self::$php_inst_id_enum++.$class_name;
+							$result_is_set = true;
+							break;
+						case self::REC_CLASSSTATIC_SET:
+							$data = self::decode_ident_ident_value($data, $class_name, $prop_name);
+							self::get_reflection($class_name)->setStaticPropertyValue($prop_name, self::unserialize_insts($data));
+							continue 2;
+						case self::REC_CLASSSTATIC_SET_PATH:
+							list($data, $result) = self::decode_ident_ident_value($data, $class_name, $prop_name);
+							$result = self::unserialize_insts($result);
+							eval('self::follow_path_set('.$class_name.'::$'.'{$prop_name}, $data, $result);');
+							continue 2;
+						case self::REC_CLASSSTATIC_UNSET:
+							$data = self::decode_ident_ident_value($data, $class_name, $prop_name);
+							$value = array_pop($data);
+							eval('self::follow_path_unset('.$class_name.'::$'.'{$prop_name}, $data, $value);');
+							$value = null;
+							continue 2;
+						case self::REC_CONSTRUCT:
+							$data = self::decode_ident_value($data, $class_name);
+							$data = $data===null ? self::get_reflection($class_name)->newInstance() : self::get_reflection($class_name)->newInstanceArgs(self::unserialize_insts($data));
+							self::$php_insts[self::$php_inst_id_enum] = $data;
+							$result = self::$php_inst_id_enum++;
+							$result_is_set = true;
+							break;
+						case self::REC_DESTRUCT:
+							unset(self::$php_insts[$data]);
+							unset(self::$php_insts_iters[$data]);
+							continue 2;
+						case self::REC_CLASS_GET:
+							$data = self::decode_ident_ident_value($data, $php_inst_id, $prop_name);
+							$result = self::$php_insts[$php_inst_id];
+							$result_is_set = isset($result->$prop_name) || property_exists($result, $prop_name);
+							if ($result_is_set)
+							{	try
+								{	$result = $result->$prop_name;
+									if ($data !== null)
+									{	$result_is_set = self::follow_path($result, $data);
+									}
+								}
+								catch (Throwable $e)
+								{	$result_is_set = false;
+								}
+							}
+							break;
+						case self::REC_CLASS_GET_THIS:
+							$data = self::decode_ident_ident_value($data, $php_inst_id, $prop_name);
+							$result = self::$php_insts[$php_inst_id];
+							$result = $result->$prop_name;
+							if ($data!==null and !self::follow_path($result, $data))
+							{	throw new Exception('Value is not set');
+							}
+							$class_name = is_object($result) ? ' '.get_class($result) : '';
+							self::$php_insts[self::$php_inst_id_enum] = $result;
+							$result = self::$php_inst_id_enum++.$class_name;
+							$result_is_set = true;
+							break;
+						case self::REC_CLASS_SET:
+							$data = self::decode_ident_ident_value($data, $php_inst_id, $prop_name);
+							self::$php_insts[$php_inst_id]->$prop_name = self::unserialize_insts($data);
+							continue 2;
+						case self::REC_CLASS_SET_PATH:
+							list($data, $result) = self::decode_ident_ident_value($data, $php_inst_id, $prop_name);
+							self::follow_path_set(self::$php_insts[$php_inst_id]->$prop_name, $data, self::unserialize_insts($result));
+							continue 2;
+						case self::REC_CLASS_UNSET:
+							$prop_name = self::decode_ident_ident($data, $php_inst_id);
+							unset(self::$php_insts[$php_inst_id]->$prop_name);
+							continue 2;
+						case self::REC_CLASS_UNSET_PATH:
+							$data = self::decode_ident_ident_value($data, $php_inst_id, $prop_name);
+							self::follow_path_unset(self::$php_insts[$php_inst_id], $data, $prop_name);
+							continue 2;
+						case self::REC_CLASS_CALL:
+							$data = self::decode_ident_ident_value($data, $php_inst_id, $prop_name);
+							$result = $data===null ? call_user_func([self::$php_insts[$php_inst_id], $prop_name]) : call_user_func_array([self::$php_insts[$php_inst_id], $prop_name], self::unserialize_insts($data));
+							$result_is_set = true;
+							break;
+						case self::REC_CLASS_CALL_PATH:
+							list($data, $result) = self::decode_ident_ident_value($data, $php_inst_id, $prop_name);
+							$value = self::$php_insts[$php_inst_id];
+							self::follow_path($value, $data);
+							$result = call_user_func_array([$value, $prop_name], self::unserialize_insts($result));
+							$value = null;
+							$result_is_set = true;
+							break;
+						case self::REC_CLASS_INVOKE:
+							$data = self::decode_ident_value($data, $php_inst_id);
+							$result = $data===null ? self::$php_insts[$php_inst_id]() : call_user_func_array(self::$php_insts[$php_inst_id], self::unserialize_insts($data));
+							$result_is_set = true;
+							break;
+						case self::REC_CLASS_ITERATE_BEGIN:
+							$result = self::iterate_begin($data);
+							$result_is_set = true;
+							break;
+						case self::REC_CLASS_ITERATE:
+							$result = self::iterate($data);
+							$result_is_set = true;
+							break;
+						case self::REC_POP_FRAME:
+							foreach (self::$php_insts as $php_inst_id => $result)
+							{	if ($php_inst_id > $data)
+								{	unset(self::$php_insts[$php_inst_id]);
+									unset(self::$php_insts_iters[$php_inst_id]);
+								}
+							}
+							self::$php_inst_id_enum = $data + 1;
+							continue 2;
+						case self::REC_N_OBJECTS:
+							$result = count(self::$php_insts);
+							$result_is_set = true;
+							break;
+						case self::REC_END_STDOUT:
+							echo self::$end_mark;
+							flush();
+							continue 2;
+						case self::REC_CALL:
+							$data = self::decode_ident_value($data, $prop_name);
+							$result = $data===null ? call_user_func($prop_name) : call_user_func_array($prop_name, self::unserialize_insts($data));
+							$result_is_set = true;
+							break;
+						case self::REC_CALL_THIS:
+							$data = self::decode_ident_value($data, $prop_name);
+							$data = $data===null ? call_user_func($prop_name) : call_user_func_array($prop_name, self::unserialize_insts($data));
+							$class_name = is_object($data) ? ' '.get_class($data) : '';
+							self::$php_insts[self::$php_inst_id_enum] = $data;
+							$result = self::$php_inst_id_enum++.$class_name;
+							$result_is_set = true;
+							break;
+						case self::REC_CALL_EVAL:
+							$data = self::decode_value($data);
+							$result = self::eval(self::unserialize_insts($data));
+							$result_is_set = true;
+							break;
+						case self::REC_CALL_EVAL_THIS:
+							$data = self::decode_value($data);
+							$data = self::eval(self::unserialize_insts($data));
+							$class_name = is_object($data) ? ' '.get_class($data) : '';
+							self::$php_insts[self::$php_inst_id_enum] = $data;
+							$result = self::$php_inst_id_enum++.$class_name;
+							$result_is_set = true;
+							break;
+						case self::REC_CALL_ECHO:
+							$data = self::unserialize_insts(self::decode_value($data));
+							foreach ($data as $arg)
+							{	echo $arg;
+							}
+							break;
+						case self::REC_CALL_INCLUDE:
+							$data = self::decode_value($data);
+							$result = include(self::unserialize_insts($data));
+							$result_is_set = true;
+							break;
+						case self::REC_CALL_INCLUDE_ONCE:
+							$data = self::decode_value($data);
+							$result = include_once(self::unserialize_insts($data));
+							$result_is_set = true;
+							break;
+						case self::REC_CALL_REQUIRE:
+							$data = self::decode_value($data);
+							$result = require(self::unserialize_insts($data));
+							$result_is_set = true;
+							break;
+						case self::REC_CALL_REQUIRE_ONCE:
+							$data = self::decode_value($data);
+							$result = require_once(self::unserialize_insts($data));
+							$result_is_set = true;
+							break;
+					}
 
-				// 3. Send the result
-				if (!$result_is_set)
-				{	fwrite($commands_io, "\xFF\xFF\xFF\xFF"); // undefined
+					// 3. Send the result
+					if (!$result_is_set)
+					{	fwrite($commands_io, "\xFF\xFF\xFF\xFF"); // undefined
+					}
+					else if ($result === null)
+					{	fwrite($commands_io, "\0\0\0\0");
+					}
+					else
+					{	$data = json_encode(self::serialize_insts($result));
+						fwrite($commands_io, pack('l', strlen($data)).$data);
+					}
 				}
-				else if ($result === null)
-				{	fwrite($commands_io, "\0\0\0\0");
+				catch (Throwable $e)
+				{	// 4. Error: send the exception
+					$data = json_encode([self::RES_ERROR, $e->getFile(), $e->getLine(), $e->getMessage(), $e->getTraceAsString()]);
+					fwrite($commands_io, pack('l', -strlen($data)).$data);
 				}
-				else
-				{	$data = json_encode($result);
-					fwrite($commands_io, pack('l', strlen($data)).$data);
-				}
+				fflush($commands_io);
 			}
-			catch (Throwable $e)
-			{	// 4. Error: send the exception
-				$data = json_encode([self::RES_ERROR, $e->getFile(), $e->getLine(), $e->getMessage(), $e->getTraceAsString()]);
-				fwrite($commands_io, pack('l', -strlen($data)).$data);
-			}
-			fflush($commands_io);
+		}
+		finally
+		{	self::$is_complete = true;
 		}
 	}
 }
 
-class DenoWorld
-{	private $inst_id;
-
-	public static function inst($inst_id)
-	{	$self = new self;
-		$self->inst_id = $inst_id;
-		return $self;
-	}
-
-	public function __construct()
-	{	$args = func_get_args();
-		$class_name = get_class($this);
-		if ($class_name !== __CLASS__)
-		{	$class_name = substr($class_name, 10); // cut DenoWorld\ prefix
-			$value = _PhpDenoBridge::write_read('['._PhpDenoBridge::RES_CONSTRUCT.','.json_encode($class_name).','.json_encode($args).']');
-			$this->inst_id = (int)$value;
-		}
-	}
-
-	function __destruct()
-	{	$data = '['._PhpDenoBridge::RES_DESTRUCT.','.$this->inst_id.']';
-		fwrite(_PhpDenoBridge::$commands_io, pack('l', -strlen($data)).$data);
-	}
-
-	public function __get($name)
-	{	return _PhpDenoBridge::write_read('['._PhpDenoBridge::RES_CLASS_GET.','.$this->inst_id.','.json_encode($name).']');
-	}
-
-	public function __set($name, $value)
-	{	_PhpDenoBridge::write_read('['._PhpDenoBridge::RES_CLASS_SET.','.$this->inst_id.','.json_encode($name).','.json_encode($value).']');
-	}
-
-	public function __call($name, $args)
-	{	return _PhpDenoBridge::write_read('['._PhpDenoBridge::RES_CLASS_CALL.','.$this->inst_id.','.json_encode($name).','.json_encode($args).']');
-	}
-
-	public static function __callStatic($name, $args)
-	{	$class_name = get_called_class();
-		if ($class_name === __CLASS__)
-		{	return _PhpDenoBridge::write_read('['._PhpDenoBridge::RES_CALL.','.json_encode($name).','.json_encode($args).']');
-		}
-		else
-		{	$class_name = substr($class_name, 10); // cut DenoWorld\ prefix
-			return _PhpDenoBridge::write_read('['._PhpDenoBridge::RES_CLASSSTATIC_CALL.','.json_encode($class_name).','.json_encode($name).','.json_encode($args).']');
-		}
-	}
-}
-
-_PhpDenoBridge::main();
+DenoWorldMain::main();
 ?>`;
 
 let php_boot_filename = '';
