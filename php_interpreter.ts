@@ -9,6 +9,7 @@ const DEBUG_PHP_BOOT = false;
 const READER_MUX_END_MARK_LEN = 32;
 const DEFAULT_KEEP_ALIVE_TIMEOUT = 10000;
 
+const REC_DATA = 0;
 const REC_CONST = 1;
 const REC_GET = 2;
 const REC_GET_THIS = 3;
@@ -37,16 +38,15 @@ const REC_CLASS_ITERATE = 25;
 const REC_POP_FRAME = 26;
 const REC_N_OBJECTS = 27;
 const REC_END_STDOUT = 28;
-const REC_DATA = 29;
-const REC_CALL = 30;
-const REC_CALL_THIS = 31;
-const REC_CALL_EVAL = 32;
-const REC_CALL_EVAL_THIS = 33;
-const REC_CALL_ECHO = 34;
-const REC_CALL_INCLUDE = 35;
-const REC_CALL_INCLUDE_ONCE = 36;
-const REC_CALL_REQUIRE = 37;
-const REC_CALL_REQUIRE_ONCE = 38;
+const REC_CALL = 29;
+const REC_CALL_THIS = 30;
+const REC_CALL_EVAL = 31;
+const REC_CALL_EVAL_THIS = 32;
+const REC_CALL_ECHO = 33;
+const REC_CALL_INCLUDE = 34;
+const REC_CALL_INCLUDE_ONCE = 35;
+const REC_CALL_REQUIRE = 36;
+const REC_CALL_REQUIRE_ONCE = 37;
 
 const RES_ERROR = 1;
 const RES_GET_CLASS = 2;
@@ -1296,6 +1296,23 @@ export class PhpInterpreter
 		queueMicrotask(() => {this.ongoing = this.ongoing.catch(() => {})});
 		return promise;
 	}
+
+	/*private schedule<T>(callback: () => T | Promise<T>): Promise<T>
+	{	let job = async () =>
+		{	this.ongoing.push(Promise.resolve());
+			try
+			{	return await callback();
+			}
+			finally
+			{	this.ongoing.pop();
+			}
+		};
+		let ongoing = this.ongoing[this.ongoing.length - 1];
+		let promise = !ongoing ? job() : ongoing.then(job);
+		this.ongoing[this.ongoing.length - 1] = promise;
+		//queueMicrotask(() => {this.ongoing[this.ongoing.length - 1] = this.ongoing[this.ongoing.length - 1].catch(() => {})});
+		return promise;
+	}*/
 
 	/**	Each remote function call or a variable fetch queues operation. All the operations will be executed in sequence.
 		This function returns promise that resolves when all current operations completed.
