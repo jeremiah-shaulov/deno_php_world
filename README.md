@@ -541,6 +541,45 @@ await g.eval
 await g.exit();
 ```
 
+For informational purposes there's function that returns number of deno objects, that PHP-side currently holds.
+Initially there're 2: $php and $globalThis ($window == $globalThis).
+As you request Deno objects, this number will grow, and once you free references, this number will be decreased.
+
+```ts
+import {g, php} from 'https://deno.land/x/php_world/mod.ts';
+
+console.log(await php.n_deno_objects()); // prints 2
+await g.eval
+(	`	global $window, $var;
+		$var = $window->Deno;
+	`
+);
+console.log(await php.n_deno_objects()); // prints 3
+await g.eval
+(	`	global $window, $var2;
+		$var2 = new DenoWorld\\Map;
+	`
+);
+console.log(await php.n_deno_objects()); // prints 4
+await g.eval
+(	`	global $var, $var2;
+		$var = null;
+		$var2 = null;
+	`
+);
+console.log(await php.n_deno_objects()); // prints 2
+await g.eval
+(	`	global $php, $window, $globalThis;
+		$php = null;
+		$window = null;
+		$globalThis = null;
+	`
+);
+console.log(await php.n_deno_objects()); // prints 0
+
+await g.exit();
+```
+
 ### Execution flow and exceptions
 
 When you call PHP functions, if function's result is not awaited-for, the function will work in background. You can continue calling functions, and they all will be executed in the same sequence they requested. If a function threw exception, all subsequent operations will be skipped till the end of current microtask iteration.

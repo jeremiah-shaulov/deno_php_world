@@ -631,6 +631,242 @@ Deno.test
 );
 
 Deno.test
+(	'Async errors nested',
+	async () =>
+	{	async function step_1(php: PhpInterpreter)
+		{	// async
+			php.c.C.failure("Failure 1");
+			php.c.C.failure("Failure 2");
+			php.c.C.failure("Failure 3");
+			let error = null;
+			try
+			{	console.log(await php.g.$argc);
+			}
+			catch (e)
+			{	error = e;
+			}
+			assert(error?.message, 'Failure 1');
+			assertEquals(await php.c.C.$n, 1);
+
+			// async with sleep
+			php.c.C.failure("Failure 1");
+			php.c.C.failure("Failure 2");
+			await sleep(0);
+			php.c.C.failure("Failure 3");
+			error = null;
+			try
+			{	console.log(await php.g.$argc);
+			}
+			catch (e)
+			{	error = e;
+			}
+			assert(error?.message, 'Failure 3');
+			assertEquals(await php.c.C.$n, 3);
+
+			// await 1
+			error = null;
+			try
+			{	await php.c.C.failure("Second failure 1");
+			}
+			catch (e)
+			{	error = e;
+			}
+			assertEquals(error?.message, 'Second failure 1');
+			assertEquals(await php.c.C.$n, 4);
+
+			// await 2
+			error = null;
+			try
+			{	await php.c.C.failure("Second failure 2");
+			}
+			catch (e)
+			{	error = e;
+			}
+			assertEquals(error?.message, 'Second failure 2');
+			assertEquals(await php.c.C.$n, 5);
+		}
+
+		for (let _ of settings_iter(settings))
+		{	settings.onsymbol = name =>
+			{	if (name == 'step_1')
+				{	return step_1;
+				}
+			};
+
+			await php_eval
+			(	`	global $php;
+
+					class C
+					{	static $n = 0;
+
+						static function failure(string $msg)
+						{	self::$n++;
+							throw new Exception($msg);
+						}
+					}
+
+					DenoWorld::step_1($php);
+				`
+			);
+
+			await g.exit();
+		}
+		php.close_idle();
+	}
+);
+
+Deno.test
+(	'Async nested',
+	async () =>
+	{	function step_1(php: PhpInterpreter, val: string)
+		{	php.g.ob_start(); // no await
+			for (let i=0; i<3; i++)
+			{	php.g.echo(val);
+			}
+			return php.g.ob_get_clean();
+		}
+
+		for (let _ of settings_iter(settings))
+		{	settings.onsymbol = name =>
+			{	if (name == 'step_1')
+				{	return step_1;
+				}
+			};
+
+			await g.eval
+			(	`	global $php, $res;
+
+					$res = DenoWorld::step_1($php, 'a');
+				`
+			);
+			assertEquals(await g.$res, 'aaa');
+
+			await g.exit();
+		}
+		php.close_idle();
+	}
+);
+
+Deno.test
+(	'Nested',
+	async () =>
+	{	async function step_1(php: PhpInterpreter, val: string)
+		{	return await php.g.step_2(val + 'b');
+		}
+		async function step_3(php: PhpInterpreter, val: string)
+		{	return await php.g.step_4(val + 'd');
+		}
+
+		for (let _ of settings_iter(settings))
+		{	settings.onsymbol = name =>
+			{	if (name == 'step_1')
+				{	return step_1;
+				}
+				if (name == 'step_3')
+				{	return step_3;
+				}
+			};
+
+			await g.eval
+			(	`	global $php, $res;
+
+					function step_2($val)
+					{	global $php;
+						return DenoWorld::step_3($php, $val.'c');
+					}
+					function step_4($val)
+					{	return $val.'e';
+					}
+
+					$res = DenoWorld::step_1($php, 'a');
+				`
+			);
+			assertEquals(await g.$res, 'abcde');
+
+			await g.exit();
+		}
+		php.close_idle();
+	}
+);
+
+Deno.test
+(	'n_deno_objects()',
+	async () =>
+	{	for (let _ of settings_iter(settings))
+		{	assertEquals(await php.n_deno_objects(), 2);
+			await g.eval
+			(	`	global $window, $var;
+					$var = $window->Deno;
+				`
+			);
+			assertEquals(await php.n_deno_objects(), 3);
+			await g.eval
+			(	`	global $window, $var2;
+					$var2 = new DenoWorld\\Map;
+				`
+			);
+			assertEquals(await php.n_deno_objects(), 4);
+			await g.eval
+			(	`	global $var, $var2;
+					$var = null;
+					$var2 = null;
+				`
+			);
+			assertEquals(await php.n_deno_objects(), 2);
+			await g.eval
+			(	`	global $php, $window, $globalThis;
+					$php = null;
+					$window = null;
+					$globalThis = null;
+				`
+			);
+			assertEquals(await php.n_deno_objects(), 0);
+
+			await g.exit();
+		}
+		php.close_idle();
+	}
+);
+
+Deno.test
+(	'Exception from Deno',
+	async () =>
+	{	function hello()
+		{	throw new Error('Funds not sufficient');
+		}
+
+		for (let _ of settings_iter(settings))
+		{	settings.onsymbol = name =>
+			{	if (name == 'hello')
+				{	return hello;
+				}
+			};
+
+			await g.eval
+			(	`	global $res, $done;
+
+					try
+					{	var_dump(DenoWorld::hello());
+					}
+					catch (Throwable $e)
+					{	$res = $e;
+					}
+					$done = true;
+				`
+			);
+
+			let res = await g.$res.this;
+			assertEquals(await res.getMessage(), 'Funds not sufficient');
+			assertEquals(await g.$done, true);
+			delete res.this;
+
+			await g.exit();
+		}
+		php.close_idle();
+	}
+);
+
+Deno.test
 (	'Instance Of',
 	async () =>
 	{	for (let _ of settings_iter(settings))
