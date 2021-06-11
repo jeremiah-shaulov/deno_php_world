@@ -5,7 +5,7 @@ import {ReaderMux} from './reader_mux.ts';
 import {fcgi, ResponseWithCookies, writeAll, exists} from './deps.ts';
 
 const PHP_CLI_NAME_DEFAULT = 'php';
-const DEBUG_PHP_BOOT = false;
+const DEBUG_PHP_BOOT = true;
 const READER_MUX_END_MARK_LEN = 32;
 const DEFAULT_KEEP_ALIVE_TIMEOUT = 10000;
 
@@ -1031,16 +1031,15 @@ export class PhpInterpreter
 				}
 				pos += n_read;
 			}
-			let result = JSON.parse
-			(	decoder.decode(buffer),
-				(key, value) => typeof(value)=='object' && value?.DENO_WORLD_INST_ID>=0 ? this.deno_insts.get(value.DENO_WORLD_INST_ID) : value
-			);
 			if (is_result)
-			{	return result;
+			{	return this.json_parse_unserialize_insts(decoder.decode(buffer));
 			}
-			let [type] = result;
+			let view = new DataView(buffer.buffer);
+			let type = view.getUint32(0);
+			let deno_inst_id = view.getUint32(4);
+			let result = buffer.length<=8 ? '' : decoder.decode(buffer.subarray(8));
 			if (type == RES_ERROR)
-			{	let [_, file, line, message, trace] = result;
+			{	let [file, line, message, trace] = JSON.parse(result);
 				throw new InterpreterError(message, file, Number(line), trace);
 			}
 			let data: any;
@@ -1050,77 +1049,74 @@ export class PhpInterpreter
 			{	this.ongoing_level++;
 				switch (type)
 				{	case RES_GET_CLASS:
-					{	let [_, class_name] = result;
+					{	let class_name = result;
 						let symbol = class_name in g ? g[class_name] : await this.settings.onsymbol(class_name);
 						data = !symbol ? RESTYPE_IS_ERROR : get_class_features(symbol);
 						break;
 					}
 					case RES_CONSTRUCT:
-					{	let [_, class_name, args] = result;
+					{	let [class_name, args] = this.json_parse_unserialize_insts(result);
 						let symbol = class_name in g ? g[class_name] : await this.settings.onsymbol(class_name);
 						let deno_inst = new symbol(...args); // can throw error
 						let deno_inst_id = this.deno_inst_id_enum++;
+						this.deno_inst_id_enum &= 0x7FFFFFFF;
 						this.deno_insts.set(deno_inst_id, deno_inst);
 						data = deno_inst_id;
 						break;
 					}
 					case RES_DESTRUCT:
-					{	let [_, deno_inst_id] = result;
-						this.deno_insts.delete(deno_inst_id);
+					{	this.deno_insts.delete(deno_inst_id);
 						continue;
 					}
 					case RES_CLASS_GET:
-					{	let [_, deno_inst_id, name] = result;
+					{	let name = result;
 						let deno_inst = this.deno_insts.get(deno_inst_id);
 						data = await deno_inst[name]; // can throw error
 						break;
 					}
 					case RES_CLASS_SET:
-					{	let [_, deno_inst_id, name, value] = result;
+					{	let [name, value] = this.json_parse_unserialize_insts(result);
 						let deno_inst = this.deno_insts.get(deno_inst_id);
 						deno_inst[name] = value; // can throw error
 						data = null;
 						break;
 					}
 					case RES_CLASS_CALL:
-					{	let [_, deno_inst_id, name, args] = result;
+					{	let [name, args] = this.json_parse_unserialize_insts(result);
 						let deno_inst = this.deno_insts.get(deno_inst_id);
 						data = await deno_inst[name](...args); // can throw error
 						break;
 					}
 					case RES_CLASS_INVOKE:
-					{	let [_, deno_inst_id, args] = result;
+					{	let args = this.json_parse_unserialize_insts(result);
 						let deno_inst = this.deno_insts.get(deno_inst_id);
 						data = await deno_inst(...args); // can throw error
 						break;
 					}
 					case RES_CLASS_GET_ITERATOR:
-					{	let [_, deno_inst_id] = result;
-						let deno_inst = this.deno_insts.get(deno_inst_id);
+					{	let deno_inst = this.deno_insts.get(deno_inst_id);
 						data = deno_inst[Symbol.asyncIterator] ? deno_inst[Symbol.asyncIterator]() : deno_inst[Symbol.iterator] ? deno_inst[Symbol.iterator]() : Object.entries(deno_inst)[Symbol.iterator](); // can throw error
 						break;
 					}
 					case RES_CLASS_TO_STRING:
-					{	let [_, deno_inst_id] = result;
-						let deno_inst = this.deno_insts.get(deno_inst_id);
+					{	let deno_inst = this.deno_insts.get(deno_inst_id);
 						data = deno_inst+''; // can throw error
 						break;
 					}
 					case RES_CLASS_ISSET:
-					{	let [_, deno_inst_id, name] = result;
+					{	let name = result;
 						let deno_inst = this.deno_insts.get(deno_inst_id);
 						data = deno_inst[name] != null; // can throw error
 						break;
 					}
 					case RES_CLASS_UNSET:
-					{	let [_, deno_inst_id, name] = result;
+					{	let name = result;
 						let deno_inst = this.deno_insts.get(deno_inst_id);
 						delete deno_inst[name]; // can throw error
 						break;
 					}
 					case RES_CLASS_PROPS:
-					{	let [_, deno_inst_id] = result;
-						let deno_inst = this.deno_insts.get(deno_inst_id);
+					{	let deno_inst = this.deno_insts.get(deno_inst_id);
 						let props = [];
 						for (let prop in deno_inst)
 						{	props[props.length] = prop;
@@ -1129,13 +1125,13 @@ export class PhpInterpreter
 						break;
 					}
 					case RES_CLASSSTATIC_CALL:
-					{	let [_, class_name, name, args] = result;
+					{	let [class_name, name, args] = this.json_parse_unserialize_insts(result);
 						let symbol = class_name in g ? g[class_name] : await this.settings.onsymbol(class_name);
 						data = await symbol[name](...args); // can throw error
 						break;
 					}
 					case RES_CALL:
-					{	let [_, name, args] = result;
+					{	let [name, args] = this.json_parse_unserialize_insts(result);
 						let symbol = name in g ? g[name] : await this.settings.onsymbol(name);
 						data = await symbol(...args); // can throw error
 						break;
@@ -1147,6 +1143,7 @@ export class PhpInterpreter
 				if (data!=null && (typeof(data)=='object' || typeof(data)=='function'))
 				{	result_type = get_inst_features(data);
 					let deno_inst_id = this.deno_inst_id_enum++;
+					this.deno_inst_id_enum &= 0x7FFFFFFF;
 					this.deno_insts.set(deno_inst_id, data);
 					data = deno_inst_id;
 				}
@@ -1163,6 +1160,13 @@ export class PhpInterpreter
 			}
 			await this.do_write(REC_DATA, data_str);
 		}
+	}
+
+	private json_parse_unserialize_insts(json: string)
+	{	return JSON.parse
+		(	json,
+			(key, value) => typeof(value)=='object' && value?.DENO_WORLD_INST_ID>=0 ? this.deno_insts.get(value.DENO_WORLD_INST_ID) : value
+		);
 	}
 
 	private async do_exit(is_eof=false)
