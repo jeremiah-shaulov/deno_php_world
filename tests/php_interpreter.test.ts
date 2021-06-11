@@ -1,6 +1,6 @@
 import {g, c, php, settings, PhpInterpreter, InterpreterExitError} from '../mod.ts';
 import {assert, assertEquals, sleep, readAll, fcgi, ServerRequest} from "../deps.ts";
-import {Settings} from '../php_interpreter.ts';
+import {PhpSettings} from '../php_interpreter.ts';
 import {start_proxy} from '../php_fpm.ts';
 
 const {eval: php_eval, ob_start, ob_get_clean, echo, json_encode, exit} = g;
@@ -8,7 +8,7 @@ const {MainNs, C} = c;
 const PHP_FPM_LISTEN = '/run/php/php-fpm.jeremiah.sock';
 const UNIX_SOCKET_NAME = '/tmp/deno-php-world-test.sock';
 
-function *settings_iter(settings: Settings)
+function *settings_iter(settings: PhpSettings)
 {	for (let listen of ['', PHP_FPM_LISTEN])
 	{	settings.php_fpm.listen = listen;
 		settings.unix_socket_name = '';

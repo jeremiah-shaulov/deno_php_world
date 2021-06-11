@@ -374,6 +374,20 @@ await g.eval
 await g.exit();
 ```
 
+When accessing async values, they're automatically awaited.
+
+```ts
+import {g, c} from 'https://deno.land/x/php_world/mod.ts';
+
+await g.eval
+(	`	global $window;
+
+		var_dump($window->fetch('http://example.com/')->text());
+	`
+);
+await g.exit();
+```
+
 Javascript functions and classes are not distinguishable entities (functions can be used as classes). They both can be referred to from PHP through `DenoWorld` namespace.
 
 ```ts
@@ -475,6 +489,29 @@ await g.eval
 );
 
 await g.exit();
+```
+
+To access toplevel functions that are not in `globalThis`, but must be handled by `onsymbol()`, you can call them as static functions of `DenoWorld` class.
+
+```ts
+import {g, c, settings} from 'https://deno.land/x/php_world/mod.ts';
+
+settings.onsymbol = name =>
+{	if (name == 'hello')
+	{	function hello()
+		{	return 'hello';
+		}
+		return hello;
+	}
+};
+
+await g.eval
+(	`	var_dump(DenoWorld::hello());
+	`
+);
+
+await g.exit();
+
 ```
 
 ### Execution flow and exceptions
@@ -719,6 +756,9 @@ let proxy = start_proxy
 		max_name_length: 256,
 		max_value_length: 4*1024, // "HTTP_COOKIE" param can have this length
 		max_file_size: 10*1024*1024,
+		onlogrequest(request: ServerRequest)
+		{
+		},
 		async onisphp(script_filename)
 		{	console.log(script_filename);
 			return script_filename.endsWith('.php');
@@ -731,12 +771,18 @@ let proxy = start_proxy
 			await request.post.parse(); // if you want to access POST parameters and uploaded files (otherwise request.post will contain nothing)
 			request.responseHeaders.set('content-type', 'text/html');
 			await request.respond({status: 200, body: 'Empty page'});
+		},
+		onerror(error: Error)
+		{
+		},
+		onend()
+		{
 		}
 	}
 );
 ```
 
-For each incoming request, first `onisphp()` will be called, to check is this a PHP script. If you return true, the request will be forwarded to the backend PHP-FPM service.
+For each incoming request, first `onisphp()` will be called, to check if this is a PHP script. If you return true, the request will be forwarded to the backend PHP-FPM service.
 If you return false, then `onrequest()` will be called, where you can handle this request.
 To handle it, you need to call `await request.respond()`, and if you don't do that, a 404 response will be sent the client (await is required).
 

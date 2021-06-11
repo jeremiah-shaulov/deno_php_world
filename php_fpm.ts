@@ -1,11 +1,9 @@
-import {PhpInterpreter} from './php_interpreter.ts';
+import {PhpInterpreter, PhpSettings} from './php_interpreter.ts';
 import {fcgi, ServerRequest, dirname, iter} from './deps.ts';
 
-const RE_FIX_SCRIPT_FILENAME = /^(?:(?:[\w\-]+:)?[\w\-]+:\/\/[^\/]+)?\/*/; // if SetHandler is used in Apache, it sends requests prefixed with "proxy:fcgi://localhost/", or what appears in the "SetHandler"
+const RE_FIX_SCRIPT_FILENAME = /^(?:(?:[\w\-]+:){1,2}\/\/[^\/]+)?\/*/; // if SetHandler is used in Apache, it sends requests prefixed with "proxy:fcgi://localhost/", or what appears in the "SetHandler"
 
-// maxConns
-
-export type Options =
+export interface ProxyOptions
 {	frontend_listen: string;
 	backend_listen: string;
 	max_conns?: number;
@@ -15,82 +13,82 @@ export type Options =
 	max_name_length?: number,
 	max_value_length?: number,
 	max_file_size?: number,
+	onlogrequest?: (request: ServerRequest) => void;
 	onisphp?: (script_filename: string) => boolean | Promise<boolean>;
-	onsymbol?: (name: string) => any;
 	onrequest?: (request: ServerRequest, php: PhpInterpreter) => Promise<unknown>;
+	onsymbol?: (name: string) => any;
 	onerror?: (error: Error) => void;
 	onend?: () => void;
-};
+}
 
-export function start_proxy(options: Options)
-{	if (options.onerror)
-	{	fcgi.on('error', options.onerror);
+export function start_proxy(options: ProxyOptions)
+{	let {frontend_listen, backend_listen, max_conns, keep_alive_timeout, keep_alive_max, unix_socket_name, max_name_length, max_value_length, max_file_size, onlogrequest, onisphp, onrequest, onsymbol, onerror, onend} = options;
+	let default_settings = new PhpSettings;
+	let set_max_conns = max_conns ?? default_settings.php_fpm.max_conns;
+	let set_keep_alive_timeout = keep_alive_timeout ?? default_settings.php_fpm.keep_alive_timeout;
+	let set_keep_alive_max = keep_alive_max ?? default_settings.php_fpm.keep_alive_max;
+	let set_unix_socket_name = unix_socket_name ?? default_settings.unix_socket_name;
+	let set_onsymbol = onsymbol ?? default_settings.onsymbol;
+
+	if (onerror)
+	{	fcgi.on('error', onerror);
 	}
 
 	fcgi.options
 	(	{	structuredParams: true,
-			maxConns: options.max_conns,
-			maxNameLength: options.max_name_length,
-			maxValueLength: options.max_value_length,
-			maxFileSize: options.max_file_size,
+			maxConns: set_max_conns,
+			maxNameLength: max_name_length,
+			maxValueLength: max_value_length,
+			maxFileSize: max_file_size,
 		}
 	);
 
 	let listener = fcgi.listen
-	(	options.frontend_listen,
+	(	frontend_listen,
 		'',
 		async request =>
 		{	let script_filename = request.params.get('SCRIPT_FILENAME') ?? '';
 			script_filename = script_filename.replace(RE_FIX_SCRIPT_FILENAME, '/');
 
-			let php = new PhpInterpreter;
-			php.settings.php_fpm.listen = options.backend_listen;
-			php.settings.php_fpm.params = request.params;
-			php.settings.php_fpm.request = (request.params.get('HTTPS')=='on' ? 'https://' : 'http://') + request.params.get('HTTP_HOST') + request.url;
-			if (options.max_conns != undefined)
-			{	php.settings.php_fpm.max_conns = options.max_conns;
-			}
-			if (options.keep_alive_timeout != undefined)
-			{	php.settings.php_fpm.keep_alive_timeout = options.keep_alive_timeout;
-			}
-			if (options.keep_alive_max != undefined)
-			{	php.settings.php_fpm.keep_alive_max = options.keep_alive_max;
-			}
-			if (options.unix_socket_name)
-			{	php.settings.unix_socket_name = options.unix_socket_name;
-			}
-			if (options.onsymbol)
-			{	php.settings.onsymbol = options.onsymbol;
-			}
+			onlogrequest?.(request);
 
-			let is_php = options.onisphp ? options.onisphp(script_filename) : script_filename.endsWith('.php');
+			let is_php = onisphp ? onisphp(script_filename) : script_filename.endsWith('.php');
 			if (typeof(is_php) != 'boolean')
 			{	is_php = await is_php;
 			}
 
-			if (is_php)
-			{	php.settings.php_fpm.request_init =
-				{	method: request.params.get('REQUEST_METHOD'),
-					bodyIter: iter(request.body),
-					headers: request.headers
-				};
-				php.settings.php_fpm.onresponse = async (response) =>
-				{	await request.respond
-					(	{	status: response.status,
-							headers: response.headers,
-							setCookies: response.cookies,
-							body: response.body ?? undefined, // response body as Deno.Reader
-						}
-					);
-				};
-				php.settings.init_php_file = script_filename;
-				await php.g.exit();
-				return;
-			}
+			if (is_php || onrequest)
+			{	let php = new PhpInterpreter;
+				php.settings.php_fpm.listen = backend_listen;
+				php.settings.php_fpm.params = request.params;
+				php.settings.php_fpm.request = (request.params.get('HTTPS')=='on' ? 'https://' : 'http://') + request.params.get('HTTP_HOST') + request.url;
+				php.settings.php_fpm.max_conns = set_max_conns;
+				php.settings.php_fpm.keep_alive_timeout = set_keep_alive_timeout;
+				php.settings.php_fpm.keep_alive_max = set_keep_alive_max;
+				php.settings.unix_socket_name = set_unix_socket_name;
+				php.settings.onsymbol = set_onsymbol;
 
-			if (options.onrequest)
-			{	await options.onrequest(request, php);
-				return;
+				if (is_php)
+				{	php.settings.php_fpm.request_init =
+					{	method: request.params.get('REQUEST_METHOD'),
+						bodyIter: iter(request.body),
+						headers: request.headers
+					};
+					php.settings.php_fpm.onresponse = async (response) =>
+					{	await request.respond
+						(	{	status: response.status,
+								headers: response.headers,
+								setCookies: response.cookies,
+								body: response.body ?? undefined, // response body as Deno.Reader
+							}
+						);
+					};
+					php.settings.init_php_file = script_filename;
+					await php.g.exit();
+				}
+				else if (onrequest)
+				{	await onrequest(request, php);
+				}
 			}
 		}
 	);
@@ -99,7 +97,7 @@ export function start_proxy(options: Options)
 	(	'end',
 		() =>
 		{	new PhpInterpreter().close_idle();
-			options.onend?.();
+			onend?.();
 		}
 	);
 

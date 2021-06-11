@@ -72,10 +72,10 @@ const RESTYPE_IS_ERROR = 16;
 
 const RE_BAD_CLASSNAME_FOR_EVAL = /[^\w\\]/;
 
-let symbol_php_object = Symbol('php_object');
+const symbol_php_object = Symbol('php_object');
 
-let encoder = new TextEncoder;
-let decoder = new TextDecoder;
+const encoder = new TextEncoder;
+const decoder = new TextDecoder;
 
 fcgi.on('error', (e: Error) => {console.error(e)});
 
@@ -93,7 +93,7 @@ async function get_random_key(): Promise<string>
 		finally
 		{	fh.close();
 		}
-		return btoa(String.fromCharCode.apply(null, buffer as any));
+		return btoa(String.fromCharCode(...buffer));
 	}
 	return Math.random()+'';
 }
@@ -151,7 +151,7 @@ export class InterpreterExitError extends Error
 	}
 }
 
-type SettingsPhpFpm =
+export interface PhpFpmSettings
 {	listen: string;
 	max_conns: number;
 
@@ -172,16 +172,16 @@ type SettingsPhpFpm =
 		Also `response.body` object extends regular `ReadableStream<Uint8Array>` by adding `Deno.Reader` implementation.
 	 **/
 	onresponse?: (response: ResponseWithCookies) => Promise<unknown>;
-};
+}
 
 /**	Settings that affect `PhpInterpreter` behavior.
  **/
-export class Settings
+export class PhpSettings
 {	/**	Command that will be executed to spawn a PHP-CLI process. This setting is ignored if `php_fpm.listen` is set.
 	 **/
 	public php_cli_name = PHP_CLI_NAME_DEFAULT;
 
-	public php_fpm: SettingsPhpFpm =
+	public php_fpm: PhpFpmSettings =
 	{	listen: '',
 		keep_alive_timeout: DEFAULT_KEEP_ALIVE_TIMEOUT,
 		keep_alive_max: Number.MAX_SAFE_INTEGER,
@@ -200,7 +200,23 @@ export class Settings
 	public init_php_file = '';
 
 	public onsymbol: (name: string) => any = () => {};
+
+	constructor(init_settings?: PhpSettingsInit)
+	{	this.php_cli_name = init_settings?.php_cli_name ?? this.php_cli_name;
+		this.php_fpm.listen = init_settings?.php_fpm?.listen ?? this.php_fpm.listen;
+		this.php_fpm.keep_alive_timeout = init_settings?.php_fpm?.keep_alive_timeout ?? this.php_fpm.keep_alive_timeout;
+		this.php_fpm.keep_alive_max = init_settings?.php_fpm?.keep_alive_max ?? this.php_fpm.keep_alive_max;
+		this.php_fpm.params = init_settings?.php_fpm?.params ?? this.php_fpm.params;
+		this.php_fpm.request = init_settings?.php_fpm?.request ?? this.php_fpm.request;
+		this.php_fpm.max_conns = init_settings?.php_fpm?.max_conns ?? this.php_fpm.max_conns;
+		this.unix_socket_name = init_settings?.unix_socket_name ?? this.unix_socket_name;
+		this.stdout = init_settings?.stdout ?? this.stdout;
+		this.init_php_file = init_settings?.init_php_file ?? this.init_php_file;
+		this.onsymbol = init_settings?.onsymbol ?? this.onsymbol;
+	}
 }
+
+type PhpSettingsInit = Partial<Omit<PhpSettings, 'php_fpm'>> & {php_fpm?: Partial<PhpFpmSettings>};
 
 /**	Each instance of this class represents a PHP interpreter. It can be spawned CLI process that runs in background, or it can be a FastCGI request to a PHP-FPM service.
 	The interpreter will be actually spawned on first remote call.
@@ -223,7 +239,7 @@ export class PhpInterpreter
 	private deno_insts: Map<number, any> = new Map; // php has handles to these objects
 	private deno_inst_id_enum = 1; // later will do: deno_insts.set(0, globalThis)
 
-	/**	For accessing global remote PHP objects, except classes (functions, variables, constants).
+	/**	For accessing remote global PHP objects, except classes (functions, variables, constants).
 	 **/
 	public g: any;
 
@@ -231,14 +247,16 @@ export class PhpInterpreter
 	 **/
 	public c: any;
 
-	/**	Modify settings before spawning interpreter (or connecting to PHP-FPM service).
+	/**	Modify settings before spawning interpreter or connecting to PHP-FPM service.
 	 **/
-	public settings = new Settings;
+	public settings: PhpSettings;
 
 	/**	You can have as many PHP interpreter instances as you want. Don't forget to call `this.g.exit()` to destroy the background interpreter.
 	 **/
-	constructor()
-	{	this.deno_insts.set(0, globalThis);
+	constructor(init_settings?: PhpSettingsInit)
+	{	this.settings = new PhpSettings(init_settings);
+
+		this.deno_insts.set(0, globalThis);
 
 		this.g = get_global(this, false);
 		this.c = get_global(this, true);
@@ -839,7 +857,7 @@ export class PhpInterpreter
 		let end_mark = get_weak_random_bytes(READER_MUX_END_MARK_LEN);
 		let {init_php_file} = this.settings;
 		this.settings.init_php_file = ''; // so second call to `exit()` will not reexecute the init script. if reexecution is needed, reassign `this.settings.init_php_file`
-		let rec_helo = key+' '+btoa(String.fromCharCode.apply(null, end_mark as any))+' '+btoa(php_socket)+' '+btoa(init_php_file);
+		let rec_helo = key+' '+btoa(String.fromCharCode(...end_mark))+' '+btoa(php_socket)+' '+btoa(init_php_file);
 		let php_boot_file = '';
 		// 4. Run the PHP interpreter or connect to PHP-FPM service
 		if (!this.settings.php_fpm.listen)
