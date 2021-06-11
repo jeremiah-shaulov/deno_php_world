@@ -807,9 +807,10 @@ class DenoWorldMain extends DenoWorld
 	}
 
 	public static function main()
-	{	global $argc, $argv, $globalThis, $window;
+	{	global $argc, $argv, $php, $globalThis, $window;
 
-		$globalThis = new DenoWorld(0);
+		$php = new DenoWorld(0);
+		$globalThis = new DenoWorld(1);
 		$window = $globalThis;
 
 		// Install error handler, that converts E_ERROR to Exception

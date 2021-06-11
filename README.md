@@ -511,7 +511,34 @@ await g.eval
 );
 
 await g.exit();
+```
 
+Third and the last PHP global variable that this library defines is called `$php`. It contains reference to current PHP interpreter on Deno side (instance of `PhpInterpreter`).
+You can pass it to Deno functions, if they want to use current PHP interpreter that called them.
+
+```ts
+import {g, c, settings, PhpInterpreter} from 'https://deno.land/x/php_world/mod.ts';
+
+settings.onsymbol = name =>
+{	if (name == 'get_rating')
+	{	return get_rating;
+	}
+};
+
+async function get_rating(php: PhpInterpreter)
+{	return await php.g.str_repeat('*', await php.g.$cur_rating);
+}
+
+await g.eval
+(	`	global $php, $cur_rating;
+
+		$cur_rating = 5;
+
+		var_dump(DenoWorld::get_rating($php));
+	`
+);
+
+await g.exit();
 ```
 
 ### Execution flow and exceptions

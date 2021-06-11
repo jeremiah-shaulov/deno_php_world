@@ -1,7 +1,7 @@
+import {debug_assert} from './debug_assert.ts';
 import {PHP_BOOT, get_php_boot_filename} from './php-init.ts';
 import {create_proxy} from './proxy_object.ts';
 import {ReaderMux} from './reader_mux.ts';
-import {debug_assert} from './debug_assert.ts';
 import {fcgi, ResponseWithCookies, writeAll, exists} from './deps.ts';
 
 const PHP_CLI_NAME_DEFAULT = 'php';
@@ -231,13 +231,14 @@ export class PhpInterpreter
 	private commands_io: Deno.Conn|undefined;
 	private is_inited = false;
 	private using_unix_socket = '';
-	private ongoing: Promise<unknown> = Promise.resolve();
+	private ongoing: Promise<unknown>[] = [];
+	private ongoing_level = 0;
 	private ongoing_stderr: Promise<unknown> = Promise.resolve();
 	private stdout_mux: ReaderMux|undefined;
 	private last_inst_id = -1;
 	private stack_frames: number[] = [];
 	private deno_insts: Map<number, any> = new Map; // php has handles to these objects
-	private deno_inst_id_enum = 1; // later will do: deno_insts.set(0, globalThis)
+	private deno_inst_id_enum = 2; // later will do: deno_insts.set(0, this); deno_insts.set(1, globalThis);
 
 	/**	For accessing remote global PHP objects, except classes (functions, variables, constants).
 	 **/
@@ -256,10 +257,11 @@ export class PhpInterpreter
 	constructor(init_settings?: PhpSettingsInit)
 	{	this.settings = new PhpSettings(init_settings);
 
-		this.deno_insts.set(0, globalThis);
-
 		this.g = get_global(this, false);
 		this.c = get_global(this, true);
+
+		this.deno_insts.set(0, this);
+		this.deno_insts.set(1, globalThis);
 
 		function get_global(php: PhpInterpreter, is_class: boolean)
 		{	return new Proxy
@@ -1045,7 +1047,8 @@ export class PhpInterpreter
 			let data_str;
 			let g: any = globalThis;
 			try
-			{	switch (type)
+			{	this.ongoing_level++;
+				switch (type)
 				{	case RES_GET_CLASS:
 					{	let [_, class_name] = result;
 						let symbol = class_name in g ? g[class_name] : await this.settings.onsymbol(class_name);
@@ -1152,6 +1155,12 @@ export class PhpInterpreter
 			catch (e)
 			{	data_str = JSON.stringify([RESTYPE_IS_ERROR, {message: e.message}]);
 			}
+			finally
+			{	this.ongoing_level--;
+				if (this.ongoing.length > this.ongoing_level+1)
+				{	this.ongoing.length = this.ongoing_level+1;
+				}
+			}
 			await this.do_write(REC_DATA, data_str);
 		}
 	}
@@ -1225,6 +1234,8 @@ export class PhpInterpreter
 				}
 			}
 		}
+		debug_assert(this.ongoing.length <= 1);
+		this.ongoing.length = 0;
 		await this.ongoing_stderr;
 		this.ongoing_stderr = Promise.resolve();
 		this.php_cli_proc = undefined;
@@ -1234,8 +1245,9 @@ export class PhpInterpreter
 		this.last_inst_id = -1;
 		this.stack_frames.length = 0;
 		this.deno_insts.clear();
-		this.deno_insts.set(0, globalThis);
-		this.deno_inst_id_enum = 1;
+		this.deno_insts.set(0, this);
+		this.deno_insts.set(1, globalThis);
+		this.deno_inst_id_enum = 2;
 		return status;
 	}
 
@@ -1290,35 +1302,20 @@ export class PhpInterpreter
 		}
 	}
 
-	private schedule<T>(callback: () => T | Promise<T>): Promise<T>
-	{	let promise = this.ongoing.then(callback);
-		this.ongoing = promise;
-		queueMicrotask(() => {this.ongoing = this.ongoing.catch(() => {})});
+	private schedule<T>(callback: () => Promise<T>): Promise<T>
+	{	let {ongoing_level} = this;
+		let ongoing = this.ongoing[ongoing_level];
+		let promise = !ongoing ? callback() : ongoing.then(callback);
+		this.ongoing[ongoing_level] = promise;
+		queueMicrotask(() => {this.ongoing[ongoing_level] = this.ongoing[ongoing_level].catch(() => {})});
 		return promise;
 	}
-
-	/*private schedule<T>(callback: () => T | Promise<T>): Promise<T>
-	{	let job = async () =>
-		{	this.ongoing.push(Promise.resolve());
-			try
-			{	return await callback();
-			}
-			finally
-			{	this.ongoing.pop();
-			}
-		};
-		let ongoing = this.ongoing[this.ongoing.length - 1];
-		let promise = !ongoing ? job() : ongoing.then(job);
-		this.ongoing[this.ongoing.length - 1] = promise;
-		//queueMicrotask(() => {this.ongoing[this.ongoing.length - 1] = this.ongoing[this.ongoing.length - 1].catch(() => {})});
-		return promise;
-	}*/
 
 	/**	Each remote function call or a variable fetch queues operation. All the operations will be executed in sequence.
 		This function returns promise that resolves when all current operations completed.
 	 **/
 	ready(): Promise<unknown>
-	{	return this.ongoing;
+	{	return this.ongoing[this.ongoing_level];
 	}
 
 	private write(record_type: number, str: string)
@@ -1349,6 +1346,48 @@ export class PhpInterpreter
 	 **/
 	n_objects()
 	{	return this.schedule(() => this.do_n_objects());
+	}
+
+	/**	Number of Deno objects, that PHP-side currently holds.
+		Initially there're 2: $php and $globalThis ($window == $globalThis).
+		As you request Deno objects, this number will grow, and once you free references, this number will be decreased.
+
+		import {g, php} from 'https://deno.land/x/php_world/mod.ts';
+
+		console.log(await php.n_deno_objects()); // prints 2
+		await g.eval
+		(	`	global $window, $var;
+				$var = $window->Deno;
+			`
+		);
+		console.log(await php.n_deno_objects()); // prints 3
+		await g.eval
+		(	`	global $window, $var2;
+				$var2 = new DenoWorld\\Map;
+			`
+		);
+		console.log(await php.n_deno_objects()); // prints 4
+		await g.eval
+		(	`	global $var, $var2;
+				$var = null;
+				$var2 = null;
+			`
+		);
+		console.log(await php.n_deno_objects()); // prints 2
+		await g.eval
+		(	`	global $php, $window, $globalThis;
+				$php = null;
+				$window = null;
+				$globalThis = null;
+			`
+		);
+		console.log(await php.n_deno_objects()); // prints 0
+
+		await g.exit();
+
+	 **/
+	n_deno_objects()
+	{	return this.schedule(() => Promise.resolve(this.deno_insts.size));
 	}
 
 	get_stdout_reader()
