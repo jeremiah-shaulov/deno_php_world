@@ -5,7 +5,7 @@ import {ReaderMux} from './reader_mux.ts';
 import {fcgi, ResponseWithCookies, writeAll, exists} from './deps.ts';
 
 const PHP_CLI_NAME_DEFAULT = 'php';
-const DEBUG_PHP_BOOT = true;
+const DEBUG_PHP_BOOT = false;
 const READER_MUX_END_MARK_LEN = 32;
 const DEFAULT_KEEP_ALIVE_TIMEOUT = 10000;
 
@@ -966,10 +966,31 @@ export class PhpInterpreter
 	}
 
 	private async do_write(record_type: number, str: string)
-	{	let body = encoder.encode('01230123'+str);
-		let len = new DataView(body.buffer);
-		len.setInt32(0, record_type);
-		len.setInt32(4, body.length - 8);
+	{	let body = new Uint8Array(str.length+32);
+		let offset = 8;
+		while (true)
+		{	let {read, written} = encoder.encodeInto(str, body.subarray(offset));
+			offset += written;
+			if (read == str.length)
+			{	break;
+			}
+			str = str.slice(read);
+			let new_body = new Uint8Array(offset + str.length*2);
+			new_body.set(body);
+			body = new_body;
+		}
+		let header = new DataView(body.buffer);
+		header.setInt32(0, record_type);
+		header.setInt32(4, offset-8);
+		let padding = (8 - offset%8) % 8;
+		if (offset+padding <= body.length)
+		{	body = body.subarray(0, offset+padding);
+		}
+		else
+		{	let new_body = new Uint8Array(offset+padding);
+			new_body.set(body);
+			body = new_body;
+		}
 		if (!this.is_inited)
 		{	await this.do_init();
 		}
@@ -1001,18 +1022,18 @@ export class PhpInterpreter
 
 	private async do_read(): Promise<any>
 	{	while (true)
-		{	let buffer = new Uint8Array(4);
+		{	let buffer = new Uint8Array(8);
 			let pos = 0;
-			while (pos < 4)
+			while (pos < 8)
 			{	let n_read = await this.commands_io!.read(buffer);
 				if (n_read == null)
 				{	this.exit_status_to_exception(await this.do_exit(true));
 				}
 				pos += n_read;
 			}
-			let [len] = new Int32Array(buffer.buffer);
+			let [len, first_word] = new Int32Array(buffer.buffer);
 			if (len == 0)
-			{	return null;
+			{	return null; // null
 			}
 			let is_result = true;
 			if (len < 0)
@@ -1022,8 +1043,10 @@ export class PhpInterpreter
 				is_result = false;
 				len = -len;
 			}
+			let padding = (8 - (len + 4)%8) % 8;
+			len += padding;
 			buffer = new Uint8Array(len);
-			pos = 0;
+			pos = 4; // first_word already read
 			while (pos < len)
 			{	let n_read = await this.commands_io!.read(buffer.subarray(pos));
 				if (n_read == null)
@@ -1032,12 +1055,13 @@ export class PhpInterpreter
 				pos += n_read;
 			}
 			if (is_result)
-			{	return this.json_parse_unserialize_insts(decoder.decode(buffer));
+			{	(new Int32Array(buffer.buffer))[0] = first_word;
+				return this.json_parse_unserialize_insts(decoder.decode(buffer.subarray(padding)));
 			}
 			let view = new DataView(buffer.buffer);
-			let type = view.getUint32(0);
+			let type = first_word;
 			let deno_inst_id = view.getUint32(4);
-			let result = buffer.length<=8 ? '' : decoder.decode(buffer.subarray(8));
+			let result = buffer.length<=8+padding ? '' : decoder.decode(buffer.subarray(8+padding));
 			if (type == RES_ERROR)
 			{	let [file, line, message, trace] = JSON.parse(result);
 				throw new InterpreterError(message, file, Number(line), trace);

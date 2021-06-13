@@ -1050,8 +1050,9 @@ Deno.test
 Deno.test
 (	'Binary data',
 	async () =>
-	{	for (let _ of settings_iter(settings))
-		{	assertEquals(await g.substr("\x00\x01\x02 \x7F\x80\x81 \xFD\xFE\xFF", 0, 100), "\x00\x01\x02 \x7F\x80\x81 \xFD\xFE\xFF");
+	{	let data = "\x00\x01\x02 \x7F\x80\x81 \xFD\xFE\xFF";
+		for (let _ of settings_iter(settings))
+		{	assertEquals(await g.substr(data, 0, 100), data);
 
 			await g.exit();
 		}
