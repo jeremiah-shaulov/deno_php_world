@@ -1,7 +1,7 @@
 import {g, c, php, settings, PhpInterpreter, InterpreterExitError} from '../mod.ts';
 import {assert, assertEquals, sleep, readAll, fcgi, ServerRequest} from "../deps.ts";
 import {PhpSettings} from '../php_interpreter.ts';
-import {start_proxy} from '../php_fpm.ts';
+import {start_proxy} from '../start_proxy.ts';
 
 const {eval: php_eval, ob_start, ob_get_clean, echo, json_encode, exit} = g;
 const {MainNs, C} = c;
@@ -80,6 +80,12 @@ Deno.test
 
 			g.$var.a = 10;
 			assertEquals(await g.$var.a, 10);
+
+			let v = await g.$var.this;
+			assertEquals(await v.a, 10);
+			assertEquals(await php.n_objects(), 1);
+			delete v.this;
+			assertEquals(await php.n_objects(), 0);
 
 			await exit();
 		}

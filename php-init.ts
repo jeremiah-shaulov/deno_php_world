@@ -681,16 +681,27 @@ class DenoWorldMain extends DenoWorld
 					case self::REC_CLASS_GET:
 						$data = self::decode_ident_ident_value($data, $php_inst_id, $prop_name);
 						$result = self::$php_insts[$php_inst_id];
-						$result_is_set = isset($result->$prop_name) || property_exists($result, $prop_name);
-						if ($result_is_set)
-						{	try
-							{	$result = $result->$prop_name;
+						if (is_array($result))
+						{	$result_is_set = array_key_exists($prop_name, $result);
+							if ($result_is_set)
+							{	$result = $result[$prop_name];
 								if ($data !== null)
 								{	$result_is_set = self::follow_path($result, $data);
 								}
 							}
-							catch (Throwable $e)
-							{	$result_is_set = false;
+						}
+						else
+						{	$result_is_set = isset($result->$prop_name) || property_exists($result, $prop_name);
+							if ($result_is_set)
+							{	try
+								{	$result = $result->$prop_name; // can throw exception if class property deleted
+									if ($data !== null)
+									{	$result_is_set = self::follow_path($result, $data);
+									}
+								}
+								catch (Throwable $e)
+								{	$result_is_set = false;
+								}
 							}
 						}
 						break;

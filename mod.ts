@@ -21,5 +21,5 @@ export const settings = php.settings;
 
 export {ResponseWithCookies, ServerRequest} from './deps.ts';
 
-export {start_proxy} from './php_fpm.ts';
-export type {ProxyOptions} from './php_fpm.ts';
+export {start_proxy} from './start_proxy.ts';
+export type {ProxyOptions} from './start_proxy.ts';
