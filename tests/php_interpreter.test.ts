@@ -1,7 +1,7 @@
 import {g, c, php, settings, PhpInterpreter, InterpreterExitError} from '../mod.ts';
 import {assert, assertEquals, sleep, readAll, fcgi, ServerRequest} from "../deps.ts";
 import {PhpSettings} from '../php_interpreter.ts';
-import {start_proxy} from '../start_proxy.ts';
+import {start_proxy, PhpRequest} from '../start_proxy.ts';
 
 const {eval: php_eval, ob_start, ob_get_clean, echo, json_encode, exit} = g;
 const {MainNs, C} = c;
@@ -45,7 +45,7 @@ Deno.test
 				{	error = e;
 				}
 			}
-			assertEquals(error?.code, settings.php_fpm.listen ? -1 : 100);
+			assertEquals(error?.code, settings.php_fpm.listen ? 0 : 100);
 		}
 		php.close_idle();
 	}
@@ -1656,14 +1656,8 @@ Deno.test
 					max_name_length: 256,
 					max_value_length: 4*1024, // "HTTP_COOKIE" param can have this length
 					max_file_size: 10*1024*1024,
-					async onisphp(script_filename)
-					{	return script_filename.endsWith('.php');
-					},
-					onsymbol(name: string)
-					{
-					},
-					async onrequest(request: ServerRequest, php: PhpInterpreter)
-					{
+					async onrequest(php: PhpRequest)
+					{	await php.proxy();
 					}
 				}
 			);

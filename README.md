@@ -808,7 +808,7 @@ If you have Apache (or Nginx) + PHP-FPM setup, you can create Deno node in the m
 And by default this will work as there was no Deno at all. But PHP scrips will be able to access Deno world, and vise versa.
 
 ```ts
-import {start_proxy, ServerRequest, PhpInterpreter} from 'https://deno.land/x/php_world/mod.ts';
+import {start_proxy, PhpRequest} from 'https://deno.land/x/php_world/mod.ts';
 
 console.log(`Server started`);
 
@@ -821,22 +821,32 @@ let proxy = start_proxy
 		unix_socket_name: '',
 		max_name_length: 256,
 		max_value_length: 4*1024, // "HTTP_COOKIE" param can have this length
-		max_file_size: 10*1024*1024,
-		onlogrequest(request: ServerRequest)
-		{
-		},
-		async onisphp(script_filename)
-		{	console.log(script_filename);
-			return script_filename.endsWith('.php');
-		},
-		onsymbol(name: string)
-		{
-		},
-		async onrequest(request: ServerRequest, php: PhpInterpreter)
-		{	console.log(request.url);
-			await request.post.parse(); // if you want to access POST parameters and uploaded files (otherwise request.post will contain nothing)
-			request.responseHeaders.set('content-type', 'text/html');
-			await request.respond({status: 200, body: 'Empty page'});
+		max_file_size: 10*1024*1024, // is respected by `php.request.post.parse()`
+		async onrequest(php: PhpRequest)
+		{	// Log incoming request
+			console.log(php.request.url);
+
+			// Register Deno-world symbol resolver
+			php.settings.onsymbol = name =>
+			{	switch (name)
+				{	// ...
+				}
+			};
+
+			// If .php file, forward the request to PHP-FPM
+			if (php.script_filename.endsWith('.php'))
+			{	return await php.proxy();
+			}
+
+			// If other kind of file, handle it, or just ignore to return 404
+			if (php.request.url.startsWith('/page-1.html'))
+			{	// If we want to access POST parameters and uploaded files, we need to call `parse()` (otherwise request.post will contain nothing)
+				await php.request.post.parse();
+
+				// Generate the response
+				php.request.responseHeaders.set('content-type', 'text/html');
+				await php.request.respond({status: 200, body: 'Page 1'});
+			}
 		},
 		onerror(error: Error)
 		{
@@ -848,11 +858,20 @@ let proxy = start_proxy
 );
 ```
 
-For each incoming request, first `onisphp()` will be called, to check if this is a PHP script. If you return true, the request will be forwarded to the backend PHP-FPM service.
-If you return false, then `onrequest()` will be called, where you can handle this request.
-To handle it, you need to call `await request.respond()`, and if you don't do that, a 404 response will be sent the client (await is required).
+For each incoming request `onrequest()` will be called, where you can do one of 3 things:
+1. call `await php.proxy()` to forward the request to backend PHP-FPM
+2. Handle the request manually
+3. Do nothing (without awaiting), to let the library generate 404 response
 
-For more information on `ServerRequest` object see [x/fcgi](https://deno.land/x/fcgi) library;
+The `onrequest()` callback gets 1 argument of type `PhpRequest` that extends `PhpInterpreter`. It has 2 extra fields:
+1. `script_filename: string` - requested script file. It's the same as `this.request.params.get('SCRIPT_FILENAME')`, but cannot be undefined.
+2. `request: ServerRequest` - contains information about incoming request: it's headers, GET and POST parameters, cookies and uploaded files.
+
+To handle incoming request, you need to call `await request.respond()` with optional `status: number`, `headers: Headers`, `setCookies: SetCookies` and `body: Uint8Array | Deno.Reader | string`.
+
+For more information on `ServerRequest` object see [x/fcgi](https://deno.land/x/fcgi) library.
+
+`start_proxy()` returns handle, that has `addr: Deno.Addr` of the frontend listener, and method `stop()` that will terminate the proxy. After the proxy terminated, and all the requests complete, `onend()` callback will be called.
 
 ### Dealing with PHP echo output
 

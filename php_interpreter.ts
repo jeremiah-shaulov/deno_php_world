@@ -1193,7 +1193,7 @@ export class PhpInterpreter
 		);
 	}
 
-	private async do_exit(is_eof=false)
+	private async do_exit(is_eof=false): Promise<Deno.ProcessStatus>
 	{	if (!this.is_inited && this.settings.init_php_file)
 		{	await this.do_init();
 		}
@@ -1239,12 +1239,18 @@ export class PhpInterpreter
 			this.stdout_mux = undefined;
 		}
 		let status;
-		try
-		{	status = await this.php_cli_proc?.status();
-			this.php_cli_proc?.close();
+		if (this.php_cli_proc)
+		{	try
+			{	status = await this.php_cli_proc.status();
+				this.php_cli_proc?.close();
+			}
+			catch (e)
+			{	console.error(e);
+				status = {success: false, code: -1} as Deno.ProcessStatus;
+			}
 		}
-		catch (e)
-		{	console.error(e);
+		else
+		{	status = {success: true, code: 0} as Deno.ProcessStatus;
 		}
 		try
 		{	this.listener?.close();
@@ -1335,7 +1341,14 @@ export class PhpInterpreter
 		let ongoing = this.ongoing[ongoing_level];
 		let promise = !ongoing ? callback() : ongoing.then(callback);
 		this.ongoing[ongoing_level] = promise;
-		queueMicrotask(() => {this.ongoing[ongoing_level] = this.ongoing[ongoing_level].catch(() => {})});
+		queueMicrotask
+		(	() =>
+			{	let ongoing = this.ongoing[ongoing_level];
+				if (ongoing)
+				{	this.ongoing[ongoing_level] = ongoing.catch(() => {});
+				}
+			}
+		);
 		return promise;
 	}
 
