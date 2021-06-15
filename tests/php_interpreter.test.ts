@@ -87,6 +87,9 @@ Deno.test
 			delete v.this;
 			assertEquals(await php.n_objects(), 0);
 
+			await php.g.eval('global $я; $я = 10;');
+			assertEquals(await g.$я, 10);
+
 			await exit();
 		}
 		php.close_idle();

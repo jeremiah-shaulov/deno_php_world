@@ -513,6 +513,46 @@ await g.eval
 await g.exit();
 ```
 
+If a Deno object has method called `dispose()`, it will be called once this object becomes not in use on PHP side.
+
+```ts
+import {php} from 'https://deno.land/x/php_world/mod.ts';
+
+class MyFile
+{	protected fh: Deno.File | undefined;
+	private buffer = new Uint8Array(8*1024);
+
+	static async open(path: string, options?: Deno.OpenOptions)
+	{	let self = new MyFile;
+		self.fh = await Deno.open(path, options);
+		return self;
+	}
+
+	dispose()
+	{	this.fh?.close();
+	}
+
+	async read()
+	{	let n = await this.fh?.read(this.buffer);
+		return n==null ? null : new TextDecoder().decode(this.buffer.subarray(0, n));
+	}
+}
+
+php.settings.onsymbol = name =>
+{	switch (name)
+	{	case 'MyFile': return MyFile;
+	}
+};
+
+php.g.eval
+(	`	$f = DenoWorld\\MyFile::open('/etc/passwd');
+		while (($chunk = $f->read()) !== null)
+		{	echo $chunk;
+		}
+	`
+);
+```
+
 Third and the last PHP global variable that this library defines is called `$php`. It contains reference to current PHP interpreter on Deno side (instance of `PhpInterpreter`).
 You can pass it to Deno functions, if they want to use current PHP interpreter that called them.
 

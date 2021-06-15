@@ -9,66 +9,72 @@ const DEBUG_PHP_BOOT = false;
 const READER_MUX_END_MARK_LEN = 32;
 const DEFAULT_KEEP_ALIVE_TIMEOUT = 10000;
 
-const REC_DATA = 0;
-const REC_CONST = 1;
-const REC_GET = 2;
-const REC_GET_THIS = 3;
-const REC_SET = 4;
-const REC_SET_PATH = 5;
-const REC_UNSET = 6;
-const REC_UNSET_PATH = 7;
-const REC_CLASSSTATIC_GET = 8;
-const REC_CLASSSTATIC_GET_THIS = 9;
-const REC_CLASSSTATIC_SET = 10;
-const REC_CLASSSTATIC_SET_PATH = 11;
-const REC_CLASSSTATIC_UNSET = 12;
-const REC_CONSTRUCT = 13;
-const REC_DESTRUCT = 14;
-const REC_CLASS_GET = 15;
-const REC_CLASS_GET_THIS = 16;
-const REC_CLASS_SET = 17;
-const REC_CLASS_SET_PATH = 18;
-const REC_CLASS_UNSET = 19;
-const REC_CLASS_UNSET_PATH = 20;
-const REC_CLASS_CALL = 21;
-const REC_CLASS_CALL_PATH = 22;
-const REC_CLASS_INVOKE = 23;
-const REC_CLASS_ITERATE_BEGIN = 24;
-const REC_CLASS_ITERATE = 25;
-const REC_POP_FRAME = 26;
-const REC_N_OBJECTS = 27;
-const REC_END_STDOUT = 28;
-const REC_CALL = 29;
-const REC_CALL_THIS = 30;
-const REC_CALL_EVAL = 31;
-const REC_CALL_EVAL_THIS = 32;
-const REC_CALL_ECHO = 33;
-const REC_CALL_INCLUDE = 34;
-const REC_CALL_INCLUDE_ONCE = 35;
-const REC_CALL_REQUIRE = 36;
-const REC_CALL_REQUIRE_ONCE = 37;
+const enum REC
+{	DATA,
+	CONST,
+	GET,
+	GET_THIS,
+	SET,
+	SET_PATH,
+	UNSET,
+	UNSET_PATH,
+	CLASSSTATIC_GET,
+	CLASSSTATIC_GET_THIS,
+	CLASSSTATIC_SET,
+	CLASSSTATIC_SET_PATH,
+	CLASSSTATIC_UNSET,
+	CONSTRUCT,
+	DESTRUCT,
+	CLASS_GET,
+	CLASS_GET_THIS,
+	CLASS_SET,
+	CLASS_SET_PATH,
+	CLASS_UNSET,
+	CLASS_UNSET_PATH,
+	CLASS_CALL,
+	CLASS_CALL_PATH,
+	CLASS_INVOKE,
+	CLASS_ITERATE_BEGIN,
+	CLASS_ITERATE,
+	POP_FRAME,
+	N_OBJECTS,
+	END_STDOUT,
+	CALL,
+	CALL_THIS,
+	CALL_EVAL,
+	CALL_EVAL_THIS,
+	CALL_ECHO,
+	CALL_INCLUDE,
+	CALL_INCLUDE_ONCE,
+	CALL_REQUIRE,
+	CALL_REQUIRE_ONCE,
+}
 
-const RES_ERROR = 1;
-const RES_GET_CLASS = 2;
-const RES_CONSTRUCT = 3;
-const RES_DESTRUCT = 4;
-const RES_CLASS_GET = 5;
-const RES_CLASS_SET = 6;
-const RES_CLASS_CALL = 7;
-const RES_CLASS_INVOKE = 8;
-const RES_CLASS_GET_ITERATOR = 9;
-const RES_CLASS_TO_STRING = 10;
-const RES_CLASS_ISSET = 11;
-const RES_CLASS_UNSET = 12;
-const RES_CLASS_PROPS = 13;
-const RES_CLASSSTATIC_CALL = 14;
-const RES_CALL = 15;
+const enum RES
+{	ERROR = 1,
+	GET_CLASS,
+	CONSTRUCT,
+	DESTRUCT,
+	CLASS_GET,
+	CLASS_SET,
+	CLASS_CALL,
+	CLASS_INVOKE,
+	CLASS_GET_ITERATOR,
+	CLASS_TO_STRING,
+	CLASS_ISSET,
+	CLASS_UNSET,
+	CLASS_PROPS,
+	CLASSSTATIC_CALL,
+	CALL,
+}
 
-const RESTYPE_HAS_ITERATOR = 1;
-const RESTYPE_HAS_LENGTH = 2;
-const RESTYPE_HAS_SIZE = 4;
-const RESTYPE_IS_SCALAR = 8;
-const RESTYPE_IS_ERROR = 16;
+const enum RESTYPE
+{	HAS_ITERATOR = 1,
+	HAS_LENGTH = 2,
+	HAS_SIZE = 4,
+	IS_SCALAR = 8,
+	IS_ERROR = 16,
+}
 
 const RE_BAD_CLASSNAME_FOR_EVAL = /[^\w\\]/;
 
@@ -111,13 +117,13 @@ function get_class_features(symbol: any)
 	if (symbol.prototype)
 	{	let desc = Object.getOwnPropertyDescriptors(symbol.prototype);
 		if (desc.length)
-		{	features |= RESTYPE_HAS_LENGTH;
+		{	features |= RESTYPE.HAS_LENGTH;
 		}
 		if (desc.size) // accessing symbol.prototype.size directly throws error on Map
-		{	features |= RESTYPE_HAS_SIZE;
+		{	features |= RESTYPE.HAS_SIZE;
 		}
 		if (typeof(symbol.prototype[Symbol.iterator])=='function' || typeof(symbol.prototype[Symbol.asyncIterator])=='function')
-		{	features |= RESTYPE_HAS_ITERATOR;
+		{	features |= RESTYPE.HAS_ITERATOR;
 		}
 	}
 	return features;
@@ -127,16 +133,34 @@ function get_inst_features(value: any)
 {	let features = 0;
 	if (value)
 	{	if (typeof(value.length) == 'number')
-		{	features |= RESTYPE_HAS_LENGTH;
+		{	features |= RESTYPE.HAS_LENGTH;
 		}
 		if (typeof(value.size) == 'number')
-		{	features |= RESTYPE_HAS_SIZE;
+		{	features |= RESTYPE.HAS_SIZE;
 		}
 		if (typeof(value[Symbol.iterator])=='function' || typeof(value[Symbol.asyncIterator])=='function')
-		{	features |= RESTYPE_HAS_ITERATOR;
+		{	features |= RESTYPE.HAS_ITERATOR;
 		}
 	}
 	return features;
+}
+
+function dispose_inst(inst: any)
+{	if (typeof(inst.dispose) == 'function')
+	{	try
+		{	let v = inst.dispose();
+			if (v instanceof Promise)
+			{	v.catch
+				(	e =>
+					{	console.error(e);
+					}
+				);
+			}
+		}
+		catch (e)
+		{	console.error(e);
+		}
+	}
 }
 
 export class InterpreterError extends Error
@@ -284,11 +308,11 @@ export class PhpInterpreter
 									{	// case: C
 										// or case: $var
 										return function(prop_name)
-										{	let record_type = REC_CONST;
+										{	let record_type = REC.CONST;
 											let path_str = prop_name;
 											if (prop_name.charAt(0) == '$')
 											{	path_str = path_str.slice(1); // cut '$'
-												record_type = REC_GET;
+												record_type = REC.GET;
 											}
 											return php.write_read(record_type, path_str);
 										};
@@ -297,7 +321,7 @@ export class PhpInterpreter
 									{	// case: A\B\C
 										let path_str = path.join('\\');
 										return function(prop_name)
-										{	return php.write_read(REC_CONST, path_str+'\\'+prop_name);
+										{	return php.write_read(REC.CONST, path_str+'\\'+prop_name);
 										};
 									}
 									else
@@ -309,13 +333,13 @@ export class PhpInterpreter
 										return async function(prop_name)
 										{	if (prop_name != 'this')
 											{	path_2[path_2.length-1] = prop_name;
-												return await php.write_read(REC_GET, path_str+' '+JSON.stringify(path_2));
+												return await php.write_read(REC.GET, path_str+' '+JSON.stringify(path_2));
 											}
 											else
 											{	if (path_2.length >= 2)
 												{	path_str += ' '+JSON.stringify(path_2.slice(0, -1));
 												}
-												return construct(php, await php.write_read(REC_GET_THIS, path_str));
+												return construct(php, await php.write_read(REC.GET_THIS, path_str));
 											}
 										};
 									}
@@ -333,13 +357,13 @@ export class PhpInterpreter
 										{	throw new Error(`Class/namespace names must not contain spaces: ${path_str}`);
 										}
 										return function(prop_name)
-										{	let record_type = REC_CONST;
+										{	let record_type = REC.CONST;
 											let path_str_2 = path_str;
 											if (prop_name.charAt(0) != '$')
 											{	path_str_2 += '::'+prop_name;
 											}
 											else
-											{	record_type = REC_CLASSSTATIC_GET;
+											{	record_type = REC.CLASSSTATIC_GET;
 												if (prop_name.indexOf(' ') != -1)
 												{	throw new Error(`Variable name must not contain spaces: ${path_str_2}::${prop_name}`);
 												}
@@ -366,13 +390,13 @@ export class PhpInterpreter
 										return async function(prop_name)
 										{	if (prop_name != 'this')
 											{	path_2[path_2.length-1] = prop_name;
-												return await php.write_read(REC_CLASSSTATIC_GET, path_str+' '+JSON.stringify(path_2));
+												return await php.write_read(REC.CLASSSTATIC_GET, path_str+' '+JSON.stringify(path_2));
 											}
 											else
 											{	if (path_2.length >= 2)
 												{	path_str += ' '+JSON.stringify(path_2.slice(0, -1));
 												}
-												return construct(php, await php.write_read(REC_CLASSSTATIC_GET_THIS, path_str));
+												return construct(php, await php.write_read(REC.CLASSSTATIC_GET_THIS, path_str));
 											}
 										};
 									}
@@ -398,7 +422,7 @@ export class PhpInterpreter
 									{	path_str += '[';
 									}
 									return function(prop_name, value)
-									{	php.write(REC_SET_PATH, path_str+JSON.stringify(prop_name)+'],'+JSON.stringify(value)+']');
+									{	php.write(REC.SET_PATH, path_str+JSON.stringify(prop_name)+'],'+JSON.stringify(value)+']');
 										return true;
 									};
 								}
@@ -429,7 +453,7 @@ export class PhpInterpreter
 											if (value != null)
 											{	path_str_2 += ' '+JSON.stringify(value);
 											}
-											php.write(REC_CLASSSTATIC_SET, path_str_2);
+											php.write(REC.CLASSSTATIC_SET, path_str_2);
 											return true;
 										};
 									}
@@ -449,7 +473,7 @@ export class PhpInterpreter
 										{	path_str += '[';
 										}
 										return function(prop_name, value)
-										{	php.write(REC_CLASSSTATIC_SET_PATH, path_str+JSON.stringify(prop_name)+'],'+JSON.stringify(value)+']');
+										{	php.write(REC.CLASSSTATIC_SET_PATH, path_str+JSON.stringify(prop_name)+'],'+JSON.stringify(value)+']');
 											return true;
 										};
 									}
@@ -470,7 +494,7 @@ export class PhpInterpreter
 									path_str += ' ';
 									let path_str_2 = path.length==1 ? '' : ' '+JSON.stringify(path.slice(1));
 									return function(prop_name)
-									{	php.write(REC_UNSET_PATH, path_str+prop_name+path_str_2);
+									{	php.write(REC.UNSET_PATH, path_str+prop_name+path_str_2);
 										return true;
 									};
 								}
@@ -492,7 +516,7 @@ export class PhpInterpreter
 									let path_2 = path.slice(var_i+1).concat(['']);
 									return function(prop_name)
 									{	path_2[path_2.length-1] = prop_name;
-										php.write(REC_CLASSSTATIC_UNSET, path_str+JSON.stringify(path_2));
+										php.write(REC.CLASSSTATIC_UNSET, path_str+JSON.stringify(path_2));
 										return true;
 									};
 								}
@@ -518,7 +542,7 @@ export class PhpInterpreter
 													let promise = php.schedule
 													(	async () =>
 														{	if (!is_this)
-															{	await php.do_write(REC_CALL_EVAL, path_str);
+															{	await php.do_write(REC.CALL_EVAL, path_str);
 																return await php.do_read();
 															}
 														}
@@ -528,7 +552,7 @@ export class PhpInterpreter
 														'this',
 														{	async get()
 															{	is_this = true;
-																return construct(php, await php.write_read(REC_CALL_EVAL_THIS, path_str));
+																return construct(php, await php.write_read(REC.CALL_EVAL_THIS, path_str));
 															}
 														}
 													);
@@ -536,35 +560,35 @@ export class PhpInterpreter
 												};
 											case 'echo':
 												return function(args)
-												{	return php.write_read(REC_CALL_ECHO, JSON.stringify([...args]));
+												{	return php.write_read(REC.CALL_ECHO, JSON.stringify([...args]));
 												};
 											case 'include':
 												return function(args)
 												{	if (args.length != 1)
 													{	throw new Error('Invalid number of arguments to include()');
 													}
-													return php.write_read(REC_CALL_INCLUDE, JSON.stringify(args[0]));
+													return php.write_read(REC.CALL_INCLUDE, JSON.stringify(args[0]));
 												};
 											case 'include_once':
 												return function(args)
 												{	if (args.length != 1)
 													{	throw new Error('Invalid number of arguments to include_once()');
 													}
-													return php.write_read(REC_CALL_INCLUDE_ONCE, JSON.stringify(args[0]));
+													return php.write_read(REC.CALL_INCLUDE_ONCE, JSON.stringify(args[0]));
 												};
 											case 'require':
 												return function(args)
 												{	if (args.length != 1)
 													{	throw new Error('Invalid number of arguments to require()');
 													}
-													return php.write_read(REC_CALL_REQUIRE, JSON.stringify(args[0]));
+													return php.write_read(REC.CALL_REQUIRE, JSON.stringify(args[0]));
 												};
 											case 'require_once':
 												return function(args)
 												{	if (args.length != 1)
 													{	throw new Error('Invalid number of arguments to require_once()');
 													}
-													return php.write_read(REC_CALL_REQUIRE_ONCE, JSON.stringify(args[0]));
+													return php.write_read(REC.CALL_REQUIRE_ONCE, JSON.stringify(args[0]));
 												};
 										}
 									}
@@ -591,7 +615,7 @@ export class PhpInterpreter
 									let promise = php.schedule
 									(	async () =>
 										{	if (!is_this)
-											{	await php.do_write(REC_CALL, path_str_2);
+											{	await php.do_write(REC.CALL, path_str_2);
 												return await php.do_read();
 											}
 										}
@@ -601,7 +625,7 @@ export class PhpInterpreter
 										'this',
 										{	async get()
 											{	is_this = true;
-												return construct(php, await php.write_read(REC_CALL_THIS, path_str_2));
+												return construct(php, await php.write_read(REC.CALL_THIS, path_str_2));
 											}
 										}
 									);
@@ -613,7 +637,7 @@ export class PhpInterpreter
 							path =>
 							{	let class_name = path.join('\\');
 								return async function(args)
-								{	return construct(php, await php.write_read(REC_CONSTRUCT, args.length==0 ? class_name : class_name+' '+JSON.stringify([...args])), class_name);
+								{	return construct(php, await php.write_read(REC.CONSTRUCT, args.length==0 ? class_name : class_name+' '+JSON.stringify([...args])), class_name);
 								};
 							},
 
@@ -658,7 +682,7 @@ export class PhpInterpreter
 						if (prop_name.indexOf(' ') != -1)
 						{	throw new Error(`Variable name must not contain spaces: $${prop_name}`);
 						}
-						php.write(REC_SET, value==null ? prop_name : prop_name+' '+JSON.stringify(value));
+						php.write(REC.SET, value==null ? prop_name : prop_name+' '+JSON.stringify(value));
 						return true;
 					},
 
@@ -676,7 +700,7 @@ export class PhpInterpreter
 						if (prop_name.indexOf(' ') != -1)
 						{	throw new Error(`Variable name must not contain spaces: $${prop_name}`);
 						}
-						php.write(REC_UNSET, prop_name);
+						php.write(REC.UNSET, prop_name);
 						return true;
 					}
 				}
@@ -705,7 +729,7 @@ export class PhpInterpreter
 						{	if (prop_name.indexOf(' ') != -1)
 							{	throw new Error(`Property name must not contain spaces: $${prop_name}`);
 							}
-							return php.write_read(REC_CLASS_GET, path_str+prop_name);
+							return php.write_read(REC.CLASS_GET, path_str+prop_name);
 						};
 					}
 					else
@@ -714,13 +738,13 @@ export class PhpInterpreter
 						return async function(prop_name)
 						{	if (prop_name != 'this')
 							{	path_2[path_2.length-1] = prop_name;
-								return await php.write_read(REC_CLASS_GET, path_str+' '+JSON.stringify(path_2));
+								return await php.write_read(REC.CLASS_GET, path_str+' '+JSON.stringify(path_2));
 							}
 							else
 							{	if (path_2.length >= 2)
 								{	path_str += ' '+JSON.stringify(path_2.slice(0, -1));
 								}
-								return construct(php, await php.write_read(REC_CLASS_GET_THIS, path_str));
+								return construct(php, await php.write_read(REC.CLASS_GET_THIS, path_str));
 							}
 						};
 					}
@@ -734,7 +758,7 @@ export class PhpInterpreter
 						{	if (prop_name.indexOf(' ') != -1)
 							{	throw new Error(`Property name must not contain spaces: ${prop_name}`);
 							}
-							php.write(REC_CLASS_SET, value==null ? path_str+prop_name : path_str+prop_name+' '+JSON.stringify(value));
+							php.write(REC.CLASS_SET, value==null ? path_str+prop_name : path_str+prop_name+' '+JSON.stringify(value));
 							return true;
 						};
 					}
@@ -747,7 +771,7 @@ export class PhpInterpreter
 						{	path_str += '[';
 						}
 						return function(prop_name, value)
-						{	php.write(REC_CLASS_SET_PATH, path_str+JSON.stringify(prop_name)+'],'+JSON.stringify(value)+']');
+						{	php.write(REC.CLASS_SET_PATH, path_str+JSON.stringify(prop_name)+'],'+JSON.stringify(value)+']');
 							return true;
 						};
 					}
@@ -759,10 +783,10 @@ export class PhpInterpreter
 					{	let path_str = php_inst_id+'';
 						return function(prop_name)
 						{	if (prop_name == 'this')
-							{	php.write(REC_DESTRUCT, path_str);
+							{	php.write(REC.DESTRUCT, path_str);
 								return true;
 							}
-							php.write(REC_CLASS_UNSET, path_str+' '+prop_name);
+							php.write(REC.CLASS_UNSET, path_str+' '+prop_name);
 							return true;
 						};
 					}
@@ -770,7 +794,7 @@ export class PhpInterpreter
 					{	let path_str = php_inst_id+' ';
 						let path_str_2 = ' '+JSON.stringify(path);
 						return function(prop_name)
-						{	php.write(REC_CLASS_UNSET_PATH, path_str+prop_name+path_str_2);
+						{	php.write(REC.CLASS_UNSET_PATH, path_str+prop_name+path_str_2);
 							return true;
 						};
 					}
@@ -780,7 +804,7 @@ export class PhpInterpreter
 				path =>
 				{	if (path.length == 0)
 					{	return function(args)
-						{	return php.write_read(REC_CLASS_INVOKE, args.length==0 ? php_inst_id+'' : php_inst_id+' '+JSON.stringify([...args]));
+						{	return php.write_read(REC.CLASS_INVOKE, args.length==0 ? php_inst_id+'' : php_inst_id+' '+JSON.stringify([...args]));
 						};
 					}
 					if (path.length == 1)
@@ -792,7 +816,7 @@ export class PhpInterpreter
 						else
 						{	let path_str = php_inst_id+' '+path[0];
 							return function(args)
-							{	return php.write_read(REC_CLASS_CALL, args.length==0 ? path_str : path_str+' '+JSON.stringify([...args]));
+							{	return php.write_read(REC.CLASS_CALL, args.length==0 ? path_str : path_str+' '+JSON.stringify([...args]));
 							};
 						}
 					}
@@ -802,7 +826,7 @@ export class PhpInterpreter
 						}
 						let path_str = php_inst_id+' '+path[path.length-1]+' ['+JSON.stringify(path.slice(0, -1))+',';
 						return function(args)
-						{	return php.write_read(REC_CLASS_CALL_PATH, path_str+JSON.stringify([...args])+']');
+						{	return php.write_read(REC.CLASS_CALL_PATH, path_str+JSON.stringify([...args])+']');
 						};
 					}
 				},
@@ -821,13 +845,13 @@ export class PhpInterpreter
 				path =>
 				{	let path_str = php_inst_id+'';
 					return async function*()
-					{	let [value, done] = await php.write_read(REC_CLASS_ITERATE_BEGIN, path_str);
+					{	let [value, done] = await php.write_read(REC.CLASS_ITERATE_BEGIN, path_str);
 						while (true)
 						{	if (done)
 							{	return;
 							}
 							yield value;
-							[value, done] = await php.write_read(REC_CLASS_ITERATE, path_str);
+							[value, done] = await php.write_read(REC.CLASS_ITERATE, path_str);
 						}
 					};
 				},
@@ -854,7 +878,7 @@ export class PhpInterpreter
 			this.listener = Deno.listen({transport: 'tcp', hostname: '127.0.0.1', port: 0});
 			php_socket = 'tcp://127.0.0.1:'+(this.listener.addr as Deno.NetAddr).port;
 		}
-		// 3. REC_HELO (generate random key)
+		// 3. HELO (generate random key)
 		let key = await get_random_key();
 		let end_mark = get_weak_random_bytes(READER_MUX_END_MARK_LEN);
 		let {init_php_file} = this.settings;
@@ -1062,7 +1086,7 @@ export class PhpInterpreter
 			let type = first_word;
 			let deno_inst_id = view.getUint32(4);
 			let result = buffer.length<=8+padding ? '' : decoder.decode(buffer.subarray(8+padding));
-			if (type == RES_ERROR)
+			if (type == RES.ERROR)
 			{	let [file, line, message, trace] = JSON.parse(result);
 				throw new InterpreterError(message, file, Number(line), trace);
 			}
@@ -1072,13 +1096,13 @@ export class PhpInterpreter
 			try
 			{	this.ongoing_level++;
 				switch (type)
-				{	case RES_GET_CLASS:
+				{	case RES.GET_CLASS:
 					{	let class_name = result;
 						let symbol = class_name in g ? g[class_name] : await this.settings.onsymbol(class_name);
-						data = !symbol ? RESTYPE_IS_ERROR : get_class_features(symbol);
+						data = !symbol ? RESTYPE.IS_ERROR : get_class_features(symbol);
 						break;
 					}
-					case RES_CONSTRUCT:
+					case RES.CONSTRUCT:
 					{	let [class_name, args] = this.json_parse_unserialize_insts(result);
 						let symbol = class_name in g ? g[class_name] : await this.settings.onsymbol(class_name);
 						let deno_inst = new symbol(...args); // can throw error
@@ -1088,58 +1112,59 @@ export class PhpInterpreter
 						data = deno_inst_id;
 						break;
 					}
-					case RES_DESTRUCT:
-					{	this.deno_insts.delete(deno_inst_id);
+					case RES.DESTRUCT:
+					{	dispose_inst(this.deno_insts.get(deno_inst_id));
+						this.deno_insts.delete(deno_inst_id);
 						continue;
 					}
-					case RES_CLASS_GET:
+					case RES.CLASS_GET:
 					{	let name = result;
 						let deno_inst = this.deno_insts.get(deno_inst_id);
 						data = await deno_inst[name]; // can throw error
 						break;
 					}
-					case RES_CLASS_SET:
+					case RES.CLASS_SET:
 					{	let [name, value] = this.json_parse_unserialize_insts(result);
 						let deno_inst = this.deno_insts.get(deno_inst_id);
 						deno_inst[name] = value; // can throw error
 						data = null;
 						break;
 					}
-					case RES_CLASS_CALL:
+					case RES.CLASS_CALL:
 					{	let [name, args] = this.json_parse_unserialize_insts(result);
 						let deno_inst = this.deno_insts.get(deno_inst_id);
 						data = await deno_inst[name](...args); // can throw error
 						break;
 					}
-					case RES_CLASS_INVOKE:
+					case RES.CLASS_INVOKE:
 					{	let args = this.json_parse_unserialize_insts(result);
 						let deno_inst = this.deno_insts.get(deno_inst_id);
 						data = await deno_inst(...args); // can throw error
 						break;
 					}
-					case RES_CLASS_GET_ITERATOR:
+					case RES.CLASS_GET_ITERATOR:
 					{	let deno_inst = this.deno_insts.get(deno_inst_id);
 						data = deno_inst[Symbol.asyncIterator] ? deno_inst[Symbol.asyncIterator]() : deno_inst[Symbol.iterator] ? deno_inst[Symbol.iterator]() : Object.entries(deno_inst)[Symbol.iterator](); // can throw error
 						break;
 					}
-					case RES_CLASS_TO_STRING:
+					case RES.CLASS_TO_STRING:
 					{	let deno_inst = this.deno_insts.get(deno_inst_id);
 						data = deno_inst+''; // can throw error
 						break;
 					}
-					case RES_CLASS_ISSET:
+					case RES.CLASS_ISSET:
 					{	let name = result;
 						let deno_inst = this.deno_insts.get(deno_inst_id);
 						data = deno_inst[name] != null; // can throw error
 						break;
 					}
-					case RES_CLASS_UNSET:
+					case RES.CLASS_UNSET:
 					{	let name = result;
 						let deno_inst = this.deno_insts.get(deno_inst_id);
 						delete deno_inst[name]; // can throw error
 						break;
 					}
-					case RES_CLASS_PROPS:
+					case RES.CLASS_PROPS:
 					{	let deno_inst = this.deno_insts.get(deno_inst_id);
 						let props = [];
 						for (let prop in deno_inst)
@@ -1148,13 +1173,13 @@ export class PhpInterpreter
 						data = JSON.stringify(props);
 						break;
 					}
-					case RES_CLASSSTATIC_CALL:
+					case RES.CLASSSTATIC_CALL:
 					{	let [class_name, name, args] = this.json_parse_unserialize_insts(result);
 						let symbol = class_name in g ? g[class_name] : await this.settings.onsymbol(class_name);
 						data = await symbol[name](...args); // can throw error
 						break;
 					}
-					case RES_CALL:
+					case RES.CALL:
 					{	let [name, args] = this.json_parse_unserialize_insts(result);
 						let symbol = name in g ? g[name] : await this.settings.onsymbol(name);
 						data = await symbol(...args); // can throw error
@@ -1163,7 +1188,7 @@ export class PhpInterpreter
 					default:
 						debug_assert(false);
 				}
-				let result_type = RESTYPE_IS_SCALAR;
+				let result_type = RESTYPE.IS_SCALAR;
 				if (data!=null && (typeof(data)=='object' || typeof(data)=='function'))
 				{	result_type = get_inst_features(data);
 					let deno_inst_id = this.deno_inst_id_enum++;
@@ -1174,7 +1199,7 @@ export class PhpInterpreter
 				data_str = JSON.stringify([result_type, data]);
 			}
 			catch (e)
-			{	data_str = JSON.stringify([RESTYPE_IS_ERROR, {message: e.message}]);
+			{	data_str = JSON.stringify([RESTYPE.IS_ERROR, {message: e.message}]);
 			}
 			finally
 			{	this.ongoing_level--;
@@ -1182,7 +1207,7 @@ export class PhpInterpreter
 				{	this.ongoing.length = this.ongoing_level+1;
 				}
 			}
-			await this.do_write(REC_DATA, data_str);
+			await this.do_write(REC.DATA, data_str);
 		}
 	}
 
@@ -1278,6 +1303,9 @@ export class PhpInterpreter
 		this.is_inited = false;
 		this.last_inst_id = -1;
 		this.stack_frames.length = 0;
+		for (let v of this.deno_insts.values())
+		{	dispose_inst(v);
+		}
 		this.deno_insts.clear();
 		this.deno_insts.set(0, this);
 		this.deno_insts.set(1, globalThis);
@@ -1303,12 +1331,12 @@ export class PhpInterpreter
 		if (last_inst_id == undefined)
 		{	throw new Error('No frames to pop');
 		}
-		await this.do_write(REC_POP_FRAME, last_inst_id+'');
+		await this.do_write(REC.POP_FRAME, last_inst_id+'');
 		this.last_inst_id = last_inst_id;
 	}
 
 	private async do_n_objects()
-	{	await this.do_write(REC_N_OBJECTS, '');
+	{	await this.do_write(REC.N_OBJECTS, '');
 		return await this.do_read();
 	}
 
@@ -1320,7 +1348,7 @@ export class PhpInterpreter
 		{	throw new Error("Set settings.stdout to 'piped' to be able to redirect stdout");
 		}
 		if (this.stdout_mux.is_reading)
-		{	await this.do_write(REC_END_STDOUT, '');
+		{	await this.do_write(REC.END_STDOUT, '');
 		}
 		return await this.stdout_mux.get_reader();
 	}
@@ -1328,7 +1356,7 @@ export class PhpInterpreter
 	private async do_drop_stdout_reader(is_eof=false, no_set_none=false)
 	{	if (this.stdout_mux)
 		{	if (this.stdout_mux.is_reading && !is_eof)
-			{	await this.do_write(REC_END_STDOUT, '');
+			{	await this.do_write(REC.END_STDOUT, '');
 			}
 			if (!no_set_none)
 			{	await this.stdout_mux.set_none();
