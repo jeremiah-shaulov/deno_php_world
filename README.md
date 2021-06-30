@@ -582,7 +582,7 @@ await g.exit();
 ```
 
 For informational purposes there's function that returns number of deno objects, that PHP-side currently holds.
-Initially there're 2: $php and $globalThis ($window == $globalThis).
+Initially there're 2: $php and $globalThis ($window === $globalThis).
 As you request Deno objects, this number will grow, and once you free references, this number will be decreased.
 
 ```ts

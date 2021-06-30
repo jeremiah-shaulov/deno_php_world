@@ -219,39 +219,45 @@ class DenoWorldMain extends DenoWorld
 	private const REC_GET = 2;
 	private const REC_GET_THIS = 3;
 	private const REC_SET = 4;
-	private const REC_SET_PATH = 5;
-	private const REC_UNSET = 6;
-	private const REC_UNSET_PATH = 7;
-	private const REC_CLASSSTATIC_GET = 8;
-	private const REC_CLASSSTATIC_GET_THIS = 9;
-	private const REC_CLASSSTATIC_SET = 10;
-	private const REC_CLASSSTATIC_SET_PATH = 11;
-	private const REC_CLASSSTATIC_UNSET = 12;
-	private const REC_CONSTRUCT = 13;
-	private const REC_DESTRUCT = 14;
-	private const REC_CLASS_GET = 15;
-	private const REC_CLASS_GET_THIS = 16;
-	private const REC_CLASS_SET = 17;
-	private const REC_CLASS_SET_PATH = 18;
-	private const REC_CLASS_UNSET = 19;
-	private const REC_CLASS_UNSET_PATH = 20;
-	private const REC_CLASS_CALL = 21;
-	private const REC_CLASS_CALL_PATH = 22;
-	private const REC_CLASS_INVOKE = 23;
-	private const REC_CLASS_ITERATE_BEGIN = 24;
-	private const REC_CLASS_ITERATE = 25;
-	private const REC_POP_FRAME = 26;
-	private const REC_N_OBJECTS = 27;
-	private const REC_END_STDOUT = 28;
-	private const REC_CALL = 29;
-	private const REC_CALL_THIS = 30;
-	private const REC_CALL_EVAL = 31;
-	private const REC_CALL_EVAL_THIS = 32;
-	private const REC_CALL_ECHO = 33;
-	private const REC_CALL_INCLUDE = 34;
-	private const REC_CALL_INCLUDE_ONCE = 35;
-	private const REC_CALL_REQUIRE = 36;
-	private const REC_CALL_REQUIRE_ONCE = 37;
+	private const REC_SET_INST = 5;
+	private const REC_SET_PATH = 6;
+	private const REC_SET_PATH_INST = 7;
+	private const REC_UNSET = 8;
+	private const REC_UNSET_PATH = 9;
+	private const REC_CLASSSTATIC_GET = 10;
+	private const REC_CLASSSTATIC_GET_THIS = 11;
+	private const REC_CLASSSTATIC_SET = 12;
+	private const REC_CLASSSTATIC_SET_INST = 13;
+	private const REC_CLASSSTATIC_SET_PATH = 14;
+	private const REC_CLASSSTATIC_SET_PATH_INST = 15;
+	private const REC_CLASSSTATIC_UNSET = 16;
+	private const REC_CONSTRUCT = 17;
+	private const REC_DESTRUCT = 18;
+	private const REC_CLASS_GET = 19;
+	private const REC_CLASS_GET_THIS = 20;
+	private const REC_CLASS_SET = 21;
+	private const REC_CLASS_SET_INST = 22;
+	private const REC_CLASS_SET_PATH = 23;
+	private const REC_CLASS_SET_PATH_INST = 24;
+	private const REC_CLASS_UNSET = 25;
+	private const REC_CLASS_UNSET_PATH = 26;
+	private const REC_CLASS_CALL = 27;
+	private const REC_CLASS_CALL_PATH = 28;
+	private const REC_CLASS_INVOKE = 29;
+	private const REC_CLASS_ITERATE_BEGIN = 30;
+	private const REC_CLASS_ITERATE = 31;
+	private const REC_POP_FRAME = 32;
+	private const REC_N_OBJECTS = 33;
+	private const REC_END_STDOUT = 34;
+	private const REC_CALL = 35;
+	private const REC_CALL_THIS = 36;
+	private const REC_CALL_EVAL = 37;
+	private const REC_CALL_EVAL_THIS = 38;
+	private const REC_CALL_ECHO = 39;
+	private const REC_CALL_INCLUDE = 40;
+	private const REC_CALL_INCLUDE_ONCE = 41;
+	private const REC_CALL_REQUIRE = 42;
+	private const REC_CALL_REQUIRE_ONCE = 43;
 
 	public const RES_ERROR = 1;
 	public const RES_GET_CLASS = 2;
@@ -390,8 +396,10 @@ class DenoWorldMain extends DenoWorld
 	}
 
 	private static function follow_path_set(&$value, array $path, $new_value)
-	{	foreach ($path as $p)
-		{	if (is_object($value))
+	{	$last = count($path) - 1;
+		for ($i=0; $i<$last; $i++)
+		{	$p = $path[$i];
+			if (is_object($value))
 			{	if (isset($value->$p))
 				{	$value = &$value->$p;
 				}
@@ -401,13 +409,25 @@ class DenoWorldMain extends DenoWorld
 				}
 			}
 			else
-			{	if (!is_array($value))
-				{	$value = [];
+			{	if (is_array($value))
+				{	$value = &$value[$p];
 				}
-				$value = &$value[$p];
+				else
+				{	$value = [];
+					$value = &$value[$p];
+				}
 			}
 		}
-		$value = $new_value;
+		$p = $path[$last];
+		if (is_object($value))
+		{	$value->$p = $new_value; // this can trigger __set()
+		}
+		else if (is_array($value))
+		{	$value[$p] = $new_value;
+		}
+		else
+		{	$value = [$p => $new_value];
+		}
 	}
 
 	private static function follow_path_unset(&$value, array $path, $last_p)
@@ -609,14 +629,22 @@ class DenoWorldMain extends DenoWorld
 					case self::REC_SET:
 						$data = self::decode_ident_value($data, $prop_name);
 						$GLOBALS[$prop_name] = self::unserialize_insts($data);
-						continue 2;
+						break;
+					case self::REC_SET_INST:
+						$deno_inst_id = self::decode_ident_ident($data, $prop_name);
+						$GLOBALS[$prop_name] = new DenoWorld($deno_inst_id);
+						break;
 					case self::REC_SET_PATH:
 						list($data, $result) = self::decode_ident_value($data, $prop_name);
 						self::follow_path_set($GLOBALS[$prop_name], $data, self::unserialize_insts($result));
-						continue 2;
+						break;
+					case self::REC_SET_PATH_INST:
+						list($data, $deno_inst_id) = self::decode_ident_value($data, $prop_name);
+						self::follow_path_set($GLOBALS[$prop_name], $data, new DenoWorld($deno_inst_id));
+						break;
 					case self::REC_UNSET:
 						unset($GLOBALS[$data]);
-						continue 2;
+						break;
 					case self::REC_UNSET_PATH:
 						$data = self::decode_ident_ident_value($data, $class_name, $prop_name); // $class_name is the first path element, and $prop_name is the last
 						if ($data === null)
@@ -625,7 +653,7 @@ class DenoWorldMain extends DenoWorld
 						else
 						{	self::follow_path_unset($GLOBALS[$class_name], $data, $prop_name);
 						}
-						continue 2;
+						break;
 					case self::REC_CLASSSTATIC_GET:
 						$data = self::decode_ident_ident_value($data, $class_name, $prop_name);
 						try
@@ -655,18 +683,27 @@ class DenoWorldMain extends DenoWorld
 					case self::REC_CLASSSTATIC_SET:
 						$data = self::decode_ident_ident_value($data, $class_name, $prop_name);
 						self::get_reflection($class_name)->setStaticPropertyValue($prop_name, self::unserialize_insts($data));
-						continue 2;
+						break;
+					case self::REC_CLASSSTATIC_SET_INST:
+						$deno_inst_id = self::decode_ident_ident_value($data, $class_name, $prop_name);
+						self::get_reflection($class_name)->setStaticPropertyValue($prop_name, new DenoWorld($deno_inst_id));
+						break;
 					case self::REC_CLASSSTATIC_SET_PATH:
 						list($data, $result) = self::decode_ident_ident_value($data, $class_name, $prop_name);
 						$result = self::unserialize_insts($result);
 						eval('self::follow_path_set('.$class_name.'::$'.'{$prop_name}, $data, $result);');
-						continue 2;
+						break;
+					case self::REC_CLASSSTATIC_SET_PATH_INST:
+						list($data, $deno_inst_id) = self::decode_ident_ident_value($data, $class_name, $prop_name);
+						$deno_inst_id = new DenoWorld($deno_inst_id);
+						eval('self::follow_path_set('.$class_name.'::$'.'{$prop_name}, $data, $deno_inst_id);');
+						break;
 					case self::REC_CLASSSTATIC_UNSET:
 						$data = self::decode_ident_ident_value($data, $class_name, $prop_name);
 						$value = array_pop($data);
 						eval('self::follow_path_unset('.$class_name.'::$'.'{$prop_name}, $data, $value);');
 						$value = null;
-						continue 2;
+						break;
 					case self::REC_CONSTRUCT:
 						$data = self::decode_ident_value($data, $class_name);
 						$data = $data===null ? self::get_reflection($class_name)->newInstance() : self::get_reflection($class_name)->newInstanceArgs(self::unserialize_insts($data));
@@ -720,19 +757,27 @@ class DenoWorldMain extends DenoWorld
 					case self::REC_CLASS_SET:
 						$data = self::decode_ident_ident_value($data, $php_inst_id, $prop_name);
 						self::$php_insts[$php_inst_id]->$prop_name = self::unserialize_insts($data);
-						continue 2;
+						break;
+					case self::REC_CLASS_SET_INST:
+						$deno_inst_id = self::decode_ident_ident_value($data, $php_inst_id, $prop_name);
+						self::$php_insts[$php_inst_id]->$prop_name = new DenoWorld($deno_inst_id);
+						break;
 					case self::REC_CLASS_SET_PATH:
 						list($data, $result) = self::decode_ident_ident_value($data, $php_inst_id, $prop_name);
 						self::follow_path_set(self::$php_insts[$php_inst_id]->$prop_name, $data, self::unserialize_insts($result));
-						continue 2;
+						break;
+					case self::REC_CLASS_SET_PATH_INST:
+						list($data, $deno_inst_id) = self::decode_ident_ident_value($data, $php_inst_id, $prop_name);
+						self::follow_path_set(self::$php_insts[$php_inst_id]->$prop_name, $data, new DenoWorld($deno_inst_id));
+						break;
 					case self::REC_CLASS_UNSET:
 						$prop_name = self::decode_ident_ident($data, $php_inst_id);
 						unset(self::$php_insts[$php_inst_id]->$prop_name);
-						continue 2;
+						break;
 					case self::REC_CLASS_UNSET_PATH:
 						$data = self::decode_ident_ident_value($data, $php_inst_id, $prop_name);
 						self::follow_path_unset(self::$php_insts[$php_inst_id], $data, $prop_name);
-						continue 2;
+						break;
 					case self::REC_CLASS_CALL:
 						$data = self::decode_ident_ident_value($data, $php_inst_id, $prop_name);
 						$result = $data===null ? call_user_func([self::$php_insts[$php_inst_id], $prop_name]) : call_user_func_array([self::$php_insts[$php_inst_id], $prop_name], self::unserialize_insts($data));

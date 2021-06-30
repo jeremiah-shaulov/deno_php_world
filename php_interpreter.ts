@@ -5,7 +5,7 @@ import {ReaderMux} from './reader_mux.ts';
 import {fcgi, ResponseWithCookies, writeAll, exists} from './deps.ts';
 
 const PHP_CLI_NAME_DEFAULT = 'php';
-const DEBUG_PHP_BOOT = false;
+const DEBUG_PHP_BOOT = true;
 const READER_MUX_END_MARK_LEN = 32;
 const DEFAULT_KEEP_ALIVE_TIMEOUT = 10000;
 
@@ -15,20 +15,26 @@ const enum REC
 	GET,
 	GET_THIS,
 	SET,
+	SET_INST,
 	SET_PATH,
+	SET_PATH_INST,
 	UNSET,
 	UNSET_PATH,
 	CLASSSTATIC_GET,
 	CLASSSTATIC_GET_THIS,
 	CLASSSTATIC_SET,
+	CLASSSTATIC_SET_INST,
 	CLASSSTATIC_SET_PATH,
+	CLASSSTATIC_SET_PATH_INST,
 	CLASSSTATIC_UNSET,
 	CONSTRUCT,
 	DESTRUCT,
 	CLASS_GET,
 	CLASS_GET_THIS,
 	CLASS_SET,
+	CLASS_SET_INST,
 	CLASS_SET_PATH,
+	CLASS_SET_PATH_INST,
 	CLASS_UNSET,
 	CLASS_UNSET_PATH,
 	CLASS_CALL,
@@ -83,7 +89,7 @@ const symbol_php_object = Symbol('php_object');
 const encoder = new TextEncoder;
 const decoder = new TextDecoder;
 
-fcgi.on('error', (e: Error) => {console.error(e)});
+fcgi.onError(e => {console.error(e)});
 
 async function get_random_key(): Promise<string>
 {	if (await exists('/dev/urandom'))
@@ -422,7 +428,15 @@ export class PhpInterpreter
 									{	path_str += '[';
 									}
 									return function(prop_name, value)
-									{	php.write(REC.SET_PATH, path_str+JSON.stringify(prop_name)+'],'+JSON.stringify(value)+']');
+									{	if (value == null)
+										{	php.write_read(REC.SET_PATH, path_str+JSON.stringify(prop_name)+'],null]');
+										}
+										else if (typeof(value) == 'object')
+										{	php.write_read(REC.SET_PATH_INST, path_str+JSON.stringify(prop_name)+'],'+php.new_deno_inst(value)+']');
+										}
+										else
+										{	php.write_read(REC.SET_PATH, path_str+JSON.stringify(prop_name)+'],'+JSON.stringify(value)+']');
+										}
 										return true;
 									};
 								}
@@ -450,10 +464,15 @@ export class PhpInterpreter
 											if (prop_name.charAt(0) != '$')
 											{	throw new Error(`Cannot set this object: ${path_2.join('.')}`);
 											}
-											if (value != null)
-											{	path_str_2 += ' '+JSON.stringify(value);
+											if (value == null)
+											{	php.write_read(REC.CLASSSTATIC_SET, path_str_2);
 											}
-											php.write(REC.CLASSSTATIC_SET, path_str_2);
+											else if (typeof(value) == 'object')
+											{	php.write_read(REC.CLASSSTATIC_SET_INST, path_str_2+' '+php.new_deno_inst(value));
+											}
+											else
+											{	php.write_read(REC.CLASSSTATIC_SET, path_str_2+' '+JSON.stringify(value));
+											}
 											return true;
 										};
 									}
@@ -473,7 +492,15 @@ export class PhpInterpreter
 										{	path_str += '[';
 										}
 										return function(prop_name, value)
-										{	php.write(REC.CLASSSTATIC_SET_PATH, path_str+JSON.stringify(prop_name)+'],'+JSON.stringify(value)+']');
+										{	if (value == null)
+											{	php.write_read(REC.CLASSSTATIC_SET_PATH, path_str+JSON.stringify(prop_name)+'],null]');
+											}
+											else if (typeof(value) == 'object')
+											{	php.write_read(REC.CLASSSTATIC_SET_PATH_INST, path_str+JSON.stringify(prop_name)+'],'+php.new_deno_inst(value)+']');
+											}
+											else
+											{	php.write_read(REC.CLASSSTATIC_SET_PATH, path_str+JSON.stringify(prop_name)+'],'+JSON.stringify(value)+']');
+											}
 											return true;
 										};
 									}
@@ -494,7 +521,7 @@ export class PhpInterpreter
 									path_str += ' ';
 									let path_str_2 = path.length==1 ? '' : ' '+JSON.stringify(path.slice(1));
 									return function(prop_name)
-									{	php.write(REC.UNSET_PATH, path_str+prop_name+path_str_2);
+									{	php.write_read(REC.UNSET_PATH, path_str+prop_name+path_str_2);
 										return true;
 									};
 								}
@@ -516,7 +543,7 @@ export class PhpInterpreter
 									let path_2 = path.slice(var_i+1).concat(['']);
 									return function(prop_name)
 									{	path_2[path_2.length-1] = prop_name;
-										php.write(REC.CLASSSTATIC_UNSET, path_str+JSON.stringify(path_2));
+										php.write_read(REC.CLASSSTATIC_UNSET, path_str+JSON.stringify(path_2));
 										return true;
 									};
 								}
@@ -682,7 +709,15 @@ export class PhpInterpreter
 						if (prop_name.indexOf(' ') != -1)
 						{	throw new Error(`Variable name must not contain spaces: $${prop_name}`);
 						}
-						php.write(REC.SET, value==null ? prop_name : prop_name+' '+JSON.stringify(value));
+						if (value == null)
+						{	php.write_read(REC.SET, prop_name);
+						}
+						else if (typeof(value) == 'object')
+						{	php.write_read(REC.SET_INST, prop_name+' '+php.new_deno_inst(value));
+						}
+						else
+						{	php.write_read(REC.SET, prop_name+' '+JSON.stringify(value));
+						}
 						return true;
 					},
 
@@ -700,7 +735,7 @@ export class PhpInterpreter
 						if (prop_name.indexOf(' ') != -1)
 						{	throw new Error(`Variable name must not contain spaces: $${prop_name}`);
 						}
-						php.write(REC.UNSET, prop_name);
+						php.write_read(REC.UNSET, prop_name);
 						return true;
 					}
 				}
@@ -758,7 +793,15 @@ export class PhpInterpreter
 						{	if (prop_name.indexOf(' ') != -1)
 							{	throw new Error(`Property name must not contain spaces: ${prop_name}`);
 							}
-							php.write(REC.CLASS_SET, value==null ? path_str+prop_name : path_str+prop_name+' '+JSON.stringify(value));
+							if (value == null)
+							{	php.write_read(REC.CLASS_SET, path_str+prop_name);
+							}
+							else if (typeof(value) == 'object')
+							{	php.write_read(REC.CLASS_SET_INST, path_str+prop_name+' '+php.new_deno_inst(value));
+							}
+							else
+							{	php.write_read(REC.CLASS_SET, path_str+prop_name+' '+JSON.stringify(value));
+							}
 							return true;
 						};
 					}
@@ -771,7 +814,15 @@ export class PhpInterpreter
 						{	path_str += '[';
 						}
 						return function(prop_name, value)
-						{	php.write(REC.CLASS_SET_PATH, path_str+JSON.stringify(prop_name)+'],'+JSON.stringify(value)+']');
+						{	if (value == null)
+							{	php.write_read(REC.CLASS_SET_PATH, path_str+JSON.stringify(prop_name)+'],null]');
+							}
+							else if (typeof(value) == 'object')
+							{	php.write_read(REC.CLASS_SET_PATH_INST, path_str+JSON.stringify(prop_name)+'],'+php.new_deno_inst(value)+']');
+							}
+							else
+							{	php.write_read(REC.CLASS_SET_PATH, path_str+JSON.stringify(prop_name)+'],'+JSON.stringify(value)+']');
+							}
 							return true;
 						};
 					}
@@ -786,7 +837,7 @@ export class PhpInterpreter
 							{	php.write(REC.DESTRUCT, path_str);
 								return true;
 							}
-							php.write(REC.CLASS_UNSET, path_str+' '+prop_name);
+							php.write_read(REC.CLASS_UNSET, path_str+' '+prop_name);
 							return true;
 						};
 					}
@@ -794,7 +845,7 @@ export class PhpInterpreter
 					{	let path_str = php_inst_id+' ';
 						let path_str_2 = ' '+JSON.stringify(path);
 						return function(prop_name)
-						{	php.write(REC.CLASS_UNSET_PATH, path_str+prop_name+path_str_2);
+						{	php.write_read(REC.CLASS_UNSET_PATH, path_str+prop_name+path_str_2);
 							return true;
 						};
 					}
@@ -1106,10 +1157,7 @@ export class PhpInterpreter
 					{	let [class_name, args] = this.json_parse_unserialize_insts(result);
 						let symbol = class_name in g ? g[class_name] : await this.settings.onsymbol(class_name);
 						let deno_inst = new symbol(...args); // can throw error
-						let deno_inst_id = this.deno_inst_id_enum++;
-						this.deno_inst_id_enum &= 0x7FFFFFFF;
-						this.deno_insts.set(deno_inst_id, deno_inst);
-						data = deno_inst_id;
+						data = this.new_deno_inst(deno_inst);
 						break;
 					}
 					case RES.DESTRUCT:
@@ -1191,10 +1239,7 @@ export class PhpInterpreter
 				let result_type = RESTYPE.IS_SCALAR;
 				if (data!=null && (typeof(data)=='object' || typeof(data)=='function'))
 				{	result_type = get_inst_features(data);
-					let deno_inst_id = this.deno_inst_id_enum++;
-					this.deno_inst_id_enum &= 0x7FFFFFFF;
-					this.deno_insts.set(deno_inst_id, data);
-					data = deno_inst_id;
+					data = this.new_deno_inst(data);
 				}
 				data_str = JSON.stringify([result_type, data]);
 			}
@@ -1209,6 +1254,13 @@ export class PhpInterpreter
 			}
 			await this.do_write(REC.DATA, data_str);
 		}
+	}
+
+	private new_deno_inst(data: any)
+	{	let deno_inst_id = this.deno_inst_id_enum++;
+		this.deno_inst_id_enum &= 0x7FFFFFFF;
+		this.deno_insts.set(deno_inst_id, data);
+		return deno_inst_id;
 	}
 
 	private json_parse_unserialize_insts(json: string)

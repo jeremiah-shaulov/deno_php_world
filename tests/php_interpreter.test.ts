@@ -90,6 +90,37 @@ Deno.test
 			await php.g.eval('global $я; $я = 10;');
 			assertEquals(await g.$я, 10);
 
+			let deno_obj = {a: {b: {c: 10}}};
+			g.$var = deno_obj;
+			assertEquals((await g.$var) === deno_obj, true);
+			delete g.$var.a.b.c;
+			assertEquals(await g.$var, {a: {b: {}}});
+			g.$var['a']['b'] = 'Hello all';
+			await php.ready();
+			assertEquals(deno_obj, {a: {b: 'Hello all'}});
+			g.$_SERVER['hello']['world'] = deno_obj;
+			assertEquals((await g.$_SERVER['hello']['world']) === deno_obj, true);
+
+			await php_eval
+			(	`	global $var;
+
+					if (!($var instanceof DenoWorld) or !isset($var['a']['b']))
+					{	throw new Exception("Invalid value");
+					}
+
+					$var = ['a' => ['b' => ['c' => 10]]];
+				`
+			);
+			assertEquals(await g.$var, {a: {b: {c: 10}}});
+			delete g.$var.a.b.c;
+			assertEquals(await g.$var, {a: {b: {}}});
+			g.$var['a'] = 'Hello all';
+			assertEquals(await g.$var, {a: 'Hello all'});
+			g.$var['a']['b'] = 'Hello all';
+			assertEquals(await g.$var, {a: {b: 'Hello all'}});
+			g.$var['a']['b'] = null;
+			assertEquals(await g.$var, {a: {b: null}});
+
 			await exit();
 		}
 		php.close_idle();
@@ -143,6 +174,7 @@ Deno.test
 					{	public const TEN = 10;
 						public static $var = 'hello';
 						public static $var2;
+						public static $var3 = ['prop' => 'value'];
 						public static function get_eleven()
 						{	return 11;
 						}
@@ -164,17 +196,39 @@ Deno.test
 			C.$var = 3;
 			assertEquals(await C.$var, 3);
 
+			assertEquals(await C.$var3['prop'], 'value');
+
 			assertEquals(await C.get_eleven(), 11);
 
-			C.$var2 = {a: {b: {c: 10}}};
-			assertEquals(await C.$var2, {a: {b: {c: 10}}});
-			assertEquals(await C.$var2['a'], {b: {c: 10}});
-			assertEquals(await C.$var2['a']['b']['c'], 10);
-
+			let deno_obj = {a: {b: {c: 10}}};
+			C.$var2 = deno_obj;
+			assertEquals((await C.$var2) === deno_obj, true);
+			delete C.$var2.a.b.c;
+			assertEquals(await C.$var2, {a: {b: {}}});
 			C.$var2['a']['b'] = 'Hello all';
-			assertEquals(await C.$var2, {a: {b: 'Hello all'}});
+			await php.ready();
+			assertEquals(deno_obj, {a: {b: 'Hello all'}});
+			let deno_obj_2 = {a: {b: {c: 11}}};
+			C.$var2['a']['b'] = deno_obj_2;
+			assertEquals((await C.$var2['a']['b']) == deno_obj_2, true);
+
+			await php_eval
+			(	`	if (!(C::$var2 instanceof DenoWorld) or !isset(C::$var2['a']['b']))
+					{	throw new Exception("Invalid value");
+					}
+
+					C::$var2 = ['a' => ['b' => ['c' => 10]]];
+				`
+			);
+			assertEquals(await C.$var2, {a: {b: {c: 10}}});
+			delete C.$var2.a.b.c;
+			assertEquals(await C.$var2, {a: {b: {}}});
 			C.$var2['a'] = 'Hello all';
 			assertEquals(await C.$var2, {a: 'Hello all'});
+			C.$var2['a']['b']['c'] = null;
+			assertEquals(await C.$var2, {a: {b: {c: null}}});
+			C.$var2 = null;
+			assertEquals(await C.$var2, null);
 
 			// invalid usage:
 			let error = null;
@@ -281,10 +335,20 @@ Deno.test
 			assertEquals(await obj.var, 12);
 			assertEquals(await obj.get_twice_var('hello'), 24);
 
+			obj.a.b.cc = true;
+			obj.a.bb = true;
+			assertEquals(await obj.a, {b: {cc: true}, bb: true});
+			assertEquals(await obj.a.b, {cc: true});
+
 			obj.a.b.cc = [true];
 			obj.a.bb = [true];
 			assertEquals(await obj.a, {b: {cc: [true]}, bb: [true]});
 			assertEquals(await obj.a.b, {cc: [true]});
+
+			obj.a.b.cc = null;
+			obj.a.bb = null;
+			assertEquals(await obj.a, {b: {cc: null}, bb: null});
+			assertEquals(await obj.a.b, {cc: null});
 
 			assertEquals(await obj.for_c2.key.twice(3), 6);
 			assertEquals(await obj.for_c2_num[0].twice(3), 6);
@@ -298,6 +362,10 @@ Deno.test
 
 			assertEquals(await obj('a', 3), 'a/3');
 			assertEquals(await obj(), 'default a/default b');
+
+			let deno_obj = {a: {b: {c: 12}}};
+			obj.hello = deno_obj;
+			assertEquals((await obj.hello) == deno_obj, true);
 
 			delete obj.this;
 			delete obj_2.this;
@@ -524,7 +592,21 @@ Deno.test
 			delete g.$tmp;
 			assertEquals(await g.$tmp, undefined);
 
-			g.$tmp = ['a', 'b', {value: 'c'}];
+			let deno_obj = ['a', 'b', {value: 'c'}];
+			g.$tmp = deno_obj;
+			assertEquals((await g.$tmp) === deno_obj, true);
+			delete g.$tmp[2]['value'];
+			assertEquals(await g.$tmp, ['a', 'b', {}]);
+
+			await php_eval
+			(	`	global $tmp;
+					if (!($tmp instanceof DenoWorld) or $tmp[1]!='b')
+					{	throw new Exception("Invalid value");
+					}
+
+					$tmp = ['a', 'b', ['value' => 'c']];
+				`
+			);
 			assertEquals(await g.$tmp, ['a', 'b', {value: 'c'}]);
 			delete g.$tmp[2]['value'];
 			assertEquals(await g.$tmp, ['a', 'b', {}]);
@@ -990,8 +1072,20 @@ Deno.test
 
 				php.pop_frame();
 				assertEquals(await php.n_objects(), 0);
+
+				let error;
+				try
+				{	php.pop_frame();
+					await php.ready();
+				}
+				catch (e)
+				{	error = e;
+				}
+				assertEquals(error?.message, 'No frames to pop');
 			}
 
+			await g.exit();
+			php.push_frame();
 			await g.exit();
 		}
 		php.close_idle();
@@ -1575,6 +1669,81 @@ Deno.test
 		}
 		assert(error);
 
+		let dispose_called = false;
+		let dispose_called_2 = false;
+		settings.onsymbol = name =>
+		{	if (name == 'Scientific')
+			{	class Scientific
+				{	constructor(public n=0)
+					{
+					}
+
+					twice()
+					{	return this.n*2;
+					}
+
+					dispose()
+					{	dispose_called = true;
+						throw new Error('This exception in dispose() must be ignored');
+					}
+				}
+				return Scientific;
+			}
+			else if (name == 'Scientific2')
+			{	class Scientific2
+				{	constructor(public n=0)
+					{
+					}
+
+					quad()
+					{	return this.n*4;
+					}
+
+					async dispose()
+					{	dispose_called_2 = true;
+						throw new Error('This exception in dispose() must be ignored');
+					}
+
+					toString()
+					{	return 'This is Scientific2';
+					}
+				}
+				return Scientific2;
+			}
+			else if (name == 'get_get_hello')
+			{	function get_get_hello()
+				{	function get_hello()
+					{	return 'hello';
+					}
+					return get_hello;
+				}
+				return get_get_hello;
+			}
+		};
+		await g.eval
+		(	`	global $var, $var2, $var3, $var4;
+
+				use DenoWorld\\Scientific, DenoWorld\\Scientific2;
+
+				$obj = new Scientific(10);
+				$var = $obj->twice();
+
+				$obj = new Scientific2(10);
+				$var2 = $obj->quad();
+
+				$var3 = "$obj";
+
+				$get_hello = DenoWorld::get_get_hello();
+				$var4 = $get_hello();
+			`
+		);
+		assertEquals(await g.$var, 20);
+		assertEquals(dispose_called, true);
+		assertEquals(await g.$var2, 40);
+		assertEquals(dispose_called_2, true);
+		assertEquals(await g.$var3, 'This is Scientific2');
+		assertEquals(await g.$var4, 'hello');
+
 		await g.exit();
 		php.close_idle();
 	}
@@ -1676,7 +1845,7 @@ Deno.test
 
 			proxy.stop();
 
-			await fcgi.on('end');
+			await fcgi.onEnd();
 		}
 		finally
 		{	await Deno.remove(tmp_name);

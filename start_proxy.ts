@@ -57,7 +57,7 @@ export function start_proxy(options: ProxyOptions)
 	let set_unix_socket_name = unix_socket_name ?? default_settings.unix_socket_name;
 
 	if (onerror)
-	{	fcgi.on('error', onerror);
+	{	fcgi.onError(onerror);
 	}
 
 	fcgi.options
@@ -90,9 +90,8 @@ export function start_proxy(options: ProxyOptions)
 		}
 	);
 
-	fcgi.on
-	(	'end',
-		() =>
+	fcgi.onEnd
+	(	() =>
 		{	new PhpInterpreter().close_idle();
 			onend?.();
 		}
