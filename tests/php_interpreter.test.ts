@@ -8,6 +8,18 @@ const {MainNs, C} = c;
 const PHP_FPM_LISTEN = '/run/php/php-fpm.jeremiah.sock';
 const UNIX_SOCKET_NAME = '/tmp/deno-php-world-test.sock';
 
+class DenoA
+{	constructor(public a: any)
+	{
+	}
+}
+
+class DenoArray extends Array
+{	constructor(...args: any)
+	{	super(...args);
+	}
+}
+
 function *settings_iter(settings: PhpSettings)
 {	for (let listen of ['', PHP_FPM_LISTEN])
 	{	settings.php_fpm.listen = listen;
@@ -90,7 +102,11 @@ Deno.test
 			await php.g.eval('global $я; $я = 10;');
 			assertEquals(await g.$я, 10);
 
-			let deno_obj = {a: {b: {c: 10}}};
+			let deno_obj: any = {a: {b: {c: 10}}};
+			g.$var = deno_obj;
+			assertEquals((await g.$var) === deno_obj, false);
+			assertEquals(await g.$var, {a: {b: {c: 10}}});
+			deno_obj = new DenoA({b: {c: 10}});
 			g.$var = deno_obj;
 			assertEquals((await g.$var) === deno_obj, true);
 			delete g.$var.a.b.c;
@@ -200,7 +216,11 @@ Deno.test
 
 			assertEquals(await C.get_eleven(), 11);
 
-			let deno_obj = {a: {b: {c: 10}}};
+			let deno_obj: any = {a: {b: {c: 10}}};
+			C.$var2 = deno_obj;
+			assertEquals((await C.$var2) === deno_obj, false);
+			assertEquals(await C.$var2, {a: {b: {c: 10}}});
+			deno_obj = new DenoA({b: {c: 10}});
 			C.$var2 = deno_obj;
 			assertEquals((await C.$var2) === deno_obj, true);
 			delete C.$var2.a.b.c;
@@ -208,7 +228,7 @@ Deno.test
 			C.$var2['a']['b'] = 'Hello all';
 			await php.ready();
 			assertEquals(deno_obj, {a: {b: 'Hello all'}});
-			let deno_obj_2 = {a: {b: {c: 11}}};
+			let deno_obj_2 = new DenoA({b: {c: 11}});
 			C.$var2['a']['b'] = deno_obj_2;
 			assertEquals((await C.$var2['a']['b']) == deno_obj_2, true);
 
@@ -301,11 +321,13 @@ Deno.test
 	{	for (let _ of settings_iter(settings))
 		{	await php_eval
 			(	`	class C
-					{	public $var = 10;
+					{	public $arg_value;
+						public $var = 10;
 						public $for_c2;
 
-						function __construct()
-						{	$this->for_c2 = ['key' => new C2];
+						function __construct($arg)
+						{	$this->arg_value = $arg->get_value();
+							$this->for_c2 = ['key' => new C2];
 							$this->for_c2_num = [new C2, new C2];
 						}
 
@@ -326,7 +348,15 @@ Deno.test
 				`
 			);
 
-			let obj = await new C;
+			class DenoClass
+			{	get_value()
+				{	return 'the value';
+				}
+			}
+
+			let obj = await new C(new DenoClass);
+
+			assertEquals(await obj.arg_value, 'the value');
 
 			assertEquals(await obj.var, 10);
 			assertEquals(await obj.get_twice_var(), 20);
@@ -363,9 +393,15 @@ Deno.test
 			assertEquals(await obj('a', 3), 'a/3');
 			assertEquals(await obj(), 'default a/default b');
 
-			let deno_obj = {a: {b: {c: 12}}};
+			let deno_obj: any = {a: {b: {c: 12}}};
+			obj.hello = deno_obj;
+			assertEquals((await obj.hello) == deno_obj, false);
+			assertEquals(await obj.hello, {a: {b: {c: 12}}});
+			deno_obj = new DenoA({b: {c: 12}});
 			obj.hello = deno_obj;
 			assertEquals((await obj.hello) == deno_obj, true);
+			obj.one.two = deno_obj;
+			assertEquals((await obj.one.two) == deno_obj, true);
 
 			delete obj.this;
 			delete obj_2.this;
@@ -592,7 +628,11 @@ Deno.test
 			delete g.$tmp;
 			assertEquals(await g.$tmp, undefined);
 
-			let deno_obj = ['a', 'b', {value: 'c'}];
+			let deno_obj: any = ['a', 'b', {value: 'c'}];
+			g.$tmp = deno_obj;
+			assertEquals((await g.$tmp) === deno_obj, false);
+			assertEquals(await g.$tmp, ['a', 'b', {value: 'c'}]);
+			deno_obj = new DenoArray('a', 'b', {value: 'c'});
 			g.$tmp = deno_obj;
 			assertEquals((await g.$tmp) === deno_obj, true);
 			delete g.$tmp[2]['value'];
@@ -1851,5 +1891,48 @@ Deno.test
 		{	await Deno.remove(tmp_name);
 		}
 		php.close_idle();
+	}
+);
+
+Deno.test
+(	'Settings',
+	async () =>
+	{	let php = new PhpInterpreter
+		(	{	php_cli_name: 'hello php_cli_name',
+				php_fpm:
+				{	listen: 'hello listen',
+					keep_alive_timeout: 1234,
+					keep_alive_max: 2345,
+				}
+			}
+		);
+		assertEquals(php.settings.php_cli_name, 'hello php_cli_name');
+		assertEquals(php.settings.php_fpm.listen, 'hello listen');
+		assertEquals(php.settings.php_fpm.keep_alive_timeout, 1234);
+		assertEquals(php.settings.php_fpm.keep_alive_max, 2345);
+	}
+);
+
+Deno.test
+(	'json_encode',
+	async () =>
+	{	class DenoClass
+		{	str = 'default str';
+			arr = [1, 2, 'three'];
+		}
+
+		let res = await php.g.json_encode(new DenoClass);
+		assertEquals(JSON.parse(res), {str: 'default str', arr: [1, 2, 'three']});
+
+		php.g.eval
+		(	`	function new_json_encode($value)
+				{	return json_encode($value);
+				}
+			`
+		);
+		res = await php.g.new_json_encode(new DenoClass);
+		assertEquals(JSON.parse(res), {str: 'default str', arr: [1, 2, 'three']});
+
+		await php.g.exit();
 	}
 );

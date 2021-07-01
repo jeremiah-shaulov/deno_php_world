@@ -72,6 +72,7 @@ const enum RES
 	CLASS_PROPS,
 	CLASSSTATIC_CALL,
 	CALL,
+	JSON_ENCODE,
 }
 
 const enum RESTYPE
@@ -428,7 +429,7 @@ export class PhpInterpreter
 									{	if (value == null)
 										{	php.write_read(REC.SET_PATH, path_str+' ['+path_str_2+JSON.stringify(prop_name)+'],null]');
 										}
-										else if (typeof(value) == 'object')
+										else if (typeof(value)=='object' && value.constructor!=Object && value.constructor!=Array)
 										{	php.write_read(REC.SET_PATH_INST, path_str+' '+php.new_deno_inst(value)+' '+path_str_2+JSON.stringify(prop_name)+']');
 										}
 										else
@@ -464,7 +465,7 @@ export class PhpInterpreter
 											if (value == null)
 											{	php.write_read(REC.CLASSSTATIC_SET, path_str_2);
 											}
-											else if (typeof(value) == 'object')
+											else if (typeof(value)=='object' && value.constructor!=Object && value.constructor!=Array)
 											{	php.write_read(REC.CLASSSTATIC_SET_INST, path_str_2+' '+php.new_deno_inst(value));
 											}
 											else
@@ -492,7 +493,7 @@ export class PhpInterpreter
 										{	if (value == null)
 											{	php.write_read(REC.CLASSSTATIC_SET_PATH, path_str+JSON.stringify(prop_name)+'],null]');
 											}
-											else if (typeof(value) == 'object')
+											else if (typeof(value)=='object' && value.constructor!=Object && value.constructor!=Array)
 											{	php.write_read(REC.CLASSSTATIC_SET_PATH_INST, path_str+JSON.stringify(prop_name)+'],'+php.new_deno_inst(value)+']');
 											}
 											else
@@ -584,7 +585,7 @@ export class PhpInterpreter
 												};
 											case 'echo':
 												return function(args)
-												{	return php.write_read(REC.CALL_ECHO, JSON.stringify([...args]));
+												{	return php.write_read(REC.CALL_ECHO, php.json_stringify_serialize_insts(args));
 												};
 											case 'include':
 												return function(args)
@@ -633,7 +634,7 @@ export class PhpInterpreter
 								return function(args)
 								{	let path_str_2 = path_str;
 									if (args.length != 0)
-									{	path_str_2 += ' '+JSON.stringify([...args]);
+									{	path_str_2 += ' '+php.json_stringify_serialize_insts(args);
 									}
 									let is_this = false;
 									let promise = php.schedule
@@ -661,7 +662,7 @@ export class PhpInterpreter
 							path =>
 							{	let class_name = path.join('\\');
 								return async function(args)
-								{	return construct(php, await php.write_read(REC.CONSTRUCT, args.length==0 ? class_name : class_name+' '+JSON.stringify([...args])), class_name);
+								{	return construct(php, await php.write_read(REC.CONSTRUCT, args.length==0 ? class_name : class_name+' '+php.json_stringify_serialize_insts(args)), class_name);
 								};
 							},
 
@@ -709,7 +710,7 @@ export class PhpInterpreter
 						if (value == null)
 						{	php.write_read(REC.SET, prop_name);
 						}
-						else if (typeof(value) == 'object')
+						else if (typeof(value)=='object' && value.constructor!=Object && value.constructor!=Array)
 						{	php.write_read(REC.SET_INST, prop_name+' '+php.new_deno_inst(value));
 						}
 						else
@@ -793,7 +794,7 @@ export class PhpInterpreter
 							if (value == null)
 							{	php.write_read(REC.CLASS_SET, path_str+prop_name);
 							}
-							else if (typeof(value) == 'object')
+							else if (typeof(value)=='object' && value.constructor!=Object && value.constructor!=Array)
 							{	php.write_read(REC.CLASS_SET_INST, path_str+prop_name+' '+php.new_deno_inst(value));
 							}
 							else
@@ -814,7 +815,7 @@ export class PhpInterpreter
 						{	if (value == null)
 							{	php.write_read(REC.CLASS_SET_PATH, path_str+JSON.stringify(prop_name)+'],null]');
 							}
-							else if (typeof(value) == 'object')
+							else if (typeof(value)=='object' && value.constructor!=Object && value.constructor!=Array)
 							{	php.write_read(REC.CLASS_SET_PATH_INST, path_str+JSON.stringify(prop_name)+'],'+php.new_deno_inst(value)+']');
 							}
 							else
@@ -852,7 +853,7 @@ export class PhpInterpreter
 				path =>
 				{	if (path.length == 0)
 					{	return function(args)
-						{	return php.write_read(REC.CLASS_INVOKE, args.length==0 ? php_inst_id+'' : php_inst_id+' '+JSON.stringify([...args]));
+						{	return php.write_read(REC.CLASS_INVOKE, args.length==0 ? php_inst_id+'' : php_inst_id+' '+php.json_stringify_serialize_insts(args));
 						};
 					}
 					if (path.length == 1)
@@ -864,7 +865,7 @@ export class PhpInterpreter
 						else
 						{	let path_str = php_inst_id+' '+path[0];
 							return function(args)
-							{	return php.write_read(REC.CLASS_CALL, args.length==0 ? path_str : path_str+' '+JSON.stringify([...args]));
+							{	return php.write_read(REC.CLASS_CALL, args.length==0 ? path_str : path_str+' '+php.json_stringify_serialize_insts(args));
 							};
 						}
 					}
@@ -874,7 +875,7 @@ export class PhpInterpreter
 						}
 						let path_str = php_inst_id+' '+path[path.length-1]+' ['+JSON.stringify(path.slice(0, -1))+',';
 						return function(args)
-						{	return php.write_read(REC.CLASS_CALL_PATH, path_str+JSON.stringify([...args])+']');
+						{	return php.write_read(REC.CLASS_CALL_PATH, path_str+php.json_stringify_serialize_insts(args)+']');
 						};
 					}
 				},
@@ -1230,6 +1231,11 @@ export class PhpInterpreter
 						data = await symbol(...args); // can throw error
 						break;
 					}
+					case RES.JSON_ENCODE:
+					{	let deno_inst = this.deno_insts.get(deno_inst_id);
+						data = JSON.stringify(deno_inst); // can throw error
+						break;
+					}
 					default:
 						debug_assert(false);
 				}
@@ -1265,6 +1271,19 @@ export class PhpInterpreter
 		(	json,
 			(key, value) => typeof(value)=='object' && value?.DENO_WORLD_INST_ID>=0 ? this.deno_insts.get(value.DENO_WORLD_INST_ID) : value
 		);
+	}
+
+	private json_stringify_serialize_insts(args: IArguments)
+	{	let args_arr = [];
+		for (let arg of args)
+		{	if (arg==null || typeof(arg)!='object' || arg.constructor==Object || arg.constructor==Array)
+			{	args_arr[args_arr.length] = arg;
+			}
+			else
+			{	args_arr[args_arr.length] = {DENO_WORLD_INST_ID: this.new_deno_inst(arg)};
+			}
+		}
+		return JSON.stringify(args_arr);
 	}
 
 	private async do_exit(is_eof=false): Promise<Deno.ProcessStatus>

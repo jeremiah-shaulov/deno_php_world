@@ -97,7 +97,7 @@ console.log((await g.FAKE) === undefined); // unexisting constants have "undefin
 
 ### Global variables
 
-Like constants, variables are present in the `g` namespace, but their names must begin with '$'.
+Like constants, variables are present in the `g` namespace, but their names begin with '$'.
 
 Variable's value must be awaited-for. But setting new value returns immediately (and doesn't imply synchronous operations - the value will be set in the background, and there's no result that we need to await for).
 
@@ -281,7 +281,7 @@ console.log(await ex.getMessage()); // prints 'The message'
 delete ex.this;
 ```
 
-At last, the object must be deleted. This doesn't necessarily destroy the object on PHP side, but it stops holding the object reference.
+At last, the object must be deleted. This doesn't necessarily destroy the object on PHP side, but it stops holding a reference to the object.
 
 ### Get variables as objects
 
@@ -354,7 +354,29 @@ delete value.this;
 
 ### Accessing Deno world from PHP
 
-On PHP side 2 global variables get defined: `$globalThis` and `$window`. They are identical, so you can use whatever you prefer.
+When you pass an object from Deno to PHP, and this object is not a plain `Object` or `Array` (`obj.constructor!=Object && obj.constructor!=Array`), a handler to remote Deno object is created on PHP side.
+
+```ts
+import {g, c} from 'https://deno.land/x/php_world/mod.ts';
+
+class FirstClass
+{	get_value()
+	{	return 'the value';
+	}
+}
+
+g.$first_class = new FirstClass;
+
+await g.eval
+(	`	global $first_class;
+
+		var_dump($first_class->get_value()); // prints: string(9) "the value"
+	`
+);
+await g.exit();
+```
+
+Also on PHP side 2 global variables get automatically defined at the beginning of the script: `$globalThis` and `$window`. They are identical, so you can use whatever you prefer.
 
 ```ts
 import {g, c} from 'https://deno.land/x/php_world/mod.ts';
@@ -362,7 +384,7 @@ import {g, c} from 'https://deno.land/x/php_world/mod.ts';
 await g.eval
 (	`	global $window;
 
-		var_dump($window->parseInt('123 abc'));
+		var_dump($window->parseInt('123px'));
 
 		var_dump($window->Math->pow(10, 3));
 

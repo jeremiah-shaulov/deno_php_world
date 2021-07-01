@@ -5,7 +5,7 @@ const TMP_SCRIPT_FILENAME_PREFIX = 'deno-php-world';
 export const PHP_BOOT = String.raw
 `<?php
 
-class DenoWorld implements ArrayAccess
+class DenoWorld implements ArrayAccess, JsonSerializable
 {	protected int $deno_inst_id;
 
 	public static function __callStatic($name, $args)
@@ -102,6 +102,10 @@ class DenoWorld implements ArrayAccess
 
 	public function offsetGet($offset)
 	{	return DenoWorldMain::write_read(DenoWorldMain::RES_CLASS_GET, $this->deno_inst_id, $offset);
+	}
+
+	public function jsonSerialize()
+	{	return json_decode(DenoWorldMain::write_read(DenoWorldMain::RES_JSON_ENCODE, $this->deno_inst_id));
 	}
 }
 
@@ -274,6 +278,7 @@ class DenoWorldMain extends DenoWorld
 	public const RES_CLASS_PROPS = 13;
 	public const RES_CLASSSTATIC_CALL = 14;
 	public const RES_CALL = 15;
+	public const RES_JSON_ENCODE = 16;
 
 	private const RESTYPE_HAS_ITERATOR = 1;
 	private const RESTYPE_HAS_LENGTH = 2;
@@ -501,21 +506,30 @@ class DenoWorldMain extends DenoWorld
 		}
 	}
 
-	private static function unserialize_insts($value)
-	{	if (is_array($value))
-		{	if (count($value)==1 and ($php_inst_id = $value['PHP_WORLD_INST_ID'] ?? -1)>=0)
-			{	return self::$php_insts[$php_inst_id];
+	private static function unserialize_inst($value)
+	{	if (is_array($value) and count($value)==1)
+		{	if (($php_inst_id = $value['PHP_WORLD_INST_ID'] ?? -1) >= 0)
+			{	$value = self::$php_insts[$php_inst_id];
 			}
-			foreach ($value as $k => $v)
-			{	$value[$k] = self::unserialize_insts($v);
-			}
-		}
-		else if (is_object($value))
-		{	foreach ($value as $k => $v)
-			{	$value->$k = self::unserialize_insts($v);
+			else if (($deno_inst_id = $value['DENO_WORLD_INST_ID'] ?? -1) >= 0)
+			{	$value = new DenoWorld($deno_inst_id);
 			}
 		}
 		return $value;
+	}
+
+	private static function unserialize_insts_in_args($args)
+	{	foreach ($args as &$value)
+		{	if (is_array($value) and count($value)==1)
+			{	if (($php_inst_id = $value['PHP_WORLD_INST_ID'] ?? -1) >= 0)
+				{	$value = self::$php_insts[$php_inst_id];
+				}
+				else if (($deno_inst_id = $value['DENO_WORLD_INST_ID'] ?? -1) >= 0)
+				{	$value = new DenoWorld($deno_inst_id);
+				}
+			}
+		}
+		return $args;
 	}
 
 	public static function serialize_insts($value)
@@ -637,7 +651,7 @@ class DenoWorldMain extends DenoWorld
 						throw new Exception('Value is not set');
 					case self::REC_SET:
 						$data = self::decode_ident_value($data, $prop_name);
-						$GLOBALS[$prop_name] = self::unserialize_insts($data);
+						$GLOBALS[$prop_name] = self::unserialize_inst($data);
 						break;
 					case self::REC_SET_INST:
 						$deno_inst_id = self::decode_ident_ident($data, $prop_name);
@@ -645,7 +659,7 @@ class DenoWorldMain extends DenoWorld
 						break;
 					case self::REC_SET_PATH:
 						list($data, $result) = self::decode_ident_value($data, $prop_name);
-						self::follow_path_set($GLOBALS[$prop_name], $data, self::unserialize_insts($result));
+						self::follow_path_set($GLOBALS[$prop_name], $data, self::unserialize_inst($result));
 						break;
 					case self::REC_SET_PATH_INST:
 						$data = self::decode_ident_ident_value($data, $prop_name, $deno_inst_id);
@@ -691,7 +705,7 @@ class DenoWorldMain extends DenoWorld
 						break;
 					case self::REC_CLASSSTATIC_SET:
 						$data = self::decode_ident_ident_value($data, $class_name, $prop_name);
-						self::get_reflection($class_name)->setStaticPropertyValue($prop_name, self::unserialize_insts($data));
+						self::get_reflection($class_name)->setStaticPropertyValue($prop_name, self::unserialize_inst($data));
 						break;
 					case self::REC_CLASSSTATIC_SET_INST:
 						$deno_inst_id = self::decode_ident_ident_ident($data, $class_name, $prop_name);
@@ -699,7 +713,7 @@ class DenoWorldMain extends DenoWorld
 						break;
 					case self::REC_CLASSSTATIC_SET_PATH:
 						list($data, $result) = self::decode_ident_ident_value($data, $class_name, $prop_name);
-						$result = self::unserialize_insts($result);
+						$result = self::unserialize_inst($result);
 						eval('self::follow_path_set('.$class_name.'::$'.'{$prop_name}, $data, $result);');
 						break;
 					case self::REC_CLASSSTATIC_SET_PATH_INST:
@@ -715,7 +729,7 @@ class DenoWorldMain extends DenoWorld
 						break;
 					case self::REC_CONSTRUCT:
 						$data = self::decode_ident_value($data, $class_name);
-						$data = $data===null ? self::get_reflection($class_name)->newInstance() : self::get_reflection($class_name)->newInstanceArgs(self::unserialize_insts($data));
+						$data = $data===null ? self::get_reflection($class_name)->newInstance() : self::get_reflection($class_name)->newInstanceArgs(self::unserialize_insts_in_args($data));
 						self::$php_insts[self::$php_inst_id_enum] = $data;
 						$result = self::$php_inst_id_enum++;
 						$result_is_set = true;
@@ -765,7 +779,7 @@ class DenoWorldMain extends DenoWorld
 						break;
 					case self::REC_CLASS_SET:
 						$data = self::decode_ident_ident_value($data, $php_inst_id, $prop_name);
-						self::$php_insts[$php_inst_id]->$prop_name = self::unserialize_insts($data);
+						self::$php_insts[$php_inst_id]->$prop_name = self::unserialize_inst($data);
 						break;
 					case self::REC_CLASS_SET_INST:
 						$deno_inst_id = self::decode_ident_ident_ident($data, $php_inst_id, $prop_name);
@@ -773,7 +787,7 @@ class DenoWorldMain extends DenoWorld
 						break;
 					case self::REC_CLASS_SET_PATH:
 						list($data, $result) = self::decode_ident_ident_value($data, $php_inst_id, $prop_name);
-						self::follow_path_set(self::$php_insts[$php_inst_id]->$prop_name, $data, self::unserialize_insts($result));
+						self::follow_path_set(self::$php_insts[$php_inst_id]->$prop_name, $data, self::unserialize_inst($result));
 						break;
 					case self::REC_CLASS_SET_PATH_INST:
 						list($data, $deno_inst_id) = self::decode_ident_ident_value($data, $php_inst_id, $prop_name);
@@ -789,20 +803,20 @@ class DenoWorldMain extends DenoWorld
 						break;
 					case self::REC_CLASS_CALL:
 						$data = self::decode_ident_ident_value($data, $php_inst_id, $prop_name);
-						$result = $data===null ? call_user_func([self::$php_insts[$php_inst_id], $prop_name]) : call_user_func_array([self::$php_insts[$php_inst_id], $prop_name], self::unserialize_insts($data));
+						$result = $data===null ? call_user_func([self::$php_insts[$php_inst_id], $prop_name]) : call_user_func_array([self::$php_insts[$php_inst_id], $prop_name], self::unserialize_insts_in_args($data));
 						$result_is_set = true;
 						break;
 					case self::REC_CLASS_CALL_PATH:
 						list($data, $result) = self::decode_ident_ident_value($data, $php_inst_id, $prop_name);
 						$value = self::$php_insts[$php_inst_id];
 						self::follow_path($value, $data);
-						$result = call_user_func_array([$value, $prop_name], self::unserialize_insts($result));
+						$result = call_user_func_array([$value, $prop_name], self::unserialize_insts_in_args($result));
 						$value = null;
 						$result_is_set = true;
 						break;
 					case self::REC_CLASS_INVOKE:
 						$data = self::decode_ident_value($data, $php_inst_id);
-						$result = $data===null ? self::$php_insts[$php_inst_id]() : call_user_func_array(self::$php_insts[$php_inst_id], self::unserialize_insts($data));
+						$result = $data===null ? self::$php_insts[$php_inst_id]() : call_user_func_array(self::$php_insts[$php_inst_id], self::unserialize_insts_in_args($data));
 						$result_is_set = true;
 						break;
 					case self::REC_CLASS_ITERATE_BEGIN:
@@ -832,12 +846,12 @@ class DenoWorldMain extends DenoWorld
 						continue 2;
 					case self::REC_CALL:
 						$data = self::decode_ident_value($data, $prop_name);
-						$result = $data===null ? call_user_func($prop_name) : call_user_func_array($prop_name, self::unserialize_insts($data));
+						$result = $data===null ? call_user_func($prop_name) : call_user_func_array($prop_name, self::unserialize_insts_in_args($data));
 						$result_is_set = true;
 						break;
 					case self::REC_CALL_THIS:
 						$data = self::decode_ident_value($data, $prop_name);
-						$data = $data===null ? call_user_func($prop_name) : call_user_func_array($prop_name, self::unserialize_insts($data));
+						$data = $data===null ? call_user_func($prop_name) : call_user_func_array($prop_name, self::unserialize_insts_in_args($data));
 						$class_name = is_object($data) ? ' '.get_class($data) : '';
 						self::$php_insts[self::$php_inst_id_enum] = $data;
 						$result = self::$php_inst_id_enum++.$class_name;
@@ -845,41 +859,41 @@ class DenoWorldMain extends DenoWorld
 						break;
 					case self::REC_CALL_EVAL:
 						$data = self::decode_value($data);
-						$result = self::eval(self::unserialize_insts($data));
+						$result = self::eval(self::unserialize_inst($data));
 						$result_is_set = true;
 						break;
 					case self::REC_CALL_EVAL_THIS:
 						$data = self::decode_value($data);
-						$data = self::eval(self::unserialize_insts($data));
+						$data = self::eval(self::unserialize_inst($data));
 						$class_name = is_object($data) ? ' '.get_class($data) : '';
 						self::$php_insts[self::$php_inst_id_enum] = $data;
 						$result = self::$php_inst_id_enum++.$class_name;
 						$result_is_set = true;
 						break;
 					case self::REC_CALL_ECHO:
-						$data = self::unserialize_insts(self::decode_value($data));
+						$data = self::unserialize_insts_in_args(self::decode_value($data));
 						foreach ($data as $arg)
 						{	echo $arg;
 						}
 						break;
 					case self::REC_CALL_INCLUDE:
 						$data = self::decode_value($data);
-						$result = include(self::unserialize_insts($data));
+						$result = include(self::unserialize_inst($data));
 						$result_is_set = true;
 						break;
 					case self::REC_CALL_INCLUDE_ONCE:
 						$data = self::decode_value($data);
-						$result = include_once(self::unserialize_insts($data));
+						$result = include_once(self::unserialize_inst($data));
 						$result_is_set = true;
 						break;
 					case self::REC_CALL_REQUIRE:
 						$data = self::decode_value($data);
-						$result = require(self::unserialize_insts($data));
+						$result = require(self::unserialize_inst($data));
 						$result_is_set = true;
 						break;
 					case self::REC_CALL_REQUIRE_ONCE:
 						$data = self::decode_value($data);
-						$result = require_once(self::unserialize_insts($data));
+						$result = require_once(self::unserialize_inst($data));
 						$result_is_set = true;
 						break;
 				}
