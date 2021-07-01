@@ -477,6 +477,15 @@ class DenoWorldMain extends DenoWorld
 		}
 	}
 
+	private static function decode_ident_ident_ident($data, &$ident_a, &$ident_b)
+	{	$pos = strpos($data, ' ');
+		$ident_a = substr($data, 0, $pos);
+		$pos++;
+		$pos_2 = strpos($data, ' ', $pos);
+		$ident_b = substr($data, $pos, $pos_2-$pos);
+		return substr($data, $pos_2+1);
+	}
+
 	private static function decode_ident_ident_value($data, &$ident_a, &$ident_b)
 	{	$pos = strpos($data, ' ');
 		$ident_a = substr($data, 0, $pos);
@@ -639,7 +648,7 @@ class DenoWorldMain extends DenoWorld
 						self::follow_path_set($GLOBALS[$prop_name], $data, self::unserialize_insts($result));
 						break;
 					case self::REC_SET_PATH_INST:
-						list($data, $deno_inst_id) = self::decode_ident_value($data, $prop_name);
+						$data = self::decode_ident_ident_value($data, $prop_name, $deno_inst_id);
 						self::follow_path_set($GLOBALS[$prop_name], $data, new DenoWorld($deno_inst_id));
 						break;
 					case self::REC_UNSET:
@@ -685,7 +694,7 @@ class DenoWorldMain extends DenoWorld
 						self::get_reflection($class_name)->setStaticPropertyValue($prop_name, self::unserialize_insts($data));
 						break;
 					case self::REC_CLASSSTATIC_SET_INST:
-						$deno_inst_id = self::decode_ident_ident_value($data, $class_name, $prop_name);
+						$deno_inst_id = self::decode_ident_ident_ident($data, $class_name, $prop_name);
 						self::get_reflection($class_name)->setStaticPropertyValue($prop_name, new DenoWorld($deno_inst_id));
 						break;
 					case self::REC_CLASSSTATIC_SET_PATH:
@@ -759,7 +768,7 @@ class DenoWorldMain extends DenoWorld
 						self::$php_insts[$php_inst_id]->$prop_name = self::unserialize_insts($data);
 						break;
 					case self::REC_CLASS_SET_INST:
-						$deno_inst_id = self::decode_ident_ident_value($data, $php_inst_id, $prop_name);
+						$deno_inst_id = self::decode_ident_ident_ident($data, $php_inst_id, $prop_name);
 						self::$php_insts[$php_inst_id]->$prop_name = new DenoWorld($deno_inst_id);
 						break;
 					case self::REC_CLASS_SET_PATH:

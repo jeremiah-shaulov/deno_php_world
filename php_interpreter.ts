@@ -420,22 +420,19 @@ export class PhpInterpreter
 									if (path_str.indexOf(' ') != -1)
 									{	throw new Error(`Variable name must not contain spaces: $${path_str}`);
 									}
-									path_str += ' [';
+									let path_str_2 = '[';
 									if (path.length > 1)
-									{	path_str += JSON.stringify(path.slice(1)).slice(0, -1)+',';
-									}
-									else
-									{	path_str += '[';
+									{	path_str_2 = JSON.stringify(path.slice(1)).slice(0, -1)+',';
 									}
 									return function(prop_name, value)
 									{	if (value == null)
-										{	php.write_read(REC.SET_PATH, path_str+JSON.stringify(prop_name)+'],null]');
+										{	php.write_read(REC.SET_PATH, path_str+' ['+path_str_2+JSON.stringify(prop_name)+'],null]');
 										}
 										else if (typeof(value) == 'object')
-										{	php.write_read(REC.SET_PATH_INST, path_str+JSON.stringify(prop_name)+'],'+php.new_deno_inst(value)+']');
+										{	php.write_read(REC.SET_PATH_INST, path_str+' '+php.new_deno_inst(value)+' '+path_str_2+JSON.stringify(prop_name)+']');
 										}
 										else
-										{	php.write_read(REC.SET_PATH, path_str+JSON.stringify(prop_name)+'],'+JSON.stringify(value)+']');
+										{	php.write_read(REC.SET_PATH, path_str+' ['+path_str_2+JSON.stringify(prop_name)+'],'+JSON.stringify(value)+']');
 										}
 										return true;
 									};
