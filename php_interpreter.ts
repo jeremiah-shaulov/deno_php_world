@@ -79,8 +79,9 @@ const enum RESTYPE
 {	HAS_ITERATOR = 1,
 	HAS_LENGTH = 2,
 	HAS_SIZE = 4,
-	IS_SCALAR = 8,
-	IS_ERROR = 16,
+	IS_STRING = 8,
+	IS_JSON = 16,
+	IS_ERROR = 32,
 }
 
 const RE_BAD_CLASSNAME_FOR_EVAL = /[^\w\\]/;
@@ -429,7 +430,7 @@ export class PhpInterpreter
 									{	if (value == null)
 										{	php.write_read(REC.SET_PATH, path_str+' ['+path_str_2+JSON.stringify(prop_name)+'],null]');
 										}
-										else if (typeof(value)=='object' && value.constructor!=Object && value.constructor!=Array)
+										else if (typeof(value)=='object' && value.constructor!=Object && value.constructor!=Array || typeof(value)=='function' && value[symbol_php_object]==null)
 										{	php.write_read(REC.SET_PATH_INST, path_str+' '+php.new_deno_inst(value)+' '+path_str_2+JSON.stringify(prop_name)+']');
 										}
 										else
@@ -465,7 +466,7 @@ export class PhpInterpreter
 											if (value == null)
 											{	php.write_read(REC.CLASSSTATIC_SET, path_str_2);
 											}
-											else if (typeof(value)=='object' && value.constructor!=Object && value.constructor!=Array)
+											else if (typeof(value)=='object' && value.constructor!=Object && value.constructor!=Array || typeof(value)=='function' && value[symbol_php_object]==null)
 											{	php.write_read(REC.CLASSSTATIC_SET_INST, path_str_2+' '+php.new_deno_inst(value));
 											}
 											else
@@ -493,7 +494,7 @@ export class PhpInterpreter
 										{	if (value == null)
 											{	php.write_read(REC.CLASSSTATIC_SET_PATH, path_str+JSON.stringify(prop_name)+'],null]');
 											}
-											else if (typeof(value)=='object' && value.constructor!=Object && value.constructor!=Array)
+											else if (typeof(value)=='object' && value.constructor!=Object && value.constructor!=Array || typeof(value)=='function' && value[symbol_php_object]==null)
 											{	php.write_read(REC.CLASSSTATIC_SET_PATH_INST, path_str+JSON.stringify(prop_name)+'],'+php.new_deno_inst(value)+']');
 											}
 											else
@@ -710,7 +711,7 @@ export class PhpInterpreter
 						if (value == null)
 						{	php.write_read(REC.SET, prop_name);
 						}
-						else if (typeof(value)=='object' && value.constructor!=Object && value.constructor!=Array)
+						else if (typeof(value)=='object' && value.constructor!=Object && value.constructor!=Array || typeof(value)=='function' && value[symbol_php_object]==null)
 						{	php.write_read(REC.SET_INST, prop_name+' '+php.new_deno_inst(value));
 						}
 						else
@@ -794,7 +795,7 @@ export class PhpInterpreter
 							if (value == null)
 							{	php.write_read(REC.CLASS_SET, path_str+prop_name);
 							}
-							else if (typeof(value)=='object' && value.constructor!=Object && value.constructor!=Array)
+							else if (typeof(value)=='object' && value.constructor!=Object && value.constructor!=Array || typeof(value)=='function' && value[symbol_php_object]==null)
 							{	php.write_read(REC.CLASS_SET_INST, path_str+prop_name+' '+php.new_deno_inst(value));
 							}
 							else
@@ -815,7 +816,7 @@ export class PhpInterpreter
 						{	if (value == null)
 							{	php.write_read(REC.CLASS_SET_PATH, path_str+JSON.stringify(prop_name)+'],null]');
 							}
-							else if (typeof(value)=='object' && value.constructor!=Object && value.constructor!=Array)
+							else if (typeof(value)=='object' && value.constructor!=Object && value.constructor!=Array || typeof(value)=='function' && value[symbol_php_object]==null)
 							{	php.write_read(REC.CLASS_SET_PATH_INST, path_str+JSON.stringify(prop_name)+'],'+php.new_deno_inst(value)+']');
 							}
 							else
@@ -1140,7 +1141,7 @@ export class PhpInterpreter
 				throw new InterpreterError(message, file, Number(line), trace);
 			}
 			let data: any;
-			let data_str;
+			let result_type = RESTYPE.IS_JSON;
 			let g: any = globalThis;
 			try
 			{	this.ongoing_level++;
@@ -1239,15 +1240,14 @@ export class PhpInterpreter
 					default:
 						debug_assert(false);
 				}
-				let result_type = RESTYPE.IS_SCALAR;
 				if (data!=null && (typeof(data)=='object' || typeof(data)=='function'))
 				{	result_type = get_inst_features(data);
 					data = this.new_deno_inst(data);
 				}
-				data_str = JSON.stringify([result_type, data]);
 			}
 			catch (e)
-			{	data_str = JSON.stringify([RESTYPE.IS_ERROR, {message: e.message}]);
+			{	result_type = RESTYPE.IS_ERROR;
+				data = e.message;
 			}
 			finally
 			{	this.ongoing_level--;
@@ -1255,7 +1255,15 @@ export class PhpInterpreter
 				{	this.ongoing.length = this.ongoing_level+1;
 				}
 			}
-			await this.do_write(REC.DATA, data_str);
+			if (result_type == RESTYPE.IS_JSON)
+			{	if (typeof(data) == 'string')
+				{	result_type = RESTYPE.IS_STRING;
+				}
+				else
+				{	data = JSON.stringify(data);
+				}
+			}
+			await this.do_write(REC.DATA, result_type+' '+data);
 		}
 	}
 
@@ -1275,12 +1283,12 @@ export class PhpInterpreter
 
 	private json_stringify_serialize_insts(args: IArguments)
 	{	let args_arr = [];
-		for (let arg of args)
-		{	if (arg==null || typeof(arg)!='object' || arg.constructor==Object || arg.constructor==Array)
-			{	args_arr[args_arr.length] = arg;
+		for (let value of args)
+		{	if (value!=null && typeof(value)=='object' && value.constructor!=Object && value.constructor!=Array || typeof(value)=='function' && value[symbol_php_object]==null)
+			{	args_arr[args_arr.length] = {DENO_WORLD_INST_ID: this.new_deno_inst(value)};
 			}
 			else
-			{	args_arr[args_arr.length] = {DENO_WORLD_INST_ID: this.new_deno_inst(arg)};
+			{	args_arr[args_arr.length] = value;
 			}
 		}
 		return JSON.stringify(args_arr);

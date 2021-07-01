@@ -283,8 +283,9 @@ class DenoWorldMain extends DenoWorld
 	private const RESTYPE_HAS_ITERATOR = 1;
 	private const RESTYPE_HAS_LENGTH = 2;
 	private const RESTYPE_HAS_SIZE = 4;
-	private const RESTYPE_IS_SCALAR = 8;
-	private const RESTYPE_IS_ERROR = 16;
+	private const RESTYPE_IS_STRING = 8;
+	private const RESTYPE_IS_JSON = 16;
+	private const RESTYPE_IS_ERROR = 32;
 
 	private static ?int $error_reporting = null;
 	private static string $end_mark = '';
@@ -350,15 +351,20 @@ class DenoWorldMain extends DenoWorld
 		$padding = (8 - ($len + 4)%8) % 8;
 		fwrite(self::$commands_io, $padding===0 ? pack("llN", -8-$len, $type, $deno_inst_id).$data : pack("llNx{$padding}", -8-$len, $type, $deno_inst_id).$data);
 		$data = self::events_q();
-		list($type, $value) = json_decode($data, true);
+		$pos = strpos($data, ' ');
+		$type = (int)substr($data, 0, $pos);
+		$data = substr($data, $pos+1);
 		if ($type & self::RESTYPE_IS_ERROR)
-		{	throw new Exception($value['message']);
+		{	throw new Exception($data);
 		}
-		if ($type & self::RESTYPE_IS_SCALAR)
-		{	return $value;
+		if ($type & self::RESTYPE_IS_STRING)
+		{	return $data;
+		}
+		if ($type & self::RESTYPE_IS_JSON)
+		{	return json_decode($data, true);
 		}
 		$class = "DenoWorld_$type";
-		return new $class($value);
+		return new $class((int)$data);
 	}
 
 	private static function get_reflection($class_name)

@@ -1761,7 +1761,7 @@ Deno.test
 			}
 		};
 		await g.eval
-		(	`	global $var, $var2, $var3, $var4;
+		(	`	global $var, $var2, $var3, $var4, $var5;
 
 				use DenoWorld\\Scientific, DenoWorld\\Scientific2;
 
@@ -1775,6 +1775,8 @@ Deno.test
 
 				$get_hello = DenoWorld::get_get_hello();
 				$var4 = $get_hello();
+
+				$var5 = $obj->__debugInfo();
 			`
 		);
 		assertEquals(await g.$var, 20);
@@ -1783,6 +1785,76 @@ Deno.test
 		assertEquals(dispose_called_2, true);
 		assertEquals(await g.$var3, 'This is Scientific2');
 		assertEquals(await g.$var4, 'hello');
+		assertEquals(await g.$var5, {n: 10});
+
+		g.eval
+		(	`	global $c;
+
+				class FirstClass
+				{	static $stat, $stat2;
+					public $prop, $prop2;
+				}
+
+				$c = new FirstClass;
+			`
+		);
+		g.$parseInt = parseInt;
+		g.$tmp2.a.b = parseInt;
+		c.FirstClass.$stat = parseInt;
+		c.FirstClass.$stat2.a.b = parseInt;
+		g.$c.prop = parseInt;
+		g.$c.prop2.a.b = parseInt;
+		let obj = await new c.FirstClass;
+		obj.prop = parseInt;
+		obj.prop2.a.b = parseInt;
+		g.$c2 = obj;
+		g.eval
+		(	`	global $c, $c2, $parseInt, $tmp2, $var, $var2, $var3, $var4, $var5, $var6, $var7, $var8;
+				$var = $parseInt('234px');
+				$var2 = $tmp2['a']['b']('345px');
+				$f = FirstClass::$stat;
+				$var3 = $f('456px');
+				$f = FirstClass::$stat2['a']['b'];
+				$var4 = $f('567px');
+				$f = $c->prop;
+				$var5 = $f('678px');
+				$f = $c->prop2->a->b;
+				$var6 = $f('789px');
+				$f = $c2->prop;
+				$var7 = $f('890px');
+				$f = $c2->prop2['a']['b']; // TODO: maybe this must be prop2->a->b?
+				$var8 = $f('901px');
+			`
+		);
+		assertEquals(await g.$var, 234);
+		assertEquals(await g.$var2, 345);
+		assertEquals(await g.$var3, 456);
+		assertEquals(await g.$var4, 567);
+		assertEquals(await g.$var5, 678);
+		assertEquals(await g.$var6, 789);
+		assertEquals(await g.$var7, 890);
+		assertEquals(await g.$var8, 901);
+
+		g.eval
+		(	`	global $err, $err2;
+
+				try
+				{	DenoWorld\\Math::fake();
+				}
+				catch (Throwable $e)
+				{	$err = $e;
+				}
+
+				try
+				{	DenoWorld\\Scientific::fake();
+				}
+				catch (Throwable $e)
+				{	$err2 = $e;
+				}
+			`
+		);
+		assert(await g.$err);
+		assert(await g.$err2);
 
 		await g.exit();
 		php.close_idle();
@@ -1934,5 +2006,87 @@ Deno.test
 		assertEquals(JSON.parse(res), {str: 'default str', arr: [1, 2, 'three']});
 
 		await php.g.exit();
+	}
+);
+
+Deno.test
+(	'Pass value PHP -> Deno -> PHP',
+	async () =>
+	{	await g.eval
+		(	`	global $var;
+
+				class C
+				{	function get_value()
+					{	return 'the value';
+					}
+				}
+
+				$var = new C;
+			`
+		);
+
+		g.$var2 = await g.$var.this;
+
+		await g.eval
+		(	`	global $var2, $var3;
+
+				$var3 = $var2->get_value();
+			`
+		);
+
+		assertEquals(await g.$var3, 'the value');
+
+		await g.exit();
+	}
+);
+
+Deno.test
+(	'Pass value Deno -> PHP -> Deno',
+	async () =>
+	{	class FirstClass
+		{	get_value()
+			{	return 'the value';
+			}
+		}
+		settings.onsymbol = name =>
+		{	if (name == 'FirstClass')
+			{	return FirstClass;
+			}
+		};
+
+		let c = new FirstClass;
+
+		g.$var = c;
+
+		await g.eval
+		(	`	global $var, $var2;
+
+				$var2 = $var;
+			`
+		);
+
+		assertEquals((await g.$var2) === c, true);
+
+		await g.exit();
+	}
+);
+
+Deno.test
+(	'Pass big data',
+	async () =>
+	{	let big_data = 'ф'.repeat(10*1024);
+
+		g.$var = big_data;
+
+		await g.eval
+		(	`	global $var, $var2;
+
+				$var2 = $var;
+			`
+		);
+
+		assertEquals(await g.$var2, big_data);
+
+		await g.exit();
 	}
 );
