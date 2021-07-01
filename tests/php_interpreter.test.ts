@@ -2026,15 +2026,18 @@ Deno.test
 		);
 
 		g.$var2 = await g.$var.this;
+		g.$var3 = [await g.$var.this];
 
 		await g.eval
-		(	`	global $var2, $var3;
+		(	`	global $var2, $var3, $res2, $res3;
 
-				$var3 = $var2->get_value();
+				$res2 = $var2->get_value();
+				$res3 = $var3[0]->get_value();
 			`
 		);
 
-		assertEquals(await g.$var3, 'the value');
+		assertEquals(await g.$res2, 'the value');
+		assertEquals(await g.$res3, 'the value');
 
 		await g.exit();
 	}
@@ -2059,13 +2062,16 @@ Deno.test
 		g.$var = c;
 
 		await g.eval
-		(	`	global $var, $var2;
+		(	`	global $var, $var2, $var3;
 
 				$var2 = $var;
+				$var3 = [$var];
 			`
 		);
 
 		assertEquals((await g.$var2) === c, true);
+		assertEquals((await g.$var3)[0] === c, true);
+		assertEquals((await g.$var3[0]) === c, true);
 
 		await g.exit();
 	}

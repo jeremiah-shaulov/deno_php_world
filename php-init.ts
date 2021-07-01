@@ -512,13 +512,23 @@ class DenoWorldMain extends DenoWorld
 		}
 	}
 
-	private static function unserialize_inst($value)
-	{	if (is_array($value) and count($value)==1)
-		{	if (($php_inst_id = $value['PHP_WORLD_INST_ID'] ?? -1) >= 0)
-			{	$value = self::$php_insts[$php_inst_id];
+	private static function unserialize_insts($value)
+	{	if (is_array($value))
+		{	if (count($value) == 1)
+			{	if (($php_inst_id = $value['PHP_WORLD_INST_ID'] ?? -1)>=0)
+				{	return self::$php_insts[$php_inst_id];
+				}
+				else if (($deno_inst_id = $value['DENO_WORLD_INST_ID'] ?? -1) >= 0)
+				{	return new DenoWorld($deno_inst_id);
+				}
 			}
-			else if (($deno_inst_id = $value['DENO_WORLD_INST_ID'] ?? -1) >= 0)
-			{	$value = new DenoWorld($deno_inst_id);
+			foreach ($value as $k => $v)
+			{	$value[$k] = self::unserialize_insts($v);
+			}
+		}
+		else if (is_object($value))
+		{	foreach ($value as $k => $v)
+			{	$value->$k = self::unserialize_insts($v);
 			}
 		}
 		return $value;
@@ -657,7 +667,7 @@ class DenoWorldMain extends DenoWorld
 						throw new Exception('Value is not set');
 					case self::REC_SET:
 						$data = self::decode_ident_value($data, $prop_name);
-						$GLOBALS[$prop_name] = self::unserialize_inst($data);
+						$GLOBALS[$prop_name] = self::unserialize_insts($data);
 						break;
 					case self::REC_SET_INST:
 						$deno_inst_id = self::decode_ident_ident($data, $prop_name);
@@ -665,7 +675,7 @@ class DenoWorldMain extends DenoWorld
 						break;
 					case self::REC_SET_PATH:
 						list($data, $result) = self::decode_ident_value($data, $prop_name);
-						self::follow_path_set($GLOBALS[$prop_name], $data, self::unserialize_inst($result));
+						self::follow_path_set($GLOBALS[$prop_name], $data, self::unserialize_insts($result));
 						break;
 					case self::REC_SET_PATH_INST:
 						$data = self::decode_ident_ident_value($data, $prop_name, $deno_inst_id);
@@ -711,7 +721,7 @@ class DenoWorldMain extends DenoWorld
 						break;
 					case self::REC_CLASSSTATIC_SET:
 						$data = self::decode_ident_ident_value($data, $class_name, $prop_name);
-						self::get_reflection($class_name)->setStaticPropertyValue($prop_name, self::unserialize_inst($data));
+						self::get_reflection($class_name)->setStaticPropertyValue($prop_name, self::unserialize_insts($data));
 						break;
 					case self::REC_CLASSSTATIC_SET_INST:
 						$deno_inst_id = self::decode_ident_ident_ident($data, $class_name, $prop_name);
@@ -719,7 +729,7 @@ class DenoWorldMain extends DenoWorld
 						break;
 					case self::REC_CLASSSTATIC_SET_PATH:
 						list($data, $result) = self::decode_ident_ident_value($data, $class_name, $prop_name);
-						$result = self::unserialize_inst($result);
+						$result = self::unserialize_insts($result);
 						eval('self::follow_path_set('.$class_name.'::$'.'{$prop_name}, $data, $result);');
 						break;
 					case self::REC_CLASSSTATIC_SET_PATH_INST:
@@ -785,7 +795,7 @@ class DenoWorldMain extends DenoWorld
 						break;
 					case self::REC_CLASS_SET:
 						$data = self::decode_ident_ident_value($data, $php_inst_id, $prop_name);
-						self::$php_insts[$php_inst_id]->$prop_name = self::unserialize_inst($data);
+						self::$php_insts[$php_inst_id]->$prop_name = self::unserialize_insts($data);
 						break;
 					case self::REC_CLASS_SET_INST:
 						$deno_inst_id = self::decode_ident_ident_ident($data, $php_inst_id, $prop_name);
@@ -793,7 +803,7 @@ class DenoWorldMain extends DenoWorld
 						break;
 					case self::REC_CLASS_SET_PATH:
 						list($data, $result) = self::decode_ident_ident_value($data, $php_inst_id, $prop_name);
-						self::follow_path_set(self::$php_insts[$php_inst_id]->$prop_name, $data, self::unserialize_inst($result));
+						self::follow_path_set(self::$php_insts[$php_inst_id]->$prop_name, $data, self::unserialize_insts($result));
 						break;
 					case self::REC_CLASS_SET_PATH_INST:
 						list($data, $deno_inst_id) = self::decode_ident_ident_value($data, $php_inst_id, $prop_name);
@@ -865,12 +875,12 @@ class DenoWorldMain extends DenoWorld
 						break;
 					case self::REC_CALL_EVAL:
 						$data = self::decode_value($data);
-						$result = self::eval(self::unserialize_inst($data));
+						$result = self::eval(self::unserialize_insts($data));
 						$result_is_set = true;
 						break;
 					case self::REC_CALL_EVAL_THIS:
 						$data = self::decode_value($data);
-						$data = self::eval(self::unserialize_inst($data));
+						$data = self::eval(self::unserialize_insts($data));
 						$class_name = is_object($data) ? ' '.get_class($data) : '';
 						self::$php_insts[self::$php_inst_id_enum] = $data;
 						$result = self::$php_inst_id_enum++.$class_name;
@@ -884,22 +894,22 @@ class DenoWorldMain extends DenoWorld
 						break;
 					case self::REC_CALL_INCLUDE:
 						$data = self::decode_value($data);
-						$result = include(self::unserialize_inst($data));
+						$result = include(self::unserialize_insts($data));
 						$result_is_set = true;
 						break;
 					case self::REC_CALL_INCLUDE_ONCE:
 						$data = self::decode_value($data);
-						$result = include_once(self::unserialize_inst($data));
+						$result = include_once(self::unserialize_insts($data));
 						$result_is_set = true;
 						break;
 					case self::REC_CALL_REQUIRE:
 						$data = self::decode_value($data);
-						$result = require(self::unserialize_inst($data));
+						$result = require(self::unserialize_insts($data));
 						$result_is_set = true;
 						break;
 					case self::REC_CALL_REQUIRE_ONCE:
 						$data = self::decode_value($data);
-						$result = require_once(self::unserialize_inst($data));
+						$result = require_once(self::unserialize_insts($data));
 						$result_is_set = true;
 						break;
 				}
