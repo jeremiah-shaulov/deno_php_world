@@ -33,7 +33,7 @@ class DenoWorld implements ArrayAccess, JsonSerializable
 	}
 
 	function __destruct()
-	{	DenoWorldMain::write_destruct($this->deno_inst_id);
+	{	DenoWorldMain::php_inst_destroyed($this->deno_inst_id);
 	}
 
 	public function __get($name)
@@ -291,9 +291,9 @@ class DenoWorldMain extends DenoWorld
 	private static string $end_mark = '';
 	private static array $php_insts = []; // deno has handles to these objects
 	private static array $php_insts_iters = [];
+	private static string $php_insts_destroyed = '';
 	private static int $php_inst_id_enum = 0;
 	private static $commands_io;
-	private static bool $is_complete = false;
 
 	public static function error_handler($err_code, $err_msg, $file, $line)
 	{	if (error_reporting(self::$error_reporting) != 0) // error_reporting returns zero if "@" operator was used
@@ -318,19 +318,28 @@ class DenoWorldMain extends DenoWorld
 	{	return json_encode($value, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
 	}
 
+	public static function php_inst_destroyed($deno_inst_id)
+	{	self::$php_insts_destroyed .= pack('llNl', -8, DenoWorldMain::RES_DESTRUCT, $deno_inst_id, 0);
+	}
+
 	private static function write_result($result, $result_is_set)
 	{	if (!$result_is_set)
-		{	fwrite(self::$commands_io, "\xFF\xFF\xFF\xFF\0\0\0\0"); // undefined + 4-byte padding
+		{	$data = "\xFF\xFF\xFF\xFF\0\0\0\0"; // undefined + 4-byte padding
 		}
 		else if ($result === null)
-		{	fwrite(self::$commands_io, "\0\0\0\0\0\0\0\0"); // null + 4-byte padding
+		{	$data = "\0\0\0\0\0\0\0\0"; // null + 4-byte padding
 		}
 		else
 		{	$data = self::json_encode(self::serialize_insts($result));
 			$len = strlen($data);
 			$padding = (8 - ($len + 4)%8) % 8;
-			fwrite(self::$commands_io, $padding===0 ? pack("l", $len).$data : pack("lx{$padding}", $len).$data);
+			$data = $padding===0 ? pack("l", $len).$data : pack("lx{$padding}", $len).$data;
 		}
+		if (strlen(self::$php_insts_destroyed))
+		{	$data = self::$php_insts_destroyed.$data;
+			self::$php_insts_destroyed = '';
+		}
+		fwrite(self::$commands_io, $data);
 	}
 
 	private static function write_exception(Throwable $e)
@@ -338,12 +347,6 @@ class DenoWorldMain extends DenoWorld
 		$len = strlen($data);
 		$padding = (8 - ($len + 4)%8) % 8;
 		fwrite(self::$commands_io, $padding===0 ? pack("lll", -8-$len, self::RES_ERROR, 0).$data : pack("lllx{$padding}", -8-$len, self::RES_ERROR, 0).$data);
-	}
-
-	public static function write_destruct($deno_inst_id)
-	{	if (!self::$is_complete)
-		{	fwrite(self::$commands_io, pack('llNl', -8, DenoWorldMain::RES_DESTRUCT, $deno_inst_id, 0));
-		}
 	}
 
 	public static function write_read($type, $deno_inst_id, $data='')
@@ -954,12 +957,7 @@ class DenoWorldMain extends DenoWorld
 		}
 
 		// Proceed
-		try
-		{	self::events_q();
-		}
-		finally
-		{	self::$is_complete = true;
-		}
+		self::events_q();
 	}
 }
 
