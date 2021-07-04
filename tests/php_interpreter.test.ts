@@ -2013,7 +2013,7 @@ Deno.test
 (	'Pass value PHP -> Deno -> PHP',
 	async () =>
 	{	await g.eval
-		(	`	global $var;
+		(	`	global $var, $var_arr;
 
 				class C
 				{	function get_value()
@@ -2022,22 +2022,29 @@ Deno.test
 				}
 
 				$var = new C;
+				$var_arr = [$var];
 			`
 		);
 
 		g.$var2 = await g.$var.this;
 		g.$var3 = [await g.$var.this];
+		g.$var4 = await g.$var_arr[0].this;
+		g.$var5 = [await g.$var_arr[0].this];
 
 		await g.eval
-		(	`	global $var2, $var3, $res2, $res3;
+		(	`	global $var2, $var3, $var4, $var5, $res2, $res3, $res4, $res5;
 
 				$res2 = $var2->get_value();
 				$res3 = $var3[0]->get_value();
+				$res4 = $var4->get_value();
+				$res5 = $var5[0]->get_value();
 			`
 		);
 
 		assertEquals(await g.$res2, 'the value');
 		assertEquals(await g.$res3, 'the value');
+		assertEquals(await g.$res4, 'the value');
+		assertEquals(await g.$res5, 'the value');
 
 		await g.exit();
 	}
@@ -2059,19 +2066,36 @@ Deno.test
 
 		let c = new FirstClass;
 
-		g.$var = c;
+		g.$var1 = c;
+		g.$var2 = [c];
 
 		await g.eval
-		(	`	global $var, $var2, $var3;
+		(	`	global $var1, $var2, $res1, $res1_arr, $res2, $res2_arr;
 
-				$var2 = $var;
-				$var3 = [$var];
+				$res1 = $var1;
+				$res1_arr = [$var1];
+
+				$res2 = $var2[0];
+				$res2_arr = [$var2[0]];
+
+				function pass($arg)
+				{	global $var;
+					$var = $arg;
+				}
 			`
 		);
 
-		assertEquals((await g.$var2) === c, true);
-		assertEquals((await g.$var3)[0] === c, true);
-		assertEquals((await g.$var3[0]) === c, true);
+		assertEquals((await g.$res1) === c, true);
+		assertEquals((await g.$res1_arr)[0] === c, true);
+		assertEquals((await g.$res1_arr[0]) === c, true);
+		assertEquals((await g.$res2) === c, true);
+		assertEquals((await g.$res2_arr)[0] === c, true);
+		assertEquals((await g.$res2_arr[0]) === c, true);
+
+		await g.pass(c);
+		assertEquals((await g.$var) === c, true);
+		await g.pass([c]);
+		assertEquals((await g.$var)[0] === c, true);
 
 		await g.exit();
 	}

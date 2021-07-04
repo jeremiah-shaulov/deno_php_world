@@ -1011,65 +1011,65 @@ await g.eval
 			return $n--;
 		}
 
-		function php_measure_time_per_million_ops(int $bench_times)
+		function php_ops_per_sec(int $bench_times)
 		{	global $n;
 			$n = $bench_times;
 			$start_time = microtime(true);
 			while (dec());
-			return (microtime(true) - $start_time) * 1_000_000 / $bench_times;
+			return $bench_times / (microtime(true) - $start_time);
 		}
 	`
 );
 
-let {php_measure_time_per_million_ops, dec} = g;
+let {php_ops_per_sec, dec} = g;
 
-async function deno_measure_time_per_million_ops(bench_times: number)
+async function deno_ops_per_sec(bench_times: number)
 {	g.$n = bench_times;
 	let start_time = Date.now() / 1000;
 	while (await dec());
-	return (Date.now()/1000 - start_time) * 1_000_000 / bench_times;
+	return bench_times / (Date.now()/1000 - start_time);
 }
 
-let php_native_time = await php_measure_time_per_million_ops(10_000_000);
-console.log(`PHP native per million ops: ${php_native_time} sec`);
+let php_native_time = await php_ops_per_sec(10_000_000);
+console.log(`PHP native: ${php_native_time} ops/sec`);
 
-let api_time = await deno_measure_time_per_million_ops(100_000);
-console.log(`API per million ops: ${api_time} sec (${Math.round(api_time/php_native_time)} times slower)`);
+let api_time = await deno_ops_per_sec(100_000);
+console.log(`API: ${api_time} ops/sec, (${Math.round(php_native_time/api_time)} times slower)`);
 ```
 On my computer i get the following result:
 
 ```
-PHP native per million ops: 0.6503312110900878 sec
-API per million ops: 67.59000062942505 sec (104 times slower)
+PHP native: 6447752.089756534 ops/sec
+API: 26301.94602735204 ops/sec, (245 times slower)
 ```
 This is for the most elementary operation that we can measure. What if this operation would be heavier?
 
 ```php
 function dec()
 {	global $n, $v;
-	$v = !$v ? str_repeat('-', 256) : substr(base64_encode($v), 0, 256);
+	$v = base64_encode('0123456789ABCDEF0123456789ABCDEF');
 	return $n--;
 }
 ```
-This benchmark takes more time, so i reduce the number of tests to 1_000_000 for PHP-native, and to 100_000 for API. The results on my computer are these:
+The results on my computer are these:
 
 ```
-PHP native per million ops: 2.2854011058807373 sec
-API per million ops: 72.03999996185303 sec (32 times slower)
+PHP native: 3049521.541919448 ops/sec
+API: 24679.170501055585 ops/sec, (124 times slower)
 ```
 
-And for a some slower operation?
+And for a much slower operation?
 
 ```php
 function dec()
 {	global $n, $v;
-	$v = !$v ? str_repeat('-', 25600) : substr(base64_encode($v), 0, 25600);
+	$v = base64_encode(str_repeat('*', 25600));
 	return $n--;
 }
 ```
-Results:
+Results (php_ops_per_sec(1_000_000) and deno_ops_per_sec(10_000)):
 
 ```
-PHP native per million ops: 41.54288053512573 sec
-API per million ops: 118.94999980926514 sec (3 times slower)
+PHP native: 57892.50582551152 ops/sec
+API: 16806.72188093417 ops/sec, (3 times slower)
 ```

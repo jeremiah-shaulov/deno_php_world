@@ -6,8 +6,12 @@ import {fcgi, ResponseWithCookies, writeAll, exists} from './deps.ts';
 
 const PHP_CLI_NAME_DEFAULT = 'php';
 const DEBUG_PHP_BOOT = true;
+const KEY_LEN = 32;
 const READER_MUX_END_MARK_LEN = 32;
-const DEFAULT_KEEP_ALIVE_TIMEOUT = 10000;
+const BUFFER_LEN = 1024; // so small packets will not need allocation
+const DEFAULT_KEEP_ALIVE_TIMEOUT = 10_000;
+
+debug_assert(BUFFER_LEN>=8 && BUFFER_LEN>=KEY_LEN && BUFFER_LEN>=READER_MUX_END_MARK_LEN);
 
 const enum REC
 {	DATA,
@@ -93,15 +97,17 @@ const decoder = new TextDecoder;
 
 fcgi.onError(e => {console.error(e)});
 
-async function get_random_key(): Promise<string>
+async function get_random_key(buffer: Uint8Array): Promise<string>
 {	if (await exists('/dev/urandom'))
 	{	let fh = await Deno.open('/dev/urandom', {read: true});
-		let buffer = new Uint8Array(32);
 		try
 		{	let pos = 0;
-			while (pos < 32)
+			while (pos < buffer.length)
 			{	let n_read = await fh.read(buffer.subarray(pos));
-				pos += n_read!;
+				if (n_read == null)
+				{	throw new Error(`Failed to read from /dev/urandom`);
+				}
+				pos += n_read;
 			}
 		}
 		finally
@@ -112,9 +118,8 @@ async function get_random_key(): Promise<string>
 	return Math.random()+'';
 }
 
-function get_weak_random_bytes(n: number)
-{	let buffer = new Uint8Array(n);
-	for (let i=0; i<buffer.length; i++)
+function get_weak_random_bytes(buffer: Uint8Array)
+{	for (let i=0; i<buffer.length; i++)
 	{	buffer[i] = Math.floor(Math.random()*256);
 	}
 	return buffer;
@@ -261,6 +266,7 @@ export class PhpInterpreter
 	private php_fpm_response: Promise<ResponseWithCookies>|undefined;
 	private listener: Deno.Listener|undefined;
 	private commands_io: Deno.Conn|undefined;
+	private buffer = new Uint8Array;
 	private is_inited = false;
 	private using_unix_socket = '';
 	private ongoing: Promise<unknown>[] = [];
@@ -434,7 +440,7 @@ export class PhpInterpreter
 										{	php.write_read(REC.SET_PATH_INST, path_str+' '+php.new_deno_inst(value)+' '+path_str_2+JSON.stringify(prop_name)+']');
 										}
 										else
-										{	php.write_read(REC.SET_PATH, path_str+' ['+path_str_2+JSON.stringify(prop_name)+'],'+JSON.stringify(value)+']');
+										{	php.write_read(REC.SET_PATH, path_str+' ['+path_str_2+JSON.stringify(prop_name)+'],'+php.json_stringify_serialize_insts(value)+']');
 										}
 										return true;
 									};
@@ -470,7 +476,7 @@ export class PhpInterpreter
 											{	php.write_read(REC.CLASSSTATIC_SET_INST, path_str_2+' '+php.new_deno_inst(value));
 											}
 											else
-											{	php.write_read(REC.CLASSSTATIC_SET, path_str_2+' '+JSON.stringify(value));
+											{	php.write_read(REC.CLASSSTATIC_SET, path_str_2+' '+php.json_stringify_serialize_insts(value));
 											}
 											return true;
 										};
@@ -498,7 +504,7 @@ export class PhpInterpreter
 											{	php.write_read(REC.CLASSSTATIC_SET_PATH_INST, path_str+JSON.stringify(prop_name)+'],'+php.new_deno_inst(value)+']');
 											}
 											else
-											{	php.write_read(REC.CLASSSTATIC_SET_PATH, path_str+JSON.stringify(prop_name)+'],'+JSON.stringify(value)+']');
+											{	php.write_read(REC.CLASSSTATIC_SET_PATH, path_str+JSON.stringify(prop_name)+'],'+php.json_stringify_serialize_insts(value)+']');
 											}
 											return true;
 										};
@@ -586,7 +592,7 @@ export class PhpInterpreter
 												};
 											case 'echo':
 												return function(args)
-												{	return php.write_read(REC.CALL_ECHO, php.json_stringify_serialize_insts(args));
+												{	return php.write_read(REC.CALL_ECHO, php.json_stringify_serialize_insts([...args]));
 												};
 											case 'include':
 												return function(args)
@@ -635,7 +641,7 @@ export class PhpInterpreter
 								return function(args)
 								{	let path_str_2 = path_str;
 									if (args.length != 0)
-									{	path_str_2 += ' '+php.json_stringify_serialize_insts(args);
+									{	path_str_2 += ' '+php.json_stringify_serialize_insts([...args]);
 									}
 									let is_this = false;
 									let promise = php.schedule
@@ -663,7 +669,7 @@ export class PhpInterpreter
 							path =>
 							{	let class_name = path.join('\\');
 								return async function(args)
-								{	return construct(php, await php.write_read(REC.CONSTRUCT, args.length==0 ? class_name : class_name+' '+php.json_stringify_serialize_insts(args)), class_name);
+								{	return construct(php, await php.write_read(REC.CONSTRUCT, args.length==0 ? class_name : class_name+' '+php.json_stringify_serialize_insts([...args])), class_name);
 								};
 							},
 
@@ -715,7 +721,7 @@ export class PhpInterpreter
 						{	php.write_read(REC.SET_INST, prop_name+' '+php.new_deno_inst(value));
 						}
 						else
-						{	php.write_read(REC.SET, prop_name+' '+JSON.stringify(value));
+						{	php.write_read(REC.SET, prop_name+' '+php.json_stringify_serialize_insts(value));
 						}
 						return true;
 					},
@@ -799,7 +805,7 @@ export class PhpInterpreter
 							{	php.write_read(REC.CLASS_SET_INST, path_str+prop_name+' '+php.new_deno_inst(value));
 							}
 							else
-							{	php.write_read(REC.CLASS_SET, path_str+prop_name+' '+JSON.stringify(value));
+							{	php.write_read(REC.CLASS_SET, path_str+prop_name+' '+php.json_stringify_serialize_insts(value));
 							}
 							return true;
 						};
@@ -820,7 +826,7 @@ export class PhpInterpreter
 							{	php.write_read(REC.CLASS_SET_PATH_INST, path_str+JSON.stringify(prop_name)+'],'+php.new_deno_inst(value)+']');
 							}
 							else
-							{	php.write_read(REC.CLASS_SET_PATH, path_str+JSON.stringify(prop_name)+'],'+JSON.stringify(value)+']');
+							{	php.write_read(REC.CLASS_SET_PATH, path_str+JSON.stringify(prop_name)+'],'+php.json_stringify_serialize_insts(value)+']');
 							}
 							return true;
 						};
@@ -854,7 +860,7 @@ export class PhpInterpreter
 				path =>
 				{	if (path.length == 0)
 					{	return function(args)
-						{	return php.write_read(REC.CLASS_INVOKE, args.length==0 ? php_inst_id+'' : php_inst_id+' '+php.json_stringify_serialize_insts(args));
+						{	return php.write_read(REC.CLASS_INVOKE, args.length==0 ? php_inst_id+'' : php_inst_id+' '+php.json_stringify_serialize_insts([...args]));
 						};
 					}
 					if (path.length == 1)
@@ -866,7 +872,7 @@ export class PhpInterpreter
 						else
 						{	let path_str = php_inst_id+' '+path[0];
 							return function(args)
-							{	return php.write_read(REC.CLASS_CALL, args.length==0 ? path_str : path_str+' '+php.json_stringify_serialize_insts(args));
+							{	return php.write_read(REC.CLASS_CALL, args.length==0 ? path_str : path_str+' '+php.json_stringify_serialize_insts([...args]));
 							};
 						}
 					}
@@ -876,7 +882,7 @@ export class PhpInterpreter
 						}
 						let path_str = php_inst_id+' '+path[path.length-1]+' ['+JSON.stringify(path.slice(0, -1))+',';
 						return function(args)
-						{	return php.write_read(REC.CLASS_CALL_PATH, path_str+php.json_stringify_serialize_insts(args)+']');
+						{	return php.write_read(REC.CLASS_CALL_PATH, path_str+php.json_stringify_serialize_insts([...args])+']');
 						};
 					}
 				},
@@ -916,6 +922,9 @@ export class PhpInterpreter
 		debug_assert(!this.is_inited);
 		debug_assert(!this.php_cli_proc && !this.php_fpm_response && !this.stdout_mux && !this.commands_io);
 		this.is_inited = true;
+		if (this.buffer.length == 0)
+		{	this.buffer = new Uint8Array(BUFFER_LEN);
+		}
 		// 2. Open a listener, and start listening
 		let php_socket;
 		if (this.settings.unix_socket_name)
@@ -929,8 +938,8 @@ export class PhpInterpreter
 			php_socket = 'tcp://127.0.0.1:'+(this.listener.addr as Deno.NetAddr).port;
 		}
 		// 3. HELO (generate random key)
-		let key = await get_random_key();
-		let end_mark = get_weak_random_bytes(READER_MUX_END_MARK_LEN);
+		let key = await get_random_key(this.buffer.subarray(0, KEY_LEN));
+		let end_mark = get_weak_random_bytes(this.buffer.subarray(0, READER_MUX_END_MARK_LEN));
 		let {init_php_file} = this.settings;
 		this.settings.init_php_file = ''; // so second call to `exit()` will not reexecute the init script. if reexecution is needed, reassign `this.settings.init_php_file`
 		let rec_helo = key+' '+btoa(String.fromCharCode(...end_mark))+' '+btoa(php_socket)+' '+btoa(init_php_file);
@@ -948,7 +957,7 @@ export class PhpInterpreter
 			this.php_cli_proc.stdin!.close();
 			// Mux stdout
 			if (this.settings.stdout == 'piped')
-			{	this.stdout_mux = new ReaderMux(Promise.resolve(this.php_cli_proc.stdout), end_mark);
+			{	this.stdout_mux = new ReaderMux(Promise.resolve(this.php_cli_proc.stdout), end_mark.slice());
 			}
 		}
 		else
@@ -988,7 +997,7 @@ export class PhpInterpreter
 			);
 			// Mux stdout
 			if (this.settings.stdout != 'inherit')
-			{	this.stdout_mux = new ReaderMux(this.php_fpm_response.then(r => r.body), end_mark);
+			{	this.stdout_mux = new ReaderMux(this.php_fpm_response.then(r => r.body), end_mark.slice());
 			}
 			// onresponse
 			if (this.settings.php_fpm.onresponse)
@@ -1040,7 +1049,10 @@ export class PhpInterpreter
 	}
 
 	private async do_write(record_type: number, str: string)
-	{	let body = new Uint8Array(str.length+32);
+	{	if (!this.is_inited)
+		{	await this.do_init();
+		}
+		let body = str.length<=this.buffer.length ? this.buffer : new Uint8Array(str.length+128);
 		let offset = 8;
 		while (true)
 		{	let {read, written} = encoder.encodeInto(str, body.subarray(offset));
@@ -1064,9 +1076,6 @@ export class PhpInterpreter
 		{	let new_body = new Uint8Array(offset+padding);
 			new_body.set(body);
 			body = new_body;
-		}
-		if (!this.is_inited)
-		{	await this.do_init();
 		}
 		if (this.stdout_mux && !this.stdout_mux.is_reading)
 		{	let {stdout} = this.settings;
@@ -1096,7 +1105,7 @@ export class PhpInterpreter
 
 	private async do_read(): Promise<any>
 	{	while (true)
-		{	let buffer = new Uint8Array(8);
+		{	let buffer = this.buffer.subarray(0, 8); // records are aligned to 8-byte boundaries, and padding is added as needed
 			let pos = 0;
 			while (pos < 8)
 			{	let n_read = await this.commands_io!.read(buffer);
@@ -1119,7 +1128,7 @@ export class PhpInterpreter
 			}
 			let padding = (8 - (len + 4)%8) % 8;
 			len += padding;
-			buffer = new Uint8Array(len);
+			buffer = len<=this.buffer.length ? this.buffer.subarray(0, len) : new Uint8Array(len);
 			pos = 4; // first_word already read
 			while (pos < len)
 			{	let n_read = await this.commands_io!.read(buffer.subarray(pos));
@@ -1281,17 +1290,18 @@ export class PhpInterpreter
 		);
 	}
 
-	private json_stringify_serialize_insts(args: IArguments)
-	{	let args_arr = [];
-		for (let value of args)
-		{	if (value!=null && typeof(value)=='object' && value.constructor!=Object && value.constructor!=Array || typeof(value)=='function' && value[symbol_php_object]==null)
-			{	args_arr[args_arr.length] = {DENO_WORLD_INST_ID: this.new_deno_inst(value)};
+	private json_stringify_serialize_insts(value: any)
+	{	return JSON.stringify
+		(	value,
+			(key, value) =>
+			{	if (value!=null && typeof(value)=='object' && value.constructor!=Object && value.constructor!=Array || typeof(value)=='function' && value[symbol_php_object]==null)
+				{	return {DENO_WORLD_INST_ID: this.new_deno_inst(value)};
+				}
+				else
+				{	return value;
+				}
 			}
-			else
-			{	args_arr[args_arr.length] = value;
-			}
-		}
-		return JSON.stringify(args_arr);
+		);
 	}
 
 	private async do_exit(is_eof=false): Promise<Deno.ProcessStatus>
