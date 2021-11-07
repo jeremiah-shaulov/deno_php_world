@@ -2,7 +2,7 @@ import {debug_assert} from './debug_assert.ts';
 import {PHP_BOOT, get_php_boot_filename} from './php-init.ts';
 import {create_proxy} from './proxy_object.ts';
 import {ReaderMux} from './reader_mux.ts';
-import {fcgi, ResponseWithCookies, writeAll, exists} from './deps.ts';
+import {fcgi, ResponseWithCookies, writeAll, exists, copy} from './deps.ts';
 
 const PHP_CLI_NAME_DEFAULT = 'php';
 const DEBUG_PHP_BOOT = true;
@@ -1278,7 +1278,7 @@ export class PhpInterpreter
 
 	private new_deno_inst(data: any)
 	{	let deno_inst_id = this.deno_inst_id_enum++;
-		this.deno_inst_id_enum &= 0x7FFFFFFF;
+		this.deno_inst_id_enum &= 0x7FFF_FFFF;
 		this.deno_insts.set(deno_inst_id, data);
 		return deno_inst_id;
 	}
@@ -1328,7 +1328,7 @@ export class PhpInterpreter
 			{	let response = await this.php_fpm_response;
 				if (response.body)
 				{	try
-					{	await Deno.copy(response.body, {async write(p: Uint8Array) {return p.length}}); // read and discard
+					{	await copy(response.body, {async write(p: Uint8Array) {return p.length}}); // read and discard
 					}
 					catch
 					{	// ok, maybe onresponse already read the body

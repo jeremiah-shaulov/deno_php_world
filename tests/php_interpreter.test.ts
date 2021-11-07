@@ -110,10 +110,10 @@ Deno.test
 			g.$var = deno_obj;
 			assertEquals((await g.$var) === deno_obj, true);
 			delete g.$var.a.b.c;
-			assertEquals(await g.$var, {a: {b: {}}});
+			assertEquals(await g.$var, new DenoA({b: {}}));
 			g.$var['a']['b'] = 'Hello all';
 			await php.ready();
-			assertEquals(deno_obj, {a: {b: 'Hello all'}});
+			assertEquals(deno_obj, new DenoA({b: 'Hello all'}));
 			g.$_SERVER['hello']['world'] = deno_obj;
 			assertEquals((await g.$_SERVER['hello']['world']) === deno_obj, true);
 
@@ -129,7 +129,7 @@ Deno.test
 			);
 			assertEquals(await g.$var, {a: {b: {c: 10}}});
 			delete g.$var.a.b.c;
-			assertEquals(await g.$var, {a: {b: {}}});
+			assertEquals(await g.$var, {a: {b: []}});
 			g.$var['a'] = 'Hello all';
 			assertEquals(await g.$var, {a: 'Hello all'});
 			g.$var['a']['b'] = 'Hello all';
@@ -224,10 +224,10 @@ Deno.test
 			C.$var2 = deno_obj;
 			assertEquals((await C.$var2) === deno_obj, true);
 			delete C.$var2.a.b.c;
-			assertEquals(await C.$var2, {a: {b: {}}});
+			assertEquals(await C.$var2, new DenoA({b: {}}));
 			C.$var2['a']['b'] = 'Hello all';
 			await php.ready();
-			assertEquals(deno_obj, {a: {b: 'Hello all'}});
+			assertEquals(deno_obj, new DenoA({b: 'Hello all'}));
 			let deno_obj_2 = new DenoA({b: {c: 11}});
 			C.$var2['a']['b'] = deno_obj_2;
 			assertEquals((await C.$var2['a']['b']) == deno_obj_2, true);
@@ -242,7 +242,7 @@ Deno.test
 			);
 			assertEquals(await C.$var2, {a: {b: {c: 10}}});
 			delete C.$var2.a.b.c;
-			assertEquals(await C.$var2, {a: {b: {}}});
+			assertEquals(await C.$var2, {a: {b: []}});
 			C.$var2['a'] = 'Hello all';
 			assertEquals(await C.$var2, {a: 'Hello all'});
 			C.$var2['a']['b']['c'] = null;
@@ -603,7 +603,7 @@ Deno.test
 			);
 
 			delete c.MainNs.SubNs.C.$var['two']['three'];
-			assertEquals(await c.MainNs.SubNs.C.$var, {one: 1, two: {}});
+			assertEquals(await c.MainNs.SubNs.C.$var, {one: 1, two: []});
 			c.MainNs.SubNs.C.$var['two']['three'] = 3;
 			assertEquals(await c.MainNs.SubNs.C.$var, {one: 1, two: {three: 3}});
 			delete c.MainNs.SubNs.C.$var['two'];
@@ -612,7 +612,7 @@ Deno.test
 			let obj = await new c.MainNs.SubNs.C;
 			assertEquals(await obj.prop, {one: 1, two: {three: 3}});
 			delete obj.prop['two']['three'];
-			assertEquals(await obj.prop, {one: 1, two: {}});
+			assertEquals(await obj.prop, {one: 1, two: []});
 			delete obj.prop['two'];
 			assertEquals(await obj.prop, {one: 1});
 			delete obj.prop;
@@ -636,7 +636,7 @@ Deno.test
 			g.$tmp = deno_obj;
 			assertEquals((await g.$tmp) === deno_obj, true);
 			delete g.$tmp[2]['value'];
-			assertEquals(await g.$tmp, ['a', 'b', {}]);
+			assertEquals(await g.$tmp, new DenoArray('a', 'b', {}));
 
 			await php_eval
 			(	`	global $tmp;
@@ -649,7 +649,7 @@ Deno.test
 			);
 			assertEquals(await g.$tmp, ['a', 'b', {value: 'c'}]);
 			delete g.$tmp[2]['value'];
-			assertEquals(await g.$tmp, ['a', 'b', {}]);
+			assertEquals(await g.$tmp, ['a', 'b', []]);
 
 			await g.exit();
 		}

@@ -1,3 +1,5 @@
+import {copy} from './deps.ts';
+
 export class ReaderMux
 {	private is_eof = false;
 	private buffer: Uint8Array;
@@ -74,7 +76,7 @@ export class ReaderMux
 	}
 
 	async set_writer(writer: Deno.Writer)
-	{	Deno.copy(await this.get_reader(), writer);
+	{	copy(await this.get_reader(), writer);
 	}
 
 	async set_none()

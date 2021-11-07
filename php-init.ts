@@ -940,7 +940,7 @@ class DenoWorldMain extends DenoWorld
 			return;
 		}
 		self::$commands_io = $commands_io;
-		stream_set_timeout($commands_io, 0x7FFFFFFF);
+		stream_set_timeout($commands_io, 0x7FFF_FFFF);
 		self::$end_mark = base64_decode($data[1]);
 		self::write_result($data[0], true);
 		if (strlen($data[3]) != 0)
