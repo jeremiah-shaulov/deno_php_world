@@ -213,6 +213,12 @@ export interface PhpFpmSettings
 		Also `response.body` object extends regular `ReadableStream<Uint8Array>` by adding `Deno.Reader` implementation.
 	 **/
 	onresponse?: (response: ResponseWithCookies) => Promise<unknown>;
+
+	/**	This library creates temporary file with initialization script, that PHP-FPM must execute.
+		By default this file is created in system temporary directory.
+		This setting allows to override the directory path.
+	 **/
+	tmp_dir?: string;
 }
 
 /**	Settings that affect `PhpInterpreter` behavior.
@@ -220,9 +226,9 @@ export interface PhpFpmSettings
 export class PhpSettings
 {	/**	Command that will be executed to spawn a PHP-CLI process. This setting is ignored if `php_fpm.listen` is set.
 	 **/
-	public php_cli_name = PHP_CLI_NAME_DEFAULT;
+	php_cli_name = PHP_CLI_NAME_DEFAULT;
 
-	public php_fpm: PhpFpmSettings =
+	php_fpm: PhpFpmSettings =
 	{	listen: '',
 		keep_alive_timeout: DEFAULT_KEEP_ALIVE_TIMEOUT,
 		keep_alive_max: Number.MAX_SAFE_INTEGER,
@@ -231,16 +237,16 @@ export class PhpSettings
 		max_conns: 128,
 	};
 
-	public unix_socket_name = '';
-	public stdout: 'inherit'|'piped'|'null'|number = 'inherit';
+	unix_socket_name = '';
+	stdout: 'inherit'|'piped'|'null'|number = 'inherit';
 
 	/**	If set to existing PHP file, will chdir() to this file's directory, and execute this file before doing first requested operation (including `g.exit()`).
 		Then this setting will be reset to empty string, so next call to `g.exit()` will not rerun the file.
 		If you want to rerun, set `init_php_file` again.
 	 **/
-	public init_php_file = '';
+	init_php_file = '';
 
-	public onsymbol: (name: string) => any = () => {};
+	onsymbol: (name: string) => any = () => {};
 
 	constructor(init_settings?: PhpSettingsInit)
 	{	this.php_cli_name = init_settings?.php_cli_name ?? this.php_cli_name;
@@ -284,15 +290,15 @@ export class PhpInterpreter
 
 	/**	For accessing remote global PHP objects, except classes (functions, variables, constants).
 	 **/
-	public g: any;
+	g: any;
 
 	/**	For accessing remote PHP classes.
 	 **/
-	public c: any;
+	c: any;
 
 	/**	Modify settings before spawning interpreter or connecting to PHP-FPM service.
 	 **/
-	public settings: PhpSettings;
+	settings: PhpSettings;
 
 	/**	You can have as many PHP interpreter instances as you want. Don't forget to call `this.g.exit()` to destroy the background interpreter.
 	 **/
@@ -951,7 +957,7 @@ export class PhpInterpreter
 		// 4. Run the PHP interpreter or connect to PHP-FPM service
 		if (!this.settings.php_fpm.listen)
 		{	// Run the PHP interpreter
-			let cmd = DEBUG_PHP_BOOT ? [this.settings.php_cli_name, '-f', await get_php_boot_filename(true)] : [this.settings.php_cli_name, '-r', PHP_BOOT.slice('<?php\n\n'.length)];
+			let cmd = DEBUG_PHP_BOOT ? [this.settings.php_cli_name, '-f', await get_php_boot_filename(true, this.settings.php_fpm.tmp_dir)] : [this.settings.php_cli_name, '-r', PHP_BOOT.slice('<?php\n\n'.length)];
 			if (Deno.args.length)
 			{	cmd.splice(cmd.length, 0, '--', ...Deno.args);
 			}
@@ -967,7 +973,7 @@ export class PhpInterpreter
 		else
 		{	// Connect to PHP-FPM service
 			// First create php file with init script
-			php_boot_file = await get_php_boot_filename(DEBUG_PHP_BOOT);
+			php_boot_file = await get_php_boot_filename(DEBUG_PHP_BOOT, this.settings.php_fpm.tmp_dir);
 			// Prepare params
 			let {params} = this.settings.php_fpm;
 			if (params.has('DENO_WORLD_HELO'))

@@ -965,10 +965,10 @@ DenoWorldMain::main();
 ?>`;
 
 let php_boot_filename = '';
-export async function get_php_boot_filename(is_debug=false)
+export async function get_php_boot_filename(is_debug=false, tmp_dir?: string)
 {	if (!php_boot_filename)
 	{	// create a temp file
-		let tmp_name = await Deno.makeTempFile();
+		let tmp_name = await Deno.makeTempFile({dir: tmp_dir});
 		// figure out what is tmp dir
 		let tmp_dirname = dirname(tmp_name);
 		tmp_dirname = tmp_name.slice(0, tmp_dirname.length+1); // inclide dir separator char

@@ -838,7 +838,7 @@ The body can be read in regular way, as you do with `fetch()`, or it can be read
 
 ```ts
 import {g, c, php, settings} from 'https://deno.land/x/php_world/mod.ts';
-import {readAll} from 'https://deno.land/std@0.97.0/io/util.ts';
+export {readAll} from 'https://deno.land/std@0.113.0/streams/conversion.ts';
 
 settings.php_fpm.listen = '/run/php/php-fpm.jeremiah.sock';
 settings.php_fpm.onresponse = async (response) =>
