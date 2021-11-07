@@ -1,5 +1,5 @@
 import {PhpInterpreter, PhpSettings} from './php_interpreter.ts';
-import {fcgi, ServerRequest, iter} from './deps.ts';
+import {fcgi, ServerRequest, iterateReader} from './deps.ts';
 
 const RE_FIX_SCRIPT_FILENAME = /^(?:(?:[\w\-]+:){1,2}\/\/[^\/]+)?(?:\/(?=\/))*/; // if SetHandler is used in Apache, it sends requests prefixed with "proxy:fcgi://localhost/", or what appears in the "SetHandler"
 
@@ -31,7 +31,7 @@ export class PhpRequest extends PhpInterpreter
 	async proxy()
 	{	this.settings.php_fpm.request_init =
 		{	method: this.request.params.get('REQUEST_METHOD'),
-			bodyIter: iter(this.request.body),
+			bodyIter: iterateReader(this.request.body),
 			headers: this.request.headers
 		};
 		this.settings.php_fpm.onresponse = async (response) =>

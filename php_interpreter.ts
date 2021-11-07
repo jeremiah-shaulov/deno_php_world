@@ -2,10 +2,10 @@ import {debug_assert} from './debug_assert.ts';
 import {PHP_BOOT, get_php_boot_filename} from './php-init.ts';
 import {create_proxy} from './proxy_object.ts';
 import {ReaderMux} from './reader_mux.ts';
-import {fcgi, ResponseWithCookies, writeAll, exists, copy} from './deps.ts';
+import {fcgi, ResponseWithCookies, writeAll, copy} from './deps.ts';
 
 const PHP_CLI_NAME_DEFAULT = 'php';
-const DEBUG_PHP_BOOT = true;
+const DEBUG_PHP_BOOT = false;
 const KEY_LEN = 32;
 const READER_MUX_END_MARK_LEN = 32;
 const BUFFER_LEN = 1024; // so small packets will not need allocation
@@ -98,24 +98,28 @@ const decoder = new TextDecoder;
 fcgi.onError(e => {console.error(e)});
 
 async function get_random_key(buffer: Uint8Array): Promise<string>
-{	if (await exists('/dev/urandom'))
-	{	let fh = await Deno.open('/dev/urandom', {read: true});
-		try
-		{	let pos = 0;
-			while (pos < buffer.length)
-			{	let n_read = await fh.read(buffer.subarray(pos));
-				if (n_read == null)
-				{	throw new Error(`Failed to read from /dev/urandom`);
-				}
-				pos += n_read;
-			}
-		}
-		finally
-		{	fh.close();
-		}
-		return btoa(String.fromCharCode(...buffer));
+{	let fh;
+	try
+	{	fh = await Deno.open('/dev/urandom', {read: true});
 	}
-	return Math.random()+'';
+	catch
+	{	// assume: OS without /dev/urandom feature
+		return Math.random()+'';
+	}
+	try
+	{	let pos = 0;
+		while (pos < buffer.length)
+		{	let n_read = await fh.read(buffer.subarray(pos));
+			if (n_read == null)
+			{	throw new Error(`Failed to read from /dev/urandom`);
+			}
+			pos += n_read;
+		}
+	}
+	finally
+	{	fh.close();
+	}
+	return btoa(String.fromCharCode(...buffer));
 }
 
 function get_weak_random_bytes(buffer: Uint8Array)
@@ -1370,11 +1374,11 @@ export class PhpInterpreter
 		{	console.error(e);
 		}
 		if (this.using_unix_socket)
-		{	if (await exists(this.using_unix_socket))
-			{	try
-				{	await Deno.remove(this.using_unix_socket);
-				}
-				catch (e)
+		{	try
+			{	await Deno.remove(this.using_unix_socket);
+			}
+			catch (e)
+			{	if (e.name != 'NotFound')
 				{	console.error(e);
 				}
 			}
