@@ -238,6 +238,10 @@ export class PhpSettings
 	};
 
 	unix_socket_name = '';
+	/**	This library will create socket for communication with PHP process.
+		If communicating with remote PHP-FPM, need to specify hostname of the current host, where this application is running, and PHP-FPM must be able to discover this host by the specified name.
+	 **/
+	localhost_name = '127.0.0.1';
 	stdout: 'inherit'|'piped'|'null'|number = 'inherit';
 
 	/**	If set to existing PHP file, will chdir() to this file's directory, and execute this file before doing first requested operation (including `g.exit()`).
@@ -944,8 +948,8 @@ export class PhpInterpreter
 		}
 		else
 		{	this.using_unix_socket = '';
-			this.listener = Deno.listen({transport: 'tcp', hostname: '127.0.0.1', port: 0});
-			php_socket = 'tcp://127.0.0.1:'+(this.listener.addr as Deno.NetAddr).port;
+			this.listener = Deno.listen({transport: 'tcp', hostname: this.settings.localhost_name, port: 0});
+			php_socket = `tcp://${this.settings.localhost_name}:${(this.listener.addr as Deno.NetAddr).port}`;
 		}
 		// 3. HELO (generate random key)
 		let key = await get_random_key(this.buffer.subarray(0, KEY_LEN));
@@ -1316,7 +1320,8 @@ export class PhpInterpreter
 
 	private async do_exit(is_eof=false): Promise<Deno.ProcessStatus>
 	{	if (!this.is_inited && this.settings.init_php_file)
-		{	await this.do_init();
+		{	// Didn't call any functions, just called exit(), so `init_php_file` was not executed.
+			await this.do_init();
 		}
 		try
 		{	await this.do_drop_stdout_reader(is_eof, true);
