@@ -1038,7 +1038,7 @@ export class PhpInterpreter
 			else
 			{	let result = await Promise.race([accept, this.php_fpm_response]);
 				if (result instanceof ResponseWithCookies)
-				{	accept.then(s => s.close());
+				{	accept.then(s => s.close()).catch(() => {});
 					throw new Error(`Failed to execute PHP-FPM script "${php_boot_file}" through socket "${this.settings.php_fpm.listen}": status ${result.status}, ${await result.text()}`);
 				}
 				this.commands_io = result;
