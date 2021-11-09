@@ -929,7 +929,7 @@ class DenoWorldMain extends DenoWorld
 		spl_autoload_register('DenoWorldMain::load_class');
 
 		// Read HELO, that is [key, end_mark, socket_name, init_php_file], and output the key back
-		$data = explode(' ', $_SERVER['DENO_WORLD_HELO'] ?? file_get_contents('php://stdin'));
+		$data = explode(' ', php_sapi_name()=='cli' ? file_get_contents('php://stdin') : $_SERVER['DENO_WORLD_HELO'] ?? '');
 		if (count($data) != 4)
 		{	return;
 		}
