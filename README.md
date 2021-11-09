@@ -49,24 +49,25 @@ There are several configurable settings:
 
 1. `settings.php_cli_name` - PHP-CLI command name (default `php`).
 2. `settings.unix_socket_name` - `php_world` uses socket channel to communicate with the remote interpreter. By default it uses random (free) TCP port. On non-Windows systems you can use unix-domain socket. Set `settings.unix_socket_name` to full path of socket node file, where it will be created.
-3. `settings.stdout` - allows to redirect PHP process echo output (see below).
+3. `settings.stdout` - Allows to redirect PHP process echo output (see below).
 4. `settings.php_fpm.listen` - If set, `php_world` will use PHP-FPM service, not CLI. Set this to what appears in your PHP-FPM pool configuration file (see line that contains `listen = ...`).
 5. `settings.php_fpm.*` - There are some more PHP-FPM related settings that will be explained below.
-6. `settings.init_php_file` - path to PHP script file. If specified, will `chdir()` to it's directory, and execute this script as part of initialization process.
-7. `onsymbol` - callback that resolves Deno world entities, that can be accessed from PHP.
+6. `settings.init_php_file` - Path to PHP script file. If specified, will `chdir()` to it's directory, and execute this script as part of initialization process.
+7. `settings.interpreter_script` - Use manually installed interpreter script (by default will use embedded one).
+7. `onsymbol` - Callback that resolves Deno world entities, that can be accessed from PHP.
 
 ### Interface
 
 `php_world` library exports the following symbols:
 
-1. `PhpInterpreter` - constructor for new PHP interpreter to run in the background.
-2. `php` - default interpreter (created with `new PhpInterpreter`).
-3. `g` - the same as `php.g`. Contains all the PHP functions, global constants and variables.
-4. `c` - the same as `php.c`. Contains classes.
-5. `settings` - the same as `php.settings`. Allows to modify interpreter settings.
-6. `InterpreterError` - class for exceptions propagated from PHP.
-7. `InterpreterExitError` - this error is thrown in case PHP interpreter exits or crashes.
-8. `start_proxy` - function that creates FastCGI proxy node between Web server and PHP-FPM, where PHP script can access Deno environment, and vise versa.
+1. `PhpInterpreter` - Constructor for new PHP interpreter to run in the background.
+2. `php` - Default interpreter (created with `new PhpInterpreter`).
+3. `g` - The same as `php.g`. Contains all the PHP functions, global constants and variables.
+4. `c` - The same as `php.c`. Contains classes.
+5. `settings` - The same as `php.settings`. Allows to modify interpreter settings.
+6. `InterpreterError` - Class for exceptions propagated from PHP.
+7. `InterpreterExitError` - This error is thrown in case PHP interpreter exits or crashes.
+8. `start_proxy` - Function that creates FastCGI proxy node between Web server and PHP-FPM, where PHP script can access Deno environment, and vise versa.
 
 ### Calling functions
 
@@ -981,6 +982,25 @@ await php.g.exit();
 This technique doesn't work good with PHP-FPM, because output can be buffered in the middle between PHP and Deno.
 
 Another options for `settings.stdout` are `null` (to ignore the output), and a numeric file descriptor (rid) of an opened file/stream.
+
+### Interpreter script
+
+This library uses interpreter script that executes commands sent from Deno end.
+
+If using PHP-CLI, the default behavior is to pass the whole contents of the interpreter script (that is embedded to this library) as command line argument to PHP command.
+
+If using PHP-FPM, the default behavior is to create temporary file in system temporary directory, write the interpreter script to this file, and pass it's filename to PHP-FPM service.
+
+In certain circumstances such default behavior is not wanted.
+Another option is to download the interpreter script [from here](https://deno.land/x/php_world/php/deno-php-world.php),
+install it to your system together with the application, and set `settings.interpreter_script` setting to the path of this file.
+This file must be accessible by PHP.
+
+Placing your interpreter script to WWW accessible place must not be a security risk.
+This script will agree to execute commands only if certain parameters are set.
+For PHP-CLI, this script reads parameters from STDIN, and only if `php_sapi_name()` returns `cli`.
+For PHP-FPM, parameters are passed through FastCGI server environment variable called `$_SERVER['DENO_WORLD_HELO']`.
+If your HTTP server is not configured to pass such variable, the interpreter script will not execute commands when is accessed through WWW.
 
 ### How fast is deno_world?
 

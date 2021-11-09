@@ -1,5 +1,5 @@
 import {debug_assert} from './debug_assert.ts';
-import {PHP_BOOT, get_php_boot_filename} from './php-init.ts';
+import {PHP_BOOT_CLI, get_interpreter_script_filename} from './interpreter_script.ts';
 import {create_proxy} from './proxy_object.ts';
 import {ReaderMux} from './reader_mux.ts';
 import {fcgi, ResponseWithCookies, writeAll, copy} from './deps.ts';
@@ -213,12 +213,6 @@ export interface PhpFpmSettings
 		Also `response.body` object extends regular `ReadableStream<Uint8Array>` by adding `Deno.Reader` implementation.
 	 **/
 	onresponse?: (response: ResponseWithCookies) => Promise<unknown>;
-
-	/**	This library creates temporary file with initialization script, that PHP-FPM must execute.
-		By default this file is created in system temporary directory.
-		This setting allows to override the directory path.
-	 **/
-	tmp_dir?: string;
 }
 
 /**	Settings that affect `PhpInterpreter` behavior.
@@ -238,15 +232,32 @@ export class PhpSettings
 	};
 
 	unix_socket_name = '';
+
 	/**	This library will create socket for communication with PHP process.
 		If communicating with remote PHP-FPM, need to specify hostname of the current host, where this application is running, and PHP-FPM must be able to discover this host by the specified name.
 	 **/
-	localhost_name = '127.0.0.1';
+	localhost_name = '::1';
+
+	/**	This library uses interpreter script that executes commands sent from Deno end.
+		If using PHP-CLI, the default behavior is to pass the whole contents of the interpreter script as command line argument to PHP command.
+		If using PHP-FPM, the default behavior is to create temporary file in system temporary directory, write the interpreter script to this file, and pass it's filename to PHP-FPM service.
+		In certain circumstances such default behavior is not wanted.
+		Another option is to download the interpreter script [from here](https://deno.land/x/php_world/php/deno-php-world.php),
+		install it to your system together with the application, and set the `interpreter_script` setting to the path of this file.
+		This file must be accessible by PHP.
+		Placing your interpreter script to WWW accessible place must not be a security risk.
+		This script will agree to execute commands only if certain parameters are set.
+		For PHP-CLI, this script reads parameters from STDIN, and only if `php_sapi_name()` returns `cli`.
+		For PHP-FPM, parameters are passed through FastCGI server environment variable called `$_SERVER['DENO_WORLD_HELO']`.
+		If your HTTP server is not configured to pass such variable, the interpreter script will not execute commands when is accessed through WWW.
+	 **/
+	interpreter_script = '';
+
 	stdout: 'inherit'|'piped'|'null'|number = 'inherit';
 
 	/**	If set to existing PHP file, will chdir() to this file's directory, and execute this file before doing first requested operation (including `g.exit()`).
-		Then this setting will be reset to empty string, so next call to `g.exit()` will not rerun the file.
-		If you want to rerun, set `init_php_file` again.
+		Then this setting will be reset to empty string, so next call to `g.exit()` will not reexecute the file.
+		If reexecution is needed, reassign `init_php_file`.
 	 **/
 	init_php_file = '';
 
@@ -948,20 +959,21 @@ export class PhpInterpreter
 		}
 		else
 		{	this.using_unix_socket = '';
-			this.listener = Deno.listen({transport: 'tcp', hostname: this.settings.localhost_name, port: 0});
-			php_socket = `tcp://${this.settings.localhost_name}:${(this.listener.addr as Deno.NetAddr).port}`;
+			const {localhost_name} = this.settings;
+			this.listener = Deno.listen({transport: 'tcp', hostname: localhost_name, port: 0});
+			php_socket = `tcp://${localhost_name.indexOf(':')==-1 ? localhost_name : '['+localhost_name+']'}:${(this.listener.addr as Deno.NetAddr).port}`;
 		}
 		// 3. HELO (generate random key)
 		let key = await get_random_key(this.buffer.subarray(0, KEY_LEN));
 		let end_mark = get_weak_random_bytes(this.buffer.subarray(0, READER_MUX_END_MARK_LEN));
-		let {init_php_file} = this.settings;
+		let {init_php_file, interpreter_script} = this.settings;
 		this.settings.init_php_file = ''; // so second call to `exit()` will not reexecute the init script. if reexecution is needed, reassign `this.settings.init_php_file`
 		let rec_helo = key+' '+btoa(String.fromCharCode(...end_mark))+' '+btoa(php_socket)+' '+btoa(init_php_file);
 		let php_boot_file = '';
 		// 4. Run the PHP interpreter or connect to PHP-FPM service
 		if (!this.settings.php_fpm.listen)
 		{	// Run the PHP interpreter
-			let cmd = DEBUG_PHP_BOOT ? [this.settings.php_cli_name, '-f', await get_php_boot_filename(true, this.settings.php_fpm.tmp_dir)] : [this.settings.php_cli_name, '-r', PHP_BOOT.slice('<?php\n\n'.length)];
+			let cmd = interpreter_script || DEBUG_PHP_BOOT ? [this.settings.php_cli_name, '-f', interpreter_script || await get_interpreter_script_filename(DEBUG_PHP_BOOT)] : [this.settings.php_cli_name, '-r', PHP_BOOT_CLI];
 			if (Deno.args.length)
 			{	cmd.splice(cmd.length, 0, '--', ...Deno.args);
 			}
@@ -977,7 +989,7 @@ export class PhpInterpreter
 		else
 		{	// Connect to PHP-FPM service
 			// First create php file with init script
-			php_boot_file = await get_php_boot_filename(DEBUG_PHP_BOOT, this.settings.php_fpm.tmp_dir);
+			php_boot_file = interpreter_script || await get_interpreter_script_filename(DEBUG_PHP_BOOT);
 			// Prepare params
 			let {params} = this.settings.php_fpm;
 			if (params.has('DENO_WORLD_HELO'))
@@ -1038,7 +1050,8 @@ export class PhpInterpreter
 			else
 			{	let result = await Promise.race([accept, this.php_fpm_response]);
 				if (result instanceof ResponseWithCookies)
-				{	accept.then(s => s.close()).catch(() => {});
+				{	// response came earlier than accept (script didn't connect to me)
+					accept.then(s => s.close()).catch(() => {});
 					throw new Error(`Failed to execute PHP-FPM script "${php_boot_file}" through socket "${this.settings.php_fpm.listen}": status ${result.status}, ${await result.text()}`);
 				}
 				this.commands_io = result;

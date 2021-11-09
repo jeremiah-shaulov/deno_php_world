@@ -24,6 +24,7 @@ function *settings_iter(settings: PhpSettings)
 {	for (let listen of ['', PHP_FPM_LISTEN])
 	{	settings.php_fpm.listen = listen;
 		settings.unix_socket_name = '';
+		settings.interpreter_script = '';
 		settings.stdout = 'inherit';
 		yield;
 		settings.stdout = 'piped';
@@ -32,10 +33,12 @@ function *settings_iter(settings: PhpSettings)
 		yield;
 		settings.stdout = 1;
 		yield;
-		if (listen == '')
-		{	settings.unix_socket_name = UNIX_SOCKET_NAME;
-			yield;
-		}
+		settings.interpreter_script = new URL('../../php/deno-php-world.php', import.meta.url).pathname;
+		yield;
+		settings.unix_socket_name = UNIX_SOCKET_NAME;
+		yield;
+		settings.interpreter_script = '';
+		yield;
 	}
 }
 
