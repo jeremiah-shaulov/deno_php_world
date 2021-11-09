@@ -1,4 +1,4 @@
 main.ts
 **/.directory
 .vscode
-tests/coverage
+private/tests/coverage

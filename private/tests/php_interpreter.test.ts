@@ -1,4 +1,4 @@
-import {g, c, php, settings, PhpInterpreter, InterpreterExitError} from '../mod.ts';
+import {g, c, php, settings, PhpInterpreter, InterpreterExitError} from '../../mod.ts';
 import {assert, assertEquals, sleep, readAll, fcgi, ServerRequest} from "../deps.ts";
 import {PhpSettings} from '../php_interpreter.ts';
 import {start_proxy, PhpRequest} from '../start_proxy.ts';
