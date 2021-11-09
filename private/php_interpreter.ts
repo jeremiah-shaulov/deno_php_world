@@ -242,7 +242,7 @@ export class PhpSettings
 		If using PHP-CLI, the default behavior is to pass the whole contents of the interpreter script as command line argument to PHP command.
 		If using PHP-FPM, the default behavior is to create temporary file in system temporary directory, write the interpreter script to this file, and pass it's filename to PHP-FPM service.
 		In certain circumstances such default behavior is not wanted.
-		Another option is to download the interpreter script [from here](https://deno.land/x/php_world/php/deno-php-world.php),
+		Another option is to download the interpreter script [from here](https://deno.land/x/php_world@v0.0.23/php/deno-php-world.php),
 		install it to your system together with the application, and set the `interpreter_script` setting to the path of this file.
 		This file must be accessible by PHP.
 		Placing your interpreter script to WWW accessible place must not be a security risk.

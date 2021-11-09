@@ -992,7 +992,7 @@ If using PHP-CLI, the default behavior is to pass the whole contents of the inte
 If using PHP-FPM, the default behavior is to create temporary file in system temporary directory, write the interpreter script to this file, and pass it's filename to PHP-FPM service.
 
 In certain circumstances such default behavior is not wanted.
-Another option is to download the interpreter script [from here](https://deno.land/x/php_world/php/deno-php-world.php),
+Another option is to download the interpreter script [from here](https://deno.land/x/php_world@v0.0.23/php/deno-php-world.php),
 install it to your system together with the application, and set `settings.interpreter_script` setting to the path of this file.
 This file must be accessible by PHP.
 
