@@ -9,6 +9,7 @@ const DEBUG_PHP_BOOT = false;
 const KEY_LEN = 32;
 const READER_MUX_END_MARK_LEN = 32;
 const BUFFER_LEN = 1024; // so small packets will not need allocation
+const DEFAULT_CONNECT_TIMEOUT = 4_000;
 const DEFAULT_KEEP_ALIVE_TIMEOUT = 10_000;
 
 debug_assert(BUFFER_LEN>=8 && BUFFER_LEN>=KEY_LEN && BUFFER_LEN>=READER_MUX_END_MARK_LEN);
@@ -196,6 +197,8 @@ export interface PhpFpmSettings
 {	listen: string;
 	max_conns: number;
 
+	connect_timeout: number;
+
 	/**	Connections to PHP-FPM service will be reused for this number of milliseconds (deno script may not exit while there're idle connections - call `php.close_idle()` to close them).
 	 **/
 	keep_alive_timeout: number;
@@ -224,6 +227,7 @@ export class PhpSettings
 
 	php_fpm: PhpFpmSettings =
 	{	listen: '',
+		connect_timeout: DEFAULT_CONNECT_TIMEOUT,
 		keep_alive_timeout: DEFAULT_KEEP_ALIVE_TIMEOUT,
 		keep_alive_max: Number.MAX_SAFE_INTEGER,
 		params: new Map,
@@ -266,6 +270,7 @@ export class PhpSettings
 	constructor(init_settings?: PhpSettingsInit)
 	{	this.php_cli_name = init_settings?.php_cli_name ?? this.php_cli_name;
 		this.php_fpm.listen = init_settings?.php_fpm?.listen ?? this.php_fpm.listen;
+		this.php_fpm.connect_timeout = init_settings?.php_fpm?.connect_timeout ?? this.php_fpm.connect_timeout;
 		this.php_fpm.keep_alive_timeout = init_settings?.php_fpm?.keep_alive_timeout ?? this.php_fpm.keep_alive_timeout;
 		this.php_fpm.keep_alive_max = init_settings?.php_fpm?.keep_alive_max ?? this.php_fpm.keep_alive_max;
 		this.php_fpm.params = init_settings?.php_fpm?.params ?? this.php_fpm.params;
@@ -1011,6 +1016,7 @@ export class PhpInterpreter
 			this.php_fpm_response = fcgi.fetch
 			(	{	addr: this.settings.php_fpm.listen,
 					params,
+					connectTimeout: this.settings.php_fpm.connect_timeout,
 					timeout: Number.MAX_SAFE_INTEGER,
 					keepAliveTimeout: this.settings.php_fpm.keep_alive_timeout,
 					keepAliveMax: this.settings.php_fpm.keep_alive_max,

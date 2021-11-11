@@ -7,12 +7,13 @@ export interface ProxyOptions
 {	frontend_listen: string;
 	backend_listen: string;
 	max_conns?: number;
+	connect_timeout?: number;
 	keep_alive_timeout?: number;
 	keep_alive_max?: number;
-	unix_socket_name?: string,
-	max_name_length?: number,
-	max_value_length?: number,
-	max_file_size?: number,
+	unix_socket_name?: string;
+	max_name_length?: number;
+	max_value_length?: number;
+	max_file_size?: number;
 	onrequest: (request: PhpRequest) => Promise<void>;
 	onerror?: (error: Error) => void;
 	onend?: () => void;
@@ -49,9 +50,10 @@ export class PhpRequest extends PhpInterpreter
 }
 
 export function start_proxy(options: ProxyOptions)
-{	let {frontend_listen, backend_listen, max_conns, keep_alive_timeout, keep_alive_max, unix_socket_name, max_name_length, max_value_length, max_file_size, onrequest, onerror, onend} = options;
+{	let {frontend_listen, backend_listen, max_conns, connect_timeout, keep_alive_timeout, keep_alive_max, unix_socket_name, max_name_length, max_value_length, max_file_size, onrequest, onerror, onend} = options;
 	let default_settings = new PhpSettings;
 	let set_max_conns = max_conns ?? default_settings.php_fpm.max_conns;
+	let set_connect_timeout = connect_timeout ?? default_settings.php_fpm.connect_timeout;
 	let set_keep_alive_timeout = keep_alive_timeout ?? default_settings.php_fpm.keep_alive_timeout;
 	let set_keep_alive_max = keep_alive_max ?? default_settings.php_fpm.keep_alive_max;
 	let set_unix_socket_name = unix_socket_name ?? default_settings.unix_socket_name;
@@ -77,6 +79,7 @@ export function start_proxy(options: ProxyOptions)
 			php.settings.php_fpm.listen = backend_listen;
 			php.settings.php_fpm.params = request.params;
 			php.settings.php_fpm.max_conns = set_max_conns;
+			php.settings.php_fpm.connect_timeout = set_connect_timeout;
 			php.settings.php_fpm.keep_alive_timeout = set_keep_alive_timeout;
 			php.settings.php_fpm.keep_alive_max = set_keep_alive_max;
 			php.settings.unix_socket_name = set_unix_socket_name;
