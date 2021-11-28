@@ -724,7 +724,8 @@ catch (e)
 }
 ```
 
-InterpreterError has the following fields: `message`, `fileName`, `lineNumber`, `trace` (string).
+InterpreterError has the following fields: `message`, `fileName`, `lineNumber`, `phpStack` (string).
+Also `stack` field is modified to contain traces from PHP.
 
 If PHP interpreter exits (not as result of calling `g.exit()`), `InterpreterExitError` exception is thrown.
 

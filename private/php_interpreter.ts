@@ -182,8 +182,90 @@ function dispose_inst(inst: any)
 }
 
 export class InterpreterError extends Error
-{	constructor(public message: string, public fileName: string, public lineNumber: number, public trace: string)
+{	constructor(public message: string, public fileName: string, public lineNumber: number, public phpStack: string, for_stack?: Error)
 	{	super(message);
+		let stack = this.stack + '';
+		if (phpStack)
+		{	let header_to = stack.indexOf('\r');
+			if (header_to == -1)
+			{	header_to = stack.indexOf('\n');
+			}
+			if (header_to != -1)
+			{	/*	i expect `trace` to be like:
+
+					#0 /home/jeremiah/dev/deno/deno_php_world/php/deno-php-world.php(385) : eval()'d code(1): f1()
+					#1 /home/jeremiah/dev/deno/deno_php_world/php/deno-php-world.php(385) : eval()'d code(1): f2()
+					#2 /home/jeremiah/dev/deno/deno_php_world/php/deno-php-world.php(385) : eval()'d code(1): f3()
+					#3 /home/jeremiah/dev/deno/deno_php_world/php/deno-php-world.php(385) : eval()'d code(1): f4()
+					#4 /home/jeremiah/dev/deno/deno_php_world/php/deno-php-world.php(385) : eval()'d code(1): f5()
+					#5 /home/jeremiah/dev/deno/deno_php_world/php/deno-php-world.php(385) : eval()'d code(1): f6()
+					#6 /home/jeremiah/dev/deno/deno_php_world/php/deno-php-world.php(385) : eval()'d code(1): f7()
+					#7 /home/jeremiah/dev/deno/deno_php_world/php/deno-php-world.php(385) : eval()'d code(1): f8()
+					#8 /home/jeremiah/dev/deno/deno_php_world/php/deno-php-world.php(385) : eval()'d code(1): f9()
+					#9 /home/jeremiah/dev/deno/deno_php_world/php/deno-php-world.php(385) : eval()'d code(1): f10()
+					#10 /home/jeremiah/dev/deno/deno_php_world/php/deno-php-world.php(849): f11()
+					#11 /home/jeremiah/dev/deno/deno_php_world/php/deno-php-world.php(955): DenoWorldMain::events_q()
+					#12 /home/jeremiah/dev/deno/deno_php_world/php/deno-php-world.php(959): DenoWorldMain::main()
+					#13 {main}
+
+					i want to convert it from PHP form to V8, and prepend it to `stack`
+				 */
+				let trace_conv = '';
+				let from = 0;
+				while (true)
+				{	from = phpStack.indexOf(' ', from);
+					if (from == -1)
+					{	break;
+					}
+					from++; // skip ' '
+					let pos = phpStack.indexOf('(', from);
+					if (pos == -1)
+					{	break;
+					}
+					let filename = phpStack.slice(from, pos);
+					pos++; // skip '('
+					from = pos;
+					pos = phpStack.indexOf(')', from);
+					if (pos == -1)
+					{	break;
+					}
+					let line_no = phpStack.slice(from, pos);
+					pos++; // skip ')'
+					while (true)
+					{	let c = phpStack.charAt(pos);
+						if (c!=' ' && c!=':')
+						{	break;
+						}
+						pos++;
+					}
+					from = pos;
+					pos = phpStack.indexOf('\r', from);
+					if (pos == -1)
+					{	pos = phpStack.indexOf('\n', from);
+					}
+					if (pos == -1)
+					{	pos = phpStack.length;
+					}
+					let info = phpStack.slice(from, pos);
+					trace_conv += `\n    at ${info} (${filename}:${line_no})`;
+					from = pos + 1;
+					if (phpStack.charAt(from) == '\n')
+					{	from++;
+					}
+				}
+				stack = stack.slice(0, header_to) + trace_conv + stack.slice(header_to);
+			}
+		}
+		if (for_stack?.stack)
+		{	let pos = for_stack.stack.indexOf('\r');
+			if (pos == -1)
+			{	pos = for_stack.stack.indexOf('\n');
+			}
+			if (pos != -1)
+			{	stack += for_stack.stack.slice(pos);
+			}
+		}
+		this.stack = stack;
 	}
 }
 
@@ -586,7 +668,8 @@ export class PhpInterpreter
 
 							// apply
 							path =>
-							{	if (!is_class)
+							{	let for_stack = new Error;
+								if (!is_class)
 								{	if (path.length == 1)
 									{	// case: func_name()
 										switch (path[0].toLowerCase())
@@ -605,7 +688,7 @@ export class PhpInterpreter
 													(	async () =>
 														{	if (!is_this)
 															{	await php.do_write(REC.CALL_EVAL, path_str);
-																return await php.do_read();
+																return await php.do_read(for_stack);
 															}
 														}
 													);
@@ -614,7 +697,7 @@ export class PhpInterpreter
 														'this',
 														{	async get()
 															{	is_this = true;
-																return construct(php, await php.write_read(REC.CALL_EVAL_THIS, path_str));
+																return construct(php, await php.write_read(REC.CALL_EVAL_THIS, path_str, for_stack));
 															}
 														}
 													);
@@ -622,35 +705,35 @@ export class PhpInterpreter
 												};
 											case 'echo':
 												return function(args)
-												{	return php.write_read(REC.CALL_ECHO, php.json_stringify_serialize_insts([...args]));
+												{	return php.write_read(REC.CALL_ECHO, php.json_stringify_serialize_insts([...args]), for_stack);
 												};
 											case 'include':
 												return function(args)
 												{	if (args.length != 1)
 													{	throw new Error('Invalid number of arguments to include()');
 													}
-													return php.write_read(REC.CALL_INCLUDE, JSON.stringify(args[0]));
+													return php.write_read(REC.CALL_INCLUDE, JSON.stringify(args[0]), for_stack);
 												};
 											case 'include_once':
 												return function(args)
 												{	if (args.length != 1)
 													{	throw new Error('Invalid number of arguments to include_once()');
 													}
-													return php.write_read(REC.CALL_INCLUDE_ONCE, JSON.stringify(args[0]));
+													return php.write_read(REC.CALL_INCLUDE_ONCE, JSON.stringify(args[0]), for_stack);
 												};
 											case 'require':
 												return function(args)
 												{	if (args.length != 1)
 													{	throw new Error('Invalid number of arguments to require()');
 													}
-													return php.write_read(REC.CALL_REQUIRE, JSON.stringify(args[0]));
+													return php.write_read(REC.CALL_REQUIRE, JSON.stringify(args[0]), for_stack);
 												};
 											case 'require_once':
 												return function(args)
 												{	if (args.length != 1)
 													{	throw new Error('Invalid number of arguments to require_once()');
 													}
-													return php.write_read(REC.CALL_REQUIRE_ONCE, JSON.stringify(args[0]));
+													return php.write_read(REC.CALL_REQUIRE_ONCE, JSON.stringify(args[0]), for_stack);
 												};
 										}
 									}
@@ -678,7 +761,7 @@ export class PhpInterpreter
 									(	async () =>
 										{	if (!is_this)
 											{	await php.do_write(REC.CALL, path_str_2);
-												return await php.do_read();
+												return await php.do_read(for_stack);
 											}
 										}
 									);
@@ -687,7 +770,7 @@ export class PhpInterpreter
 										'this',
 										{	async get()
 											{	is_this = true;
-												return construct(php, await php.write_read(REC.CALL_THIS, path_str_2));
+												return construct(php, await php.write_read(REC.CALL_THIS, path_str_2, for_stack));
 											}
 										}
 									);
@@ -697,9 +780,10 @@ export class PhpInterpreter
 
 							// construct
 							path =>
-							{	let class_name = path.join('\\');
+							{	let for_stack = new Error;
+								let class_name = path.join('\\');
 								return async function(args)
-								{	return construct(php, await php.write_read(REC.CONSTRUCT, args.length==0 ? class_name : class_name+' '+php.json_stringify_serialize_insts([...args])), class_name);
+								{	return construct(php, await php.write_read(REC.CONSTRUCT, args.length==0 ? class_name : class_name+' '+php.json_stringify_serialize_insts([...args]), for_stack), class_name);
 								};
 							},
 
@@ -888,9 +972,10 @@ export class PhpInterpreter
 
 				// apply
 				path =>
-				{	if (path.length == 0)
+				{	let for_stack = new Error;
+					if (path.length == 0)
 					{	return function(args)
-						{	return php.write_read(REC.CLASS_INVOKE, args.length==0 ? php_inst_id+'' : php_inst_id+' '+php.json_stringify_serialize_insts([...args]));
+						{	return php.write_read(REC.CLASS_INVOKE, args.length==0 ? php_inst_id+'' : php_inst_id+' '+php.json_stringify_serialize_insts([...args]), for_stack);
 						};
 					}
 					if (path.length == 1)
@@ -902,7 +987,7 @@ export class PhpInterpreter
 						else
 						{	let path_str = php_inst_id+' '+path[0];
 							return function(args)
-							{	return php.write_read(REC.CLASS_CALL, args.length==0 ? path_str : path_str+' '+php.json_stringify_serialize_insts([...args]));
+							{	return php.write_read(REC.CLASS_CALL, args.length==0 ? path_str : path_str+' '+php.json_stringify_serialize_insts([...args]), for_stack);
 							};
 						}
 					}
@@ -912,7 +997,7 @@ export class PhpInterpreter
 						}
 						let path_str = php_inst_id+' '+path[path.length-1]+' ['+JSON.stringify(path.slice(0, -1))+',';
 						return function(args)
-						{	return php.write_read(REC.CLASS_CALL_PATH, path_str+php.json_stringify_serialize_insts([...args])+']');
+						{	return php.write_read(REC.CLASS_CALL_PATH, path_str+php.json_stringify_serialize_insts([...args])+']', for_stack);
 						};
 					}
 				},
@@ -1136,7 +1221,7 @@ export class PhpInterpreter
 		await writeAll(this.commands_io!, body);
 	}
 
-	private async do_read(): Promise<any>
+	private async do_read(for_stack?: Error): Promise<any>
 	{	while (true)
 		{	let buffer = this.buffer.subarray(0, 8); // records are aligned to 8-byte boundaries, and padding is added as needed
 			let pos = 0;
@@ -1180,7 +1265,7 @@ export class PhpInterpreter
 			let result = buffer.length<=8+padding ? '' : decoder.decode(buffer.subarray(8+padding));
 			if (type == RES.ERROR)
 			{	let [file, line, message, trace] = JSON.parse(result);
-				throw new InterpreterError(message, file, Number(line), trace);
+				throw new InterpreterError(message, file, Number(line), trace, for_stack);
 			}
 			let data: any;
 			let result_type = RESTYPE.IS_JSON;
@@ -1511,8 +1596,8 @@ export class PhpInterpreter
 	{	return this.schedule(() => this.do_write(record_type, str));
 	}
 
-	private write_read(record_type: number, str: string)
-	{	return this.schedule(() => this.do_write(record_type, str).then(() => this.do_read()));
+	private write_read(record_type: number, str: string, for_stack?: Error)
+	{	return this.schedule(() => this.do_write(record_type, str).then(() => this.do_read(for_stack)));
 	}
 
 	private exit()
