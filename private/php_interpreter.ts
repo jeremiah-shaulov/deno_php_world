@@ -218,25 +218,32 @@ export class InterpreterError extends Error
 					{	break;
 					}
 					from++; // skip ' '
-					let pos = phpStack.indexOf('(', from);
+					let pos = phpStack.indexOf(':', from);
 					if (pos == -1)
 					{	break;
 					}
-					let filename = phpStack.slice(from, pos);
-					pos++; // skip '('
-					from = pos;
-					pos = phpStack.indexOf(')', from);
-					if (pos == -1)
-					{	break;
+					let pos_2 = pos;
+					while (phpStack.charAt(pos_2-1) == ' ')
+					{	pos_2--; // skip space before :
 					}
-					let line_no = phpStack.slice(from, pos);
-					pos++; // skip ')'
-					while (true)
-					{	let c = phpStack.charAt(pos);
-						if (c!=' ' && c!=':')
+					let filename, line_no='';
+					if (phpStack.charAt(pos_2-1) != ')')
+					{	filename = phpStack.slice(from, pos_2);
+					}
+					else
+					{	let pos_3 = phpStack.lastIndexOf('(', pos_2-2);
+						if (pos_3==-1 || pos_3<from)
 						{	break;
 						}
-						pos++;
+						line_no = ':'+phpStack.slice(pos_3+1, pos_2-1); // between ( and )
+						while (phpStack.charAt(pos_3-1) == ' ')
+						{	pos_3--; // skip space before (
+						}
+						filename = phpStack.slice(from, pos_3);
+					}
+					pos++; // skip ':'
+					while (phpStack.charAt(pos) == ' ')
+					{	pos++; // skip space after :
 					}
 					from = pos;
 					pos = phpStack.indexOf('\r', from);
@@ -247,7 +254,7 @@ export class InterpreterError extends Error
 					{	pos = phpStack.length;
 					}
 					let info = phpStack.slice(from, pos);
-					trace_conv += `\n    at ${info} (${filename}:${line_no})`;
+					trace_conv += `\n    at ${info} (${filename}${line_no})`;
 					from = pos + 1;
 					if (phpStack.charAt(from) == '\n')
 					{	from++;
