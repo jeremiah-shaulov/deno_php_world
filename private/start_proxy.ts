@@ -29,14 +29,19 @@ export class PhpRequest extends PhpInterpreter
 		this.settings.php_fpm.request = (request.params.get('HTTPS')=='on' ? 'https://' : 'http://') + request.params.get('HTTP_HOST') + request.url;
 	}
 
+	/**	Delegates this request to PHP to be processed there.
+		Returns HTTP status code. The response with this code is already sent to the client at this point.
+	 **/
 	async proxy()
 	{	this.settings.php_fpm.request_init =
 		{	method: this.request.params.get('REQUEST_METHOD'),
 			bodyIter: iterateReader(this.request.body),
 			headers: this.request.headers
 		};
-		this.settings.php_fpm.onresponse = async (response) =>
-		{	await this.request.respond
+		let status = 0;
+		this.settings.php_fpm.onresponse = async response =>
+		{	status = response.status;
+			await this.request.respond
 			(	{	status: response.status,
 					headers: response.headers,
 					setCookies: response.cookies,
@@ -46,6 +51,7 @@ export class PhpRequest extends PhpInterpreter
 		};
 		this.settings.init_php_file = this.script_filename;
 		await this.g.exit();
+		return status;
 	}
 }
 

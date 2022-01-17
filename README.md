@@ -843,7 +843,7 @@ import {g, c, php, settings} from 'https://deno.land/x/php_world/mod.ts';
 export {readAll} from 'https://deno.land/std@0.113.0/streams/conversion.ts';
 
 settings.php_fpm.listen = '/run/php/php-fpm.jeremiah.sock';
-settings.php_fpm.onresponse = async (response) =>
+settings.php_fpm.onresponse = async response =>
 {	console.log(response.headers);
 	if (response.body)
 	{	let body = await readAll(response.body);
@@ -899,7 +899,7 @@ let proxy = start_proxy
 
 			// If .php file, forward the request to PHP-FPM
 			if (php.script_filename.endsWith('.php'))
-			{	return await php.proxy();
+			{	await php.proxy(); // PHP gets this request, and sends the response to client
 			}
 
 			// If other kind of file, handle it, or just ignore to return 404
