@@ -900,6 +900,7 @@ let proxy = start_proxy
 			// If .php file, forward the request to PHP-FPM
 			if (php.script_filename.endsWith('.php'))
 			{	await php.proxy(); // PHP gets this request, and sends the response to client
+				return;
 			}
 
 			// If other kind of file, handle it, or just ignore to return 404
@@ -913,9 +914,6 @@ let proxy = start_proxy
 			}
 		},
 		onerror(error: Error)
-		{
-		},
-		onend()
 		{
 		}
 	}
@@ -935,7 +933,7 @@ To handle incoming request, you need to call `await request.respond()` with opti
 
 For more information on `ServerRequest` object see [x/fcgi](https://deno.land/x/fcgi) library.
 
-`start_proxy()` returns handle, that has `addr: Deno.Addr` of the frontend listener, and method `stop()` that will terminate the proxy. After the proxy terminated, and all the requests complete, `onend()` callback will be called.
+`start_proxy()` returns handle, that has `addr: Deno.Addr` of the frontend listener, and method `stop()` that will terminate the proxy. `stop()` returns promise that will be fullfilled after all the requests are completed.
 
 ### Dealing with PHP echo output
 

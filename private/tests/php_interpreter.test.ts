@@ -1958,9 +1958,7 @@ Deno.test
 
 			assertEquals(await response.text(), 'Hello all');
 
-			proxy.stop();
-
-			await fcgi.onEnd();
+			await proxy.stop();
 		}
 		finally
 		{	await Deno.remove(tmp_name);

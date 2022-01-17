@@ -16,7 +16,6 @@ export interface ProxyOptions
 	max_file_size?: number;
 	onrequest: (request: PhpRequest) => Promise<void>;
 	onerror?: (error: Error) => void;
-	onend?: () => void;
 }
 
 interface ProxyRequestOptions
@@ -64,7 +63,7 @@ export class PhpRequest extends PhpInterpreter
 }
 
 export function start_proxy(options: ProxyOptions)
-{	let {frontend_listen, backend_listen, max_conns, connect_timeout, keep_alive_timeout, keep_alive_max, unix_socket_name, max_name_length, max_value_length, max_file_size, onrequest, onerror, onend} = options;
+{	let {frontend_listen, backend_listen, max_conns, connect_timeout, keep_alive_timeout, keep_alive_max, unix_socket_name, max_name_length, max_value_length, max_file_size, onrequest, onerror} = options;
 	let default_settings = new PhpSettings;
 	let set_max_conns = max_conns ?? default_settings.php_fpm.max_conns;
 	let set_connect_timeout = connect_timeout ?? default_settings.php_fpm.connect_timeout;
@@ -107,6 +106,9 @@ export function start_proxy(options: ProxyOptions)
 		}
 	);
 
+	let onend: (() => void) | undefined;
+	let onend_promise: Promise<void> | undefined;
+
 	fcgi.onEnd
 	(	() =>
 		{	new PhpInterpreter().close_idle();
@@ -116,8 +118,16 @@ export function start_proxy(options: ProxyOptions)
 
 	let handle =
 	{	addr: listener.addr,
+
+		/**	If you call `start_proxy()` several times in application, so running several proxies in parallel,
+			the promise that this function returns will resolve after all the proxies finished.
+		 **/
 		stop()
-		{	fcgi.unlisten(listener.addr);
+		{	if (!onend_promise)
+			{	onend_promise = new Promise<void>(y => {onend = y});
+			}
+			fcgi.unlisten(listener.addr);
+			return onend_promise;
 		}
 	};
 
