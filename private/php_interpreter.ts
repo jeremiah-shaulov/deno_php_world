@@ -306,7 +306,7 @@ export interface PhpFpmSettings
 	 **/
 	onresponse?: (response: ResponseWithCookies) => Promise<unknown>;
 
-	/**	Callback that catches output to stderr from PHP side.
+	/**	Callback that catches output of PHP `error_log($msg, 0)` and `error_log($msg, 4)`.
 		If not assigned, will print to `Deno.stderr`.
 	 **/
 	onlogerror?: ((msg: string) => unknown) | undefined;
