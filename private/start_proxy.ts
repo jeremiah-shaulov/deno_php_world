@@ -19,6 +19,13 @@ export interface ProxyOptions
 	onend?: () => void;
 }
 
+interface ProxyRequestOptions
+{	/**	Callback that catches output to stderr from PHP side.
+		If not assigned, will print to `Deno.stderr`.
+	 **/
+	onlogerror?: (msg: string) => unknown;
+}
+
 export class PhpRequest extends PhpInterpreter
 {	public script_filename: string;
 
@@ -32,13 +39,14 @@ export class PhpRequest extends PhpInterpreter
 	/**	Delegates this request to PHP to be processed there.
 		Returns HTTP status code. The response with this code is already sent to the client at this point.
 	 **/
-	async proxy()
-	{	this.settings.php_fpm.request_init =
+	async proxy(options?: ProxyRequestOptions)
+	{	let status = 0;
+		this.settings.php_fpm.request_init =
 		{	method: this.request.params.get('REQUEST_METHOD'),
 			bodyIter: iterateReader(this.request.body),
 			headers: this.request.headers
 		};
-		let status = 0;
+		this.settings.php_fpm.onlogerror = options?.onlogerror;
 		this.settings.php_fpm.onresponse = async response =>
 		{	status = response.status;
 			await this.request.respond

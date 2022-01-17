@@ -305,6 +305,11 @@ export interface PhpFpmSettings
 		Also `response.body` object extends regular `ReadableStream<Uint8Array>` by adding `Deno.Reader` implementation.
 	 **/
 	onresponse?: (response: ResponseWithCookies) => Promise<unknown>;
+
+	/**	Callback that catches output to stderr from PHP side.
+		If not assigned, will print to `Deno.stderr`.
+	 **/
+	onlogerror?: ((msg: string) => unknown) | undefined;
 }
 
 /**	Settings that affect `PhpInterpreter` behavior.
@@ -1112,9 +1117,11 @@ export class PhpInterpreter
 					timeout: Number.MAX_SAFE_INTEGER,
 					keepAliveTimeout: this.settings.php_fpm.keep_alive_timeout,
 					keepAliveMax: this.settings.php_fpm.keep_alive_max,
-					onLogError: msg =>
-					{	this.ongoing_stderr = this.ongoing_stderr.then(() => writeAll(Deno.stderr, encoder.encode(msg+'\n')));
-					}
+					onLogError: this.settings.php_fpm.onlogerror ||
+					(	msg =>
+						{	this.ongoing_stderr = this.ongoing_stderr.then(() => writeAll(Deno.stderr, encoder.encode(msg+'\n')));
+						}
+					)
 				},
 				this.settings.php_fpm.request,
 				this.settings.php_fpm.request_init
