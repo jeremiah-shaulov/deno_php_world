@@ -1,5 +1,5 @@
 import {g, c, php, settings, PhpInterpreter, InterpreterExitError} from '../../mod.ts';
-import {assert, assertEquals, sleep, readAll, fcgi, ServerRequest} from "../deps.ts";
+import {assert, assertEquals, readAll, fcgi, ServerRequest} from "../deps.ts";
 import {PhpSettings} from '../php_interpreter.ts';
 import {start_proxy, PhpRequest} from '../start_proxy.ts';
 
@@ -724,7 +724,7 @@ Deno.test
 			// async with sleep
 			C.failure("Failure 1");
 			C.failure("Failure 2");
-			await sleep(0);
+			await new Promise(y => setTimeout(y, 0));
 			C.failure("Failure 3");
 			error = null;
 			try
@@ -785,7 +785,7 @@ Deno.test
 			// async with sleep
 			php.c.C.failure("Failure 1");
 			php.c.C.failure("Failure 2");
-			await sleep(0);
+			await new Promise(y => setTimeout(y, 0));
 			php.c.C.failure("Failure 3");
 			error = null;
 			try
@@ -1151,7 +1151,7 @@ Deno.test
 				stdout = await php.get_stdout_reader();
 				php.g.echo("*".repeat(256));
 				php.drop_stdout_reader();
-				await sleep(0.2);
+				await new Promise(y => setTimeout(y, 200));
 				data = new TextDecoder().decode(await readAll(stdout));
 				assertEquals(data, "*".repeat(256));
 
@@ -1182,7 +1182,7 @@ Deno.test
 				error = undefined;
 				php.g.eval('exit;').catch((e: any) => {error = e});
 				php.drop_stdout_reader();
-				await sleep(0.2);
+				await new Promise(y => setTimeout(y, 200));
 				data = new TextDecoder().decode(await readAll(stdout));
 				assertEquals(data, "*".repeat(256));
 
