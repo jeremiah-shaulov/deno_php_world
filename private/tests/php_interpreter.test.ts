@@ -1,7 +1,10 @@
 import {g, c, php, settings, PhpInterpreter, InterpreterExitError} from '../../mod.ts';
-import {assert, assertEquals, readAll, fcgi, ServerRequest} from "../deps.ts";
+import {assert, assertEquals, readAll, fcgi} from "../deps.ts";
 import {PhpSettings} from '../php_interpreter.ts';
 import {start_proxy, PhpRequest} from '../start_proxy.ts';
+
+// deno-lint-ignore no-explicit-any
+type Any = any;
 
 const {eval: php_eval, ob_start, ob_get_clean, echo, json_encode, exit} = g;
 const {MainNs, C} = c;
@@ -9,19 +12,19 @@ const PHP_FPM_LISTEN = '/run/php/php-fpm.jeremiah.sock';
 const UNIX_SOCKET_NAME = '/tmp/deno-php-world-test.sock';
 
 class DenoA
-{	constructor(public a: any)
+{	constructor(public a: Any)
 	{
 	}
 }
 
 class DenoArray extends Array
-{	constructor(...args: any)
+{	constructor(...args: Any)
 	{	super(...args);
 	}
 }
 
 function *settings_iter(settings: PhpSettings)
-{	for (let listen of ['', PHP_FPM_LISTEN])
+{	for (const listen of ['', PHP_FPM_LISTEN])
 	{	settings.php_fpm.listen = listen;
 		settings.unix_socket_name = '';
 		settings.interpreter_script = '';
@@ -45,7 +48,7 @@ function *settings_iter(settings: PhpSettings)
 Deno.test
 (	'Exit',
 	async () =>
-	{	for (let _ of settings_iter(settings))
+	{	for (const _ of settings_iter(settings))
 		{	await exit();
 			await exit();
 			assertEquals(await json_encode([]), '[]');
@@ -69,7 +72,7 @@ Deno.test
 Deno.test
 (	'Global',
 	async () =>
-	{	for (let _ of settings_iter(settings))
+	{	for (const _ of settings_iter(settings))
 		{	assertEquals(await g.FAKE_CONSTANT, undefined);
 			assertEquals(await g.defined('FAKE_CONSTANT'), false);
 			await g.define('FAKE_CONSTANT', 'hello');
@@ -96,7 +99,7 @@ Deno.test
 			g.$var.a = 10;
 			assertEquals(await g.$var.a, 10);
 
-			let v = await g.$var.this;
+			const v = await g.$var.this;
 			assertEquals(await v.a, 10);
 			assertEquals(await php.n_objects(), 1);
 			delete v.this;
@@ -105,7 +108,7 @@ Deno.test
 			await php.g.eval('global $я; $я = 10;');
 			assertEquals(await g.$я, 10);
 
-			let deno_obj: any = {a: {b: {c: 10}}};
+			let deno_obj: Any = {a: {b: {c: 10}}};
 			g.$var = deno_obj;
 			assertEquals((await g.$var) === deno_obj, false);
 			assertEquals(await g.$var, {a: {b: {c: 10}}});
@@ -149,7 +152,7 @@ Deno.test
 Deno.test
 (	'Constants',
 	async () =>
-	{	for (let _ of settings_iter(settings))
+	{	for (const _ of settings_iter(settings))
 		{	await g.eval
 			(	`	namespace MainNs\\SecondaryNs;
 					const VAL = 'The VAL';
@@ -166,7 +169,7 @@ Deno.test
 Deno.test
 (	'ob_start',
 	async () =>
-	{	for (let _ of settings_iter(settings))
+	{	for (const _ of settings_iter(settings))
 		{	g.ob_start();
 			g.echo("A");
 			g.echo("B");
@@ -187,7 +190,7 @@ Deno.test
 Deno.test
 (	'Class static',
 	async () =>
-	{	for (let _ of settings_iter(settings))
+	{	for (const _ of settings_iter(settings))
 		{	await php_eval
 			(	`	class C
 					{	public const TEN = 10;
@@ -219,7 +222,7 @@ Deno.test
 
 			assertEquals(await C.get_eleven(), 11);
 
-			let deno_obj: any = {a: {b: {c: 10}}};
+			let deno_obj: Any = {a: {b: {c: 10}}};
 			C.$var2 = deno_obj;
 			assertEquals((await C.$var2) === deno_obj, false);
 			assertEquals(await C.$var2, {a: {b: {c: 10}}});
@@ -231,7 +234,7 @@ Deno.test
 			C.$var2['a']['b'] = 'Hello all';
 			await php.ready();
 			assertEquals(deno_obj, new DenoA({b: 'Hello all'}));
-			let deno_obj_2 = new DenoA({b: {c: 11}});
+			const deno_obj_2 = new DenoA({b: {c: 11}});
 			C.$var2['a']['b'] = deno_obj_2;
 			assertEquals((await C.$var2['a']['b']) == deno_obj_2, true);
 
@@ -272,7 +275,7 @@ Deno.test
 Deno.test
 (	'Class static, namespace',
 	async () =>
-	{	for (let _ of settings_iter(settings))
+	{	for (const _ of settings_iter(settings))
 		{	await php_eval
 			(	`	namespace MainNs;
 
@@ -321,7 +324,7 @@ Deno.test
 Deno.test
 (	'Construct',
 	async () =>
-	{	for (let _ of settings_iter(settings))
+	{	for (const _ of settings_iter(settings))
 		{	await php_eval
 			(	`	class C
 					{	public $arg_value;
@@ -357,7 +360,7 @@ Deno.test
 				}
 			}
 
-			let obj = await new C(new DenoClass);
+			const obj = await new C(new DenoClass);
 
 			assertEquals(await obj.arg_value, 'the value');
 
@@ -387,7 +390,7 @@ Deno.test
 			assertEquals(await obj.for_c2_num[0].twice(3), 6);
 			assertEquals(await obj.for_c2_num[1].twice(4), 8);
 
-			let obj_2 = await obj.for_c2['key'].this;
+			const obj_2 = await obj.for_c2['key'].this;
 			assertEquals(await obj_2.key.twice(5), 10);
 
 			obj.for_c2 = null;
@@ -396,7 +399,7 @@ Deno.test
 			assertEquals(await obj('a', 3), 'a/3');
 			assertEquals(await obj(), 'default a/default b');
 
-			let deno_obj: any = {a: {b: {c: 12}}};
+			let deno_obj: Any = {a: {b: {c: 12}}};
 			obj.hello = deno_obj;
 			assertEquals((await obj.hello) == deno_obj, false);
 			assertEquals(await obj.hello, {a: {b: {c: 12}}});
@@ -417,7 +420,7 @@ Deno.test
 Deno.test
 (	'Construct namespace',
 	async () =>
-	{	for (let _ of settings_iter(settings))
+	{	for (const _ of settings_iter(settings))
 		{	await php_eval
 			(	`	namespace MainNs;
 
@@ -430,7 +433,7 @@ Deno.test
 				`
 			);
 
-			let c = await new MainNs.C;
+			const c = await new MainNs.C;
 			assertEquals(await c.var, 10);
 			assertEquals(await c.get_twice_var(), 20);
 			delete c.this;
@@ -444,7 +447,7 @@ Deno.test
 Deno.test
 (	'Function in namespace',
 	async () =>
-	{	for (let _ of settings_iter(settings))
+	{	for (const _ of settings_iter(settings))
 		{	await php_eval
 			(	`	namespace MainNs\\SubNs;
 
@@ -465,14 +468,14 @@ Deno.test
 Deno.test
 (	'Many interpreters',
 	async () =>
-	{	let int_1 = new PhpInterpreter;
-		let int_2 = new PhpInterpreter;
+	{	const int_1 = new PhpInterpreter;
+		const int_2 = new PhpInterpreter;
 
-		for (let _ of settings_iter(int_1.settings))
-		{	for (let _ of settings_iter(int_2.settings))
-			{	let pid_0 = await g.posix_getpid();
-				let pid_1 = await int_1.g.posix_getpid();
-				let pid_2 = await int_2.g.posix_getpid();
+		for (const _ of settings_iter(int_1.settings))
+		{	for (const _ of settings_iter(int_2.settings))
+			{	const pid_0 = await g.posix_getpid();
+				const pid_1 = await int_1.g.posix_getpid();
+				const pid_2 = await int_2.g.posix_getpid();
 
 				assert(pid_0 > 0);
 				assert(pid_1 > 0);
@@ -483,7 +486,7 @@ Deno.test
 				if (!settings.php_fpm.listen)
 				{	await g.exit();
 
-					let pid_0_new = await g.posix_getpid();
+					const pid_0_new = await g.posix_getpid();
 					assert(pid_0_new != pid_0);
 				}
 
@@ -509,7 +512,7 @@ Deno.test
 Deno.test
 (	'Object returned from function',
 	async () =>
-	{	for (let _ of settings_iter(settings))
+	{	for (const _ of settings_iter(settings))
 		{	await php_eval
 			(	`	function get_ex($msg)
 					{	return new Exception($msg);
@@ -534,7 +537,7 @@ Deno.test
 Deno.test
 (	'Object from var',
 	async () =>
-	{	for (let _ of settings_iter(settings))
+	{	for (const _ of settings_iter(settings))
 		{	await php_eval
 			(	`	function init()
 					{	global $e, $arr;
@@ -579,7 +582,7 @@ Deno.test
 			assertEquals(await ex.getMessage(), 'The e2');
 			delete ex.this;
 
-			let obj = await new C;
+			const obj = await new C;
 			ex = await obj.prop_e.this;
 			assertEquals(await ex.getMessage(), 'The e');
 			delete obj.this;
@@ -594,7 +597,7 @@ Deno.test
 Deno.test
 (	'Unset',
 	async () =>
-	{	for (let _ of settings_iter(settings))
+	{	for (const _ of settings_iter(settings))
 		{	await php_eval
 			(	`	namespace MainNs\\SubNs;
 
@@ -612,7 +615,7 @@ Deno.test
 			delete c.MainNs.SubNs.C.$var['two'];
 			assertEquals(await c.MainNs.SubNs.C.$var, {one: 1});
 
-			let obj = await new c.MainNs.SubNs.C;
+			const obj = await new c.MainNs.SubNs.C;
 			assertEquals(await obj.prop, {one: 1, two: {three: 3}});
 			delete obj.prop['two']['three'];
 			assertEquals(await obj.prop, {one: 1, two: []});
@@ -631,7 +634,7 @@ Deno.test
 			delete g.$tmp;
 			assertEquals(await g.$tmp, undefined);
 
-			let deno_obj: any = ['a', 'b', {value: 'c'}];
+			let deno_obj: Any = ['a', 'b', {value: 'c'}];
 			g.$tmp = deno_obj;
 			assertEquals((await g.$tmp) === deno_obj, false);
 			assertEquals(await g.$tmp, ['a', 'b', {value: 'c'}]);
@@ -663,7 +666,7 @@ Deno.test
 Deno.test
 (	'Async',
 	async () =>
-	{	for (let _ of settings_iter(settings))
+	{	for (const _ of settings_iter(settings))
 		{	await php_eval
 			(	`	class C
 					{	static int $v = 1;
@@ -694,7 +697,7 @@ Deno.test
 Deno.test
 (	'Async errors',
 	async () =>
-	{	for (let _ of settings_iter(settings))
+	{	for (const _ of settings_iter(settings))
 		{	await php_eval
 			(	`	class C
 					{	static $n = 0;
@@ -820,7 +823,7 @@ Deno.test
 			assertEquals(await php.c.C.$n, 5);
 		}
 
-		for (let _ of settings_iter(settings))
+		for (const _ of settings_iter(settings))
 		{	settings.onsymbol = name =>
 			{	if (name == 'step_1')
 				{	return step_1;
@@ -860,7 +863,7 @@ Deno.test
 			return php.g.ob_get_clean();
 		}
 
-		for (let _ of settings_iter(settings))
+		for (const _ of settings_iter(settings))
 		{	settings.onsymbol = name =>
 			{	if (name == 'step_1')
 				{	return step_1;
@@ -891,7 +894,7 @@ Deno.test
 		{	return await php.g.step_4(val + 'd');
 		}
 
-		for (let _ of settings_iter(settings))
+		for (const _ of settings_iter(settings))
 		{	settings.onsymbol = name =>
 			{	if (name == 'step_1')
 				{	return step_1;
@@ -926,7 +929,7 @@ Deno.test
 Deno.test
 (	'n_deno_objects()',
 	async () =>
-	{	for (let _ of settings_iter(settings))
+	{	for (const _ of settings_iter(settings))
 		{	assertEquals(await php.n_deno_objects(), 2);
 			await g.eval
 			(	`	global $window, $var;
@@ -969,7 +972,7 @@ Deno.test
 		{	throw new Error('Funds not sufficient');
 		}
 
-		for (let _ of settings_iter(settings))
+		for (const _ of settings_iter(settings))
 		{	settings.onsymbol = name =>
 			{	if (name == 'hello')
 				{	return hello;
@@ -989,7 +992,7 @@ Deno.test
 				`
 			);
 
-			let res = await g.$res.this;
+			const res = await g.$res.this;
 			assertEquals(await res.getMessage(), 'Funds not sufficient');
 			assertEquals(await g.$done, true);
 			delete res.this;
@@ -1003,7 +1006,7 @@ Deno.test
 Deno.test
 (	'Instance Of',
 	async () =>
-	{	for (let _ of settings_iter(settings))
+	{	for (const _ of settings_iter(settings))
 		{	await php_eval
 			(	`	namespace MainNs;
 
@@ -1049,7 +1052,7 @@ Deno.test
 Deno.test
 (	'Assign object',
 	async () =>
-	{	for (let _ of settings_iter(settings))
+	{	for (const _ of settings_iter(settings))
 		{	await php_eval
 			(	`	class C
 					{	public $var = 10;
@@ -1057,7 +1060,7 @@ Deno.test
 				`
 			);
 
-			let obj = await new C;
+			const obj = await new C;
 			g.$tmp = obj;
 			assertEquals(await g.$tmp['var'], 10);
 			assertEquals(await g.$tmp, {var: 10});
@@ -1071,10 +1074,10 @@ Deno.test
 Deno.test
 (	'Iterators',
 	async () =>
-	{	for (let _ of settings_iter(settings))
-		{	let obj = await new c.ArrayObject(['a', 'b', 'c']);
-			let arr = [];
-			for await (let value of obj)
+	{	for (const _ of settings_iter(settings))
+		{	const obj = await new c.ArrayObject(['a', 'b', 'c']);
+			const arr = [];
+			for await (const value of obj)
 			{	arr.push(value);
 			}
 			assertEquals(arr, ['a', 'b', 'c']);
@@ -1088,19 +1091,19 @@ Deno.test
 Deno.test
 (	'Push frame',
 	async () =>
-	{	for (let _ of settings_iter(settings))
+	{	for (const _ of settings_iter(settings))
 		{	for (let i=0; i<3; i++)
 			{	assertEquals(await php.n_objects(), 0);
 				php.push_frame();
-				let obj = await new c.ArrayObject([]);
+				const _obj = await new c.ArrayObject([]);
 				assertEquals(await php.n_objects(), 1);
 
 				php.push_frame();
-				let obj2 = await new c.ArrayObject([]);
+				const obj2 = await new c.ArrayObject([]);
 				assertEquals(await php.n_objects(), 2);
 
 				php.push_frame();
-				let obj3 = await new c.ArrayObject([]);
+				const obj3 = await new c.ArrayObject([]);
 				assertEquals(await php.n_objects(), 3);
 
 				php.pop_frame();
@@ -1138,7 +1141,7 @@ Deno.test
 Deno.test
 (	'Stdout',
 	async () =>
-	{	for (let _ of settings_iter(settings))
+	{	for (const _ of settings_iter(settings))
 		{	if (settings.php_fpm.listen=='' && settings.stdout=='piped')
 			{	// no sleep
 				let stdout = await php.get_stdout_reader();
@@ -1159,11 +1162,11 @@ Deno.test
 				stdout = await php.get_stdout_reader();
 				php.g.echo("*".repeat(256));
 				let error;
-				php.g.eval('exit;').catch((e: any) => {error = e});
+				php.g.eval('exit;').catch((e: Any) => {error = e});
 				php.drop_stdout_reader();
 				data = new TextDecoder().decode(await readAll(stdout));
 				assertEquals(data, "*".repeat(256));
-				let ok = g.substr('ok', 0, 100);
+				const ok = g.substr('ok', 0, 100);
 				await php.ready();
 				assert(error !== undefined);
 				assertEquals(await ok, 'ok');
@@ -1180,7 +1183,7 @@ Deno.test
 				stdout = await php.get_stdout_reader();
 				php.g.echo("*".repeat(256));
 				error = undefined;
-				php.g.eval('exit;').catch((e: any) => {error = e});
+				php.g.eval('exit;').catch((e: Any) => {error = e});
 				php.drop_stdout_reader();
 				await new Promise(y => setTimeout(y, 200));
 				data = new TextDecoder().decode(await readAll(stdout));
@@ -1196,8 +1199,8 @@ Deno.test
 Deno.test
 (	'Binary data',
 	async () =>
-	{	let data = "\x00\x01\x02 \x7F\x80\x81 \xFD\xFE\xFF";
-		for (let _ of settings_iter(settings))
+	{	const data = "\x00\x01\x02 \x7F\x80\x81 \xFD\xFE\xFF";
+		for (const _ of settings_iter(settings))
 		{	assertEquals(await g.substr(data, 0, 100), data);
 
 			await g.exit();
@@ -1209,20 +1212,20 @@ Deno.test
 Deno.test
 (	'PHP-FPM',
 	async () =>
-	{	for (let _ of settings_iter(settings))
+	{	for (const _ of settings_iter(settings))
 		{	if (settings.php_fpm.listen == PHP_FPM_LISTEN)
-			{	let promises = [];
+			{	const promises = [];
 				for (let i=0; i<10; i++)
-				{	let php_i = new PhpInterpreter;
+				{	const php_i = new PhpInterpreter;
 					promises[i] = Promise.resolve().then
 					(	async () =>
-						{	let len = await php_i.g.strlen('*'.repeat(i));
+						{	const len = await php_i.g.strlen('*'.repeat(i));
 							await php_i.g.exit();
 							return len;
 						}
 					);
 				}
-				let results: any = await Promise.all(promises);
+				const results: Any = await Promise.all(promises);
 				for (let i=0; i<10; i++)
 				{	assertEquals(results[i], i);
 				}
@@ -1241,7 +1244,7 @@ Deno.test
 				}
 			`
 		);
-		let obj = await new C;
+		const obj = await new C;
 
 		let error;
 		try
@@ -1515,8 +1518,8 @@ Deno.test
 
 		error = undefined;
 		try
-		{	for await (let v of c.C)
-			{
+		{	for await (const _v of c.C)
+			{	// ok
 			}
 		}
 		catch (e)
@@ -1652,7 +1655,7 @@ Deno.test
 		);
 		assertEquals(await g.$m_size, 2);
 		assertEquals([...await g.$m_keys], ['k1', 'k2']);
-		let m_keys_func = await g.$m_keys_func;
+		const m_keys_func = await g.$m_keys_func;
 		assertEquals([...m_keys_func()], ['k1', 'k2']);
 		assertEquals(await g.$m_arr, [["k1", "v1"], ["k2", "v2"]]);
 		assertEquals(await g.$m_keys_arr, ["k1", "k2"]);
@@ -1742,6 +1745,7 @@ Deno.test
 					{	return this.n*4;
 					}
 
+					// deno-lint-ignore require-await
 					async dispose()
 					{	dispose_called_2 = true;
 						throw new Error('This exception in dispose() must be ignored');
@@ -1754,7 +1758,8 @@ Deno.test
 				return Scientific2;
 			}
 			else if (name == 'get_get_hello')
-			{	function get_get_hello()
+			{	// deno-lint-ignore no-inner-declarations
+				function get_get_hello()
 				{	function get_hello()
 					{	return 'hello';
 					}
@@ -1807,7 +1812,7 @@ Deno.test
 		c.FirstClass.$stat2.a.b = parseInt;
 		g.$c.prop = parseInt;
 		g.$c.prop2.a.b = parseInt;
-		let obj = await new c.FirstClass;
+		const obj = await new c.FirstClass;
 		obj.prop = parseInt;
 		obj.prop2.a.b = parseInt;
 		g.$c2 = obj;
@@ -1886,7 +1891,7 @@ Deno.test
 			`
 		);
 
-		let user = await new c.User;
+		const user = await new c.User;
 		user.name = 'Me';
 		assertEquals(await g.get_user_name(user), 'Me');
 		delete user.this;
@@ -1899,12 +1904,12 @@ Deno.test
 Deno.test
 (	'Include',
 	async () =>
-	{	let tmp_name = await Deno.makeTempFile();
+	{	const tmp_name = await Deno.makeTempFile();
 		let i = 0;
 
 		try
-		{	for (let _ of settings_iter(settings))
-			{	for (let func of ['include', 'include_once', 'require', 'require_once'])
+		{	for (const _ of settings_iter(settings))
+			{	for (const func of ['include', 'include_once', 'require', 'require_once'])
 				{	await Deno.writeTextFile(tmp_name, `<?php $GLOBALS['hello'] = 'all ${i}';`);
 					await g[func](tmp_name);
 					assertEquals(await g.$hello, `all ${i}`);
@@ -1928,12 +1933,12 @@ Deno.test
 		settings.unix_socket_name = '';
 		settings.stdout = 'inherit';
 
-		let tmp_name = await Deno.makeTempFile({suffix: '.php'});
+		const tmp_name = await Deno.makeTempFile({suffix: '.php'});
 
 		try
 		{	await Deno.writeTextFile(tmp_name, `<?php echo 'Hello all';`);
 
-			let proxy = start_proxy
+			const proxy = start_proxy
 			(	{	frontend_listen: UNIX_SOCKET_NAME,
 					backend_listen: PHP_FPM_LISTEN,
 					max_conns: 128,
@@ -1949,7 +1954,7 @@ Deno.test
 				}
 			);
 
-			let response = await fcgi.fetch
+			const response = await fcgi.fetch
 			(	{	addr: proxy.addr,
 					scriptFilename: tmp_name,
 				},
@@ -1969,8 +1974,8 @@ Deno.test
 
 Deno.test
 (	'Settings',
-	async () =>
-	{	let php = new PhpInterpreter
+	() =>
+	{	const php = new PhpInterpreter
 		(	{	php_cli_name: 'hello php_cli_name',
 				php_fpm:
 				{	listen: 'hello listen',
@@ -2065,7 +2070,7 @@ Deno.test
 			}
 		};
 
-		let c = new FirstClass;
+		const c = new FirstClass;
 
 		g.$var1 = c;
 		g.$var2 = [c];
@@ -2105,7 +2110,7 @@ Deno.test
 Deno.test
 (	'Pass big data',
 	async () =>
-	{	let big_data = 'ф'.repeat(10*1024);
+	{	const big_data = 'ф'.repeat(10*1024);
 
 		g.$var = big_data;
 

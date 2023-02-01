@@ -4,6 +4,9 @@ import {create_proxy} from './proxy_object.ts';
 import {ReaderMux} from './reader_mux.ts';
 import {fcgi, ResponseWithCookies, writeAll, copy} from './deps.ts';
 
+// deno-lint-ignore no-explicit-any
+type Any = any;
+
 const PHP_CLI_NAME_DEFAULT = 'php';
 const DEBUG_PHP_BOOT = false;
 const KEY_LEN = 32;
@@ -110,7 +113,7 @@ async function get_random_key(buffer: Uint8Array): Promise<string>
 	try
 	{	let pos = 0;
 		while (pos < buffer.length)
-		{	let n_read = await fh.read(buffer.subarray(pos));
+		{	const n_read = await fh.read(buffer.subarray(pos));
 			if (n_read == null)
 			{	throw new Error(`Failed to read from /dev/urandom`);
 			}
@@ -130,10 +133,10 @@ function get_weak_random_bytes(buffer: Uint8Array)
 	return buffer;
 }
 
-function get_class_features(symbol: any)
+function get_class_features(symbol: Any)
 {	let features = 0;
 	if (symbol.prototype)
-	{	let desc = Object.getOwnPropertyDescriptors(symbol.prototype);
+	{	const desc = Object.getOwnPropertyDescriptors(symbol.prototype);
 		if (desc.length)
 		{	features |= RESTYPE.HAS_LENGTH;
 		}
@@ -147,7 +150,7 @@ function get_class_features(symbol: any)
 	return features;
 }
 
-function get_inst_features(value: any)
+function get_inst_features(value: Any)
 {	let features = 0;
 	if (value)
 	{	if (typeof(value.length) == 'number')
@@ -163,10 +166,10 @@ function get_inst_features(value: any)
 	return features;
 }
 
-function dispose_inst(inst: any)
+function dispose_inst(inst: Any)
 {	if (typeof(inst.dispose) == 'function')
 	{	try
-		{	let v = inst.dispose();
+		{	const v = inst.dispose();
 			if (v instanceof Promise)
 			{	v.catch
 				(	e =>
@@ -253,7 +256,7 @@ export class InterpreterError extends Error
 					if (pos == -1)
 					{	pos = phpStack.length;
 					}
-					let info = phpStack.slice(from, pos);
+					const info = phpStack.slice(from, pos);
 					trace_conv += `\n    at ${info} (${filename}${line_no})`;
 					from = pos + 1;
 					if (phpStack.charAt(from) == '\n')
@@ -359,7 +362,7 @@ export class PhpSettings
 	 **/
 	init_php_file = '';
 
-	onsymbol: (name: string) => any = () => {};
+	onsymbol: (name: string) => Any = () => {};
 
 	constructor(init_settings?: PhpSettingsInit)
 	{	this.php_cli_name = init_settings?.php_cli_name ?? this.php_cli_name;
@@ -399,16 +402,16 @@ export class PhpInterpreter
 	private stdout_mux: ReaderMux|undefined;
 	private last_inst_id = -1;
 	private stack_frames: number[] = [];
-	private deno_insts: Map<number, any> = new Map; // php has handles to these objects
+	private deno_insts: Map<number, Any> = new Map; // php has handles to these objects
 	private deno_inst_id_enum = 2; // later will do: deno_insts.set(0, this); deno_insts.set(1, globalThis);
 
 	/**	For accessing remote global PHP objects, except classes (functions, variables, constants).
 	 **/
-	g: any;
+	g: Any;
 
 	/**	For accessing remote PHP classes.
 	 **/
-	c: any;
+	c: Any;
 
 	/**	Modify settings before spawning interpreter or connecting to PHP-FPM service.
 	 **/
@@ -457,7 +460,7 @@ export class PhpInterpreter
 									}
 									else if (path[0].charAt(0) != '$')
 									{	// case: A\B\C
-										let path_str = path.join('\\');
+										const path_str = path.join('\\');
 										return function(prop_name)
 										{	return php.write_read(REC.CONST, path_str+'\\'+prop_name);
 										};
@@ -467,7 +470,7 @@ export class PhpInterpreter
 										if (path_str.indexOf(' ') != -1)
 										{	throw new Error(`Variable name must not contain spaces: $${path_str}`);
 										}
-										let path_2 = path.slice(1).concat(['']);
+										const path_2 = path.slice(1).concat(['']);
 										return async function(prop_name)
 										{	if (prop_name != 'this')
 											{	path_2[path_2.length-1] = prop_name;
@@ -486,11 +489,11 @@ export class PhpInterpreter
 								{	// case: A\B::C
 									// or case: A\B::$c
 									// or case: A\B::$c['d']['e']
-									let var_i = path.findIndex(p => p.charAt(0) == '$');
+									const var_i = path.findIndex(p => p.charAt(0) == '$');
 									if (var_i == -1)
 									{	// case: A\B::C
 										// or case: A\B::$c
-										let path_str = path.join('\\');
+										const path_str = path.join('\\');
 										if (path_str.indexOf(' ') != -1)
 										{	throw new Error(`Class/namespace names must not contain spaces: ${path_str}`);
 										}
@@ -524,7 +527,7 @@ export class PhpInterpreter
 										{	throw new Error(`Variable name must not contain spaces: ${path[var_i]}`);
 										}
 										path_str += ' '+path[var_i].slice(1); // cut '$'
-										let path_2 = path.slice(var_i+1).concat(['']);
+										const path_2 = path.slice(var_i+1).concat(['']);
 										return async function(prop_name)
 										{	if (prop_name != 'this')
 											{	path_2[path_2.length-1] = prop_name;
@@ -548,7 +551,7 @@ export class PhpInterpreter
 									if (path[0].charAt(0) != '$')
 									{	throw new Error(`Cannot set this object: ${path.join('.')}`);
 									}
-									let path_str = path[0].slice(1); // cut '$'
+									const path_str = path[0].slice(1); // cut '$'
 									if (path_str.indexOf(' ') != -1)
 									{	throw new Error(`Variable name must not contain spaces: $${path_str}`);
 									}
@@ -583,13 +586,13 @@ export class PhpInterpreter
 										{	throw new Error(`Cannot use such class name: ${path_str}`);
 										}
 										path_str += ' ';
-										let path_2 = path.concat(['']);
+										const path_2 = path.concat(['']);
 										return function(prop_name, value)
 										{	path_2[path_2.length-1] = prop_name;
 											if (path_2[var_i].indexOf(' ') != -1)
 											{	throw new Error(`Variable name must not contain spaces: ${path_2[var_i]}`);
 											}
-											let path_str_2 = path_str+path_2[var_i].slice(1); // cut '$'
+											const path_str_2 = path_str+path_2[var_i].slice(1); // cut '$'
 											if (prop_name.charAt(0) != '$')
 											{	throw new Error(`Cannot set this object: ${path_2.join('.')}`);
 											}
@@ -648,7 +651,7 @@ export class PhpInterpreter
 									{	throw new Error(`Variable name must not contain spaces: $${path_str}`);
 									}
 									path_str += ' ';
-									let path_str_2 = path.length==1 ? '' : ' '+JSON.stringify(path.slice(1));
+									const path_str_2 = path.length==1 ? '' : ' '+JSON.stringify(path.slice(1));
 									return function(prop_name)
 									{	php.write_read(REC.UNSET_PATH, path_str+prop_name+path_str_2);
 										return true;
@@ -656,7 +659,7 @@ export class PhpInterpreter
 								}
 								else
 								{	// case: A\B::$c['d']['e']
-									let var_i = path.findIndex(p => p.charAt(0) == '$');
+									const var_i = path.findIndex(p => p.charAt(0) == '$');
 									if (var_i <= 0)
 									{	throw new Error(`Cannot unset this object: ${path.join('.')}`);
 									}
@@ -669,7 +672,7 @@ export class PhpInterpreter
 									}
 									path_str += ' '+path[var_i].slice(1); // cut '$'
 									path_str += ' ';
-									let path_2 = path.slice(var_i+1).concat(['']);
+									const path_2 = path.slice(var_i+1).concat(['']);
 									return function(prop_name)
 									{	path_2[path_2.length-1] = prop_name;
 										php.write_read(REC.CLASSSTATIC_UNSET, path_str+JSON.stringify(path_2));
@@ -680,7 +683,7 @@ export class PhpInterpreter
 
 							// apply
 							path =>
-							{	let for_stack = new Error;
+							{	const for_stack = new Error;
 								if (!is_class)
 								{	if (path.length == 1)
 									{	// case: func_name()
@@ -694,9 +697,9 @@ export class PhpInterpreter
 												{	if (args.length != 1)
 													{	throw new Error('Invalid number of arguments to eval()');
 													}
-													let path_str = JSON.stringify(args[0]);
+													const path_str = JSON.stringify(args[0]);
 													let is_this = false;
-													let promise = php.schedule
+													const promise = php.schedule
 													(	async () =>
 														{	if (!is_this)
 															{	await php.do_write(REC.CALL_EVAL, path_str);
@@ -769,7 +772,7 @@ export class PhpInterpreter
 									{	path_str_2 += ' '+php.json_stringify_serialize_insts([...args]);
 									}
 									let is_this = false;
-									let promise = php.schedule
+									const promise = php.schedule
 									(	async () =>
 										{	if (!is_this)
 											{	await php.do_write(REC.CALL, path_str_2);
@@ -792,8 +795,8 @@ export class PhpInterpreter
 
 							// construct
 							path =>
-							{	let for_stack = new Error;
-								let class_name = path.join('\\');
+							{	const for_stack = new Error;
+								const class_name = path.join('\\');
 								return async function(args)
 								{	return construct(php, await php.write_read(REC.CONSTRUCT, args.length==0 ? class_name : class_name+' '+php.json_stringify_serialize_insts([...args]), for_stack), class_name);
 								};
@@ -802,21 +805,21 @@ export class PhpInterpreter
 							// hasInstance
 							path =>
 							{	if (is_class && path.length>0 && path.findIndex(p => p.charAt(0) == '$')==-1)
-								{	let class_name = path.join('\\');
+								{	const class_name = path.join('\\');
 									return function(inst)
-									{	if ((inst as any)[symbol_php_object] === class_name)
+									{	if ((inst as Any)[symbol_php_object] === class_name)
 										{	return true;
 										}
 										return false;
 									};
 								}
 								else
-								{	return inst => false;
+								{	return _inst => false;
 								}
 							},
 
 							// asyncIterator
-							path =>
+							_path => // deno-lint-ignore require-yield
 							{	return async function*()
 								{	throw new Error('Object is not iterable');
 								};
@@ -873,15 +876,15 @@ export class PhpInterpreter
 			);
 		}
 
-		function construct(php: PhpInterpreter, result: string, class_name=''): any
+		function construct(php: PhpInterpreter, result: string, class_name=''): Any
 		{	if (!class_name)
-			{	let pos = result.indexOf(' ');
+			{	const pos = result.indexOf(' ');
 				if (pos != -1)
 				{	class_name = result.slice(pos+1);
 					result = result.slice(0, pos);
 				}
 			}
-			let php_inst_id = Number(result);
+			const php_inst_id = Number(result);
 			php.last_inst_id = php_inst_id;
 			return create_proxy
 			(	[],
@@ -890,7 +893,7 @@ export class PhpInterpreter
 				// get
 				path =>
 				{	if (path.length == 0)
-					{	let path_str = php_inst_id+' ';
+					{	const path_str = php_inst_id+' ';
 						return function(prop_name)
 						{	if (prop_name.indexOf(' ') != -1)
 							{	throw new Error(`Property name must not contain spaces: $${prop_name}`);
@@ -900,7 +903,7 @@ export class PhpInterpreter
 					}
 					else
 					{	let path_str = php_inst_id+' '+path[0];
-						let path_2 = path.slice(1).concat(['']);
+						const path_2 = path.slice(1).concat(['']);
 						return async function(prop_name)
 						{	if (prop_name != 'this')
 							{	path_2[path_2.length-1] = prop_name;
@@ -919,7 +922,7 @@ export class PhpInterpreter
 				// set
 				path =>
 				{	if (path.length == 0)
-					{	let path_str = php_inst_id+' ';
+					{	const path_str = php_inst_id+' ';
 						return function(prop_name, value)
 						{	if (prop_name.indexOf(' ') != -1)
 							{	throw new Error(`Property name must not contain spaces: ${prop_name}`);
@@ -962,7 +965,7 @@ export class PhpInterpreter
 				// deleteProperty
 				path =>
 				{	if (path.length == 0)
-					{	let path_str = php_inst_id+'';
+					{	const path_str = php_inst_id+'';
 						return function(prop_name)
 						{	if (prop_name == 'this')
 							{	php.write(REC.DESTRUCT, path_str);
@@ -973,8 +976,8 @@ export class PhpInterpreter
 						};
 					}
 					else
-					{	let path_str = php_inst_id+' ';
-						let path_str_2 = ' '+JSON.stringify(path);
+					{	const path_str = php_inst_id+' ';
+						const path_str_2 = ' '+JSON.stringify(path);
 						return function(prop_name)
 						{	php.write_read(REC.CLASS_UNSET_PATH, path_str+prop_name+path_str_2);
 							return true;
@@ -984,7 +987,7 @@ export class PhpInterpreter
 
 				// apply
 				path =>
-				{	let for_stack = new Error;
+				{	const for_stack = new Error;
 					if (path.length == 0)
 					{	return function(args)
 						{	return php.write_read(REC.CLASS_INVOKE, args.length==0 ? php_inst_id+'' : php_inst_id+' '+php.json_stringify_serialize_insts([...args]), for_stack);
@@ -997,7 +1000,7 @@ export class PhpInterpreter
 							};
 						}
 						else
-						{	let path_str = php_inst_id+' '+path[0];
+						{	const path_str = php_inst_id+' '+path[0];
 							return function(args)
 							{	return php.write_read(REC.CLASS_CALL, args.length==0 ? path_str : path_str+' '+php.json_stringify_serialize_insts([...args]), for_stack);
 							};
@@ -1007,7 +1010,7 @@ export class PhpInterpreter
 					{	if (path[path.length-1].indexOf(' ') != -1)
 						{	throw new Error(`Function name must not contain spaces: ${path[path.length-1]}`);
 						}
-						let path_str = php_inst_id+' '+path[path.length-1]+' ['+JSON.stringify(path.slice(0, -1))+',';
+						const path_str = php_inst_id+' '+path[path.length-1]+' ['+JSON.stringify(path.slice(0, -1))+',';
 						return function(args)
 						{	return php.write_read(REC.CLASS_CALL_PATH, path_str+php.json_stringify_serialize_insts([...args])+']', for_stack);
 						};
@@ -1015,18 +1018,18 @@ export class PhpInterpreter
 				},
 
 				// construct
-				path =>
+				_path =>
 				{	throw new Error('Cannot construct such object');
 				},
 
 				// hasInstance
-				path =>
-				{	return inst => false;
+				_path =>
+				{	return _inst => false;
 				},
 
 				// asyncIterator
-				path =>
-				{	let path_str = php_inst_id+'';
+				_path =>
+				{	const path_str = php_inst_id+'';
 					return async function*()
 					{	let [value, done] = await php.write_read(REC.CLASS_ITERATE_BEGIN, path_str);
 						while (true)
@@ -1066,16 +1069,16 @@ export class PhpInterpreter
 			php_socket = `tcp://${localhost_name.indexOf(':')==-1 ? localhost_name : '['+localhost_name+']'}:${(this.listener.addr as Deno.NetAddr).port}`;
 		}
 		// 3. HELO (generate random key)
-		let key = await get_random_key(this.buffer.subarray(0, KEY_LEN));
-		let end_mark = get_weak_random_bytes(this.buffer.subarray(0, READER_MUX_END_MARK_LEN));
-		let {init_php_file, interpreter_script} = this.settings;
+		const key = await get_random_key(this.buffer.subarray(0, KEY_LEN));
+		const end_mark = get_weak_random_bytes(this.buffer.subarray(0, READER_MUX_END_MARK_LEN));
+		const {init_php_file, interpreter_script} = this.settings;
 		this.settings.init_php_file = ''; // so second call to `exit()` will not reexecute the init script. if reexecution is needed, reassign `this.settings.init_php_file`
-		let rec_helo = key+' '+btoa(String.fromCharCode(...end_mark))+' '+btoa(php_socket)+' '+btoa(init_php_file);
+		const rec_helo = key+' '+btoa(String.fromCharCode(...end_mark))+' '+btoa(php_socket)+' '+btoa(init_php_file);
 		let php_boot_file = '';
 		// 4. Run the PHP interpreter or connect to PHP-FPM service
 		if (!this.settings.php_fpm.listen)
 		{	// Run the PHP interpreter
-			let cmd = interpreter_script || DEBUG_PHP_BOOT ? [this.settings.php_cli_name, '-f', interpreter_script || await get_interpreter_script_filename(DEBUG_PHP_BOOT)] : [this.settings.php_cli_name, '-r', PHP_BOOT_CLI];
+			const cmd = interpreter_script || DEBUG_PHP_BOOT ? [this.settings.php_cli_name, '-f', interpreter_script || await get_interpreter_script_filename(DEBUG_PHP_BOOT)] : [this.settings.php_cli_name, '-r', PHP_BOOT_CLI];
 			if (Deno.args.length)
 			{	cmd.splice(cmd.length, 0, '--', ...Deno.args);
 			}
@@ -1096,8 +1099,8 @@ export class PhpInterpreter
 			let {params} = this.settings.php_fpm;
 			if (params.has('DENO_WORLD_HELO'))
 			{	// looks like object shared between requests
-				let params_clone = new Map;
-				for (let [k, v] of params)
+				const params_clone = new Map;
+				for (const [k, v] of params)
 				{	params_clone.set(k, v);
 				}
 				params = params_clone;
@@ -1132,7 +1135,7 @@ export class PhpInterpreter
 			}
 			// onresponse
 			if (this.settings.php_fpm.onresponse)
-			{	let {onresponse} = this.settings.php_fpm;
+			{	const {onresponse} = this.settings.php_fpm;
 				this.php_fpm_response = this.php_fpm_response.then
 				(	async r =>
 					{	try
@@ -1148,12 +1151,12 @@ export class PhpInterpreter
 		}
 		// 5. Accept connection from the interpreter. Identify it by the key.
 		while (true)
-		{	let accept = this.listener.accept();
+		{	const accept = this.listener.accept();
 			if (!this.php_fpm_response)
 			{	this.commands_io = await accept;
 			}
 			else
-			{	let result = await Promise.race([accept, this.php_fpm_response]);
+			{	const result = await Promise.race([accept, this.php_fpm_response]);
 				if (result instanceof ResponseWithCookies)
 				{	// response came earlier than accept (script didn't connect to me)
 					accept.then(s => s.close()).catch(() => {});
@@ -1162,7 +1165,7 @@ export class PhpInterpreter
 				this.commands_io = result;
 			}
 			try
-			{	let helo = await this.do_read();
+			{	const helo = await this.do_read();
 				if (helo == key)
 				{	break;
 				}
@@ -1175,7 +1178,7 @@ export class PhpInterpreter
 		// 6. init_php_file
 		if (init_php_file)
 		{	// i executed init_php_file that produced result (and maybe deno calls)
-			let result = await this.do_read();
+			const result = await this.do_read();
 			debug_assert(result == null);
 		}
 	}
@@ -1187,33 +1190,33 @@ export class PhpInterpreter
 		let body = str.length<=this.buffer.length ? this.buffer : new Uint8Array(str.length+128);
 		let offset = 8;
 		while (true)
-		{	let {read, written} = encoder.encodeInto(str, body.subarray(offset));
+		{	const {read, written} = encoder.encodeInto(str, body.subarray(offset));
 			offset += written;
 			if (read == str.length)
 			{	break;
 			}
 			str = str.slice(read);
-			let new_body = new Uint8Array(offset + str.length*2);
+			const new_body = new Uint8Array(offset + str.length*2);
 			new_body.set(body);
 			body = new_body;
 		}
-		let header = new DataView(body.buffer);
+		const header = new DataView(body.buffer);
 		header.setInt32(0, record_type);
 		header.setInt32(4, offset-8);
-		let padding = (8 - offset%8) % 8;
+		const padding = (8 - offset%8) % 8;
 		if (offset+padding <= body.length)
 		{	body = body.subarray(0, offset+padding);
 		}
 		else
-		{	let new_body = new Uint8Array(offset+padding);
+		{	const new_body = new Uint8Array(offset+padding);
 			new_body.set(body);
 			body = new_body;
 		}
 		if (this.stdout_mux && !this.stdout_mux.is_reading)
-		{	let {stdout} = this.settings;
+		{	const {stdout} = this.settings;
 			let writer: Deno.Writer;
 			if (typeof(stdout) == 'number')
-			{	let rid = stdout;
+			{	const rid = stdout;
 				writer =
 				{	async write(data)
 					{	return await Deno.write(rid, data);
@@ -1221,7 +1224,7 @@ export class PhpInterpreter
 				};
 			}
 			else if (stdout == 'null')
-			{	writer =
+			{	writer = // deno-lint-ignore require-await
 				{	async write(data)
 					{	return data.length;
 					}
@@ -1235,12 +1238,12 @@ export class PhpInterpreter
 		await writeAll(this.commands_io!, body);
 	}
 
-	private async do_read(for_stack?: Error): Promise<any>
+	private async do_read(for_stack?: Error): Promise<Any>
 	{	while (true)
 		{	let buffer = this.buffer.subarray(0, 8); // records are aligned to 8-byte boundaries, and padding is added as needed
 			let pos = 0;
 			while (pos < 8)
-			{	let n_read = await this.commands_io!.read(buffer);
+			{	const n_read = await this.commands_io!.read(buffer);
 				if (n_read == null)
 				{	this.exit_status_to_exception(await this.do_exit(true));
 				}
@@ -1258,12 +1261,12 @@ export class PhpInterpreter
 				is_result = false;
 				len = -len;
 			}
-			let padding = (8 - (len + 4)%8) % 8;
+			const padding = (8 - (len + 4)%8) % 8;
 			len += padding;
 			buffer = len<=this.buffer.length ? this.buffer.subarray(0, len) : new Uint8Array(len);
 			pos = 4; // first_word already read
 			while (pos < len)
-			{	let n_read = await this.commands_io!.read(buffer.subarray(pos));
+			{	const n_read = await this.commands_io!.read(buffer.subarray(pos));
 				if (n_read == null)
 				{	this.exit_status_to_exception(await this.do_exit(true));
 				}
@@ -1273,30 +1276,30 @@ export class PhpInterpreter
 			{	(new Int32Array(buffer.buffer))[0] = first_word;
 				return this.json_parse_unserialize_insts(decoder.decode(buffer.subarray(padding)));
 			}
-			let view = new DataView(buffer.buffer);
-			let type = first_word;
-			let deno_inst_id = view.getUint32(4);
-			let result = buffer.length<=8+padding ? '' : decoder.decode(buffer.subarray(8+padding));
+			const view = new DataView(buffer.buffer);
+			const type = first_word;
+			const deno_inst_id = view.getUint32(4);
+			const result = buffer.length<=8+padding ? '' : decoder.decode(buffer.subarray(8+padding));
 			if (type == RES.ERROR)
-			{	let [file, line, message, trace] = JSON.parse(result);
+			{	const [file, line, message, trace] = JSON.parse(result);
 				throw new InterpreterError(message, file, Number(line), trace, for_stack);
 			}
-			let data: any;
+			let data: Any;
 			let result_type = RESTYPE.IS_JSON;
-			let g: any = globalThis;
+			const g: Any = globalThis;
 			try
 			{	this.ongoing_level++;
 				switch (type)
 				{	case RES.GET_CLASS:
-					{	let class_name = result;
-						let symbol = class_name in g ? g[class_name] : await this.settings.onsymbol(class_name);
+					{	const class_name = result;
+						const symbol = class_name in g ? g[class_name] : await this.settings.onsymbol(class_name);
 						data = !symbol ? RESTYPE.IS_ERROR : get_class_features(symbol);
 						break;
 					}
 					case RES.CONSTRUCT:
-					{	let [class_name, args] = this.json_parse_unserialize_insts(result);
-						let symbol = class_name in g ? g[class_name] : await this.settings.onsymbol(class_name);
-						let deno_inst = new symbol(...args); // can throw error
+					{	const [class_name, args] = this.json_parse_unserialize_insts(result);
+						const symbol = class_name in g ? g[class_name] : await this.settings.onsymbol(class_name);
+						const deno_inst = new symbol(...args); // can throw error
 						data = this.new_deno_inst(deno_inst);
 						break;
 					}
@@ -1306,75 +1309,75 @@ export class PhpInterpreter
 						continue;
 					}
 					case RES.CLASS_GET:
-					{	let name = result;
-						let deno_inst = this.deno_insts.get(deno_inst_id);
+					{	const name = result;
+						const deno_inst = this.deno_insts.get(deno_inst_id);
 						data = await deno_inst[name]; // can throw error
 						break;
 					}
 					case RES.CLASS_SET:
-					{	let [name, value] = this.json_parse_unserialize_insts(result);
-						let deno_inst = this.deno_insts.get(deno_inst_id);
+					{	const [name, value] = this.json_parse_unserialize_insts(result);
+						const deno_inst = this.deno_insts.get(deno_inst_id);
 						deno_inst[name] = value; // can throw error
 						data = null;
 						break;
 					}
 					case RES.CLASS_CALL:
-					{	let [name, args] = this.json_parse_unserialize_insts(result);
-						let deno_inst = this.deno_insts.get(deno_inst_id);
+					{	const [name, args] = this.json_parse_unserialize_insts(result);
+						const deno_inst = this.deno_insts.get(deno_inst_id);
 						data = await deno_inst[name](...args); // can throw error
 						break;
 					}
 					case RES.CLASS_INVOKE:
-					{	let args = this.json_parse_unserialize_insts(result);
-						let deno_inst = this.deno_insts.get(deno_inst_id);
+					{	const args = this.json_parse_unserialize_insts(result);
+						const deno_inst = this.deno_insts.get(deno_inst_id);
 						data = await deno_inst(...args); // can throw error
 						break;
 					}
 					case RES.CLASS_GET_ITERATOR:
-					{	let deno_inst = this.deno_insts.get(deno_inst_id);
+					{	const deno_inst = this.deno_insts.get(deno_inst_id);
 						data = deno_inst[Symbol.asyncIterator] ? deno_inst[Symbol.asyncIterator]() : deno_inst[Symbol.iterator] ? deno_inst[Symbol.iterator]() : Object.entries(deno_inst)[Symbol.iterator](); // can throw error
 						break;
 					}
 					case RES.CLASS_TO_STRING:
-					{	let deno_inst = this.deno_insts.get(deno_inst_id);
+					{	const deno_inst = this.deno_insts.get(deno_inst_id);
 						data = deno_inst+''; // can throw error
 						break;
 					}
 					case RES.CLASS_ISSET:
-					{	let name = result;
-						let deno_inst = this.deno_insts.get(deno_inst_id);
+					{	const name = result;
+						const deno_inst = this.deno_insts.get(deno_inst_id);
 						data = deno_inst[name] != null; // can throw error
 						break;
 					}
 					case RES.CLASS_UNSET:
-					{	let name = result;
-						let deno_inst = this.deno_insts.get(deno_inst_id);
+					{	const name = result;
+						const deno_inst = this.deno_insts.get(deno_inst_id);
 						delete deno_inst[name]; // can throw error
 						break;
 					}
 					case RES.CLASS_PROPS:
-					{	let deno_inst = this.deno_insts.get(deno_inst_id);
-						let props = [];
-						for (let prop in deno_inst)
+					{	const deno_inst = this.deno_insts.get(deno_inst_id);
+						const props = [];
+						for (const prop in deno_inst)
 						{	props[props.length] = prop;
 						}
 						data = JSON.stringify(props);
 						break;
 					}
 					case RES.CLASSSTATIC_CALL:
-					{	let [class_name, name, args] = this.json_parse_unserialize_insts(result);
-						let symbol = class_name in g ? g[class_name] : await this.settings.onsymbol(class_name);
+					{	const [class_name, name, args] = this.json_parse_unserialize_insts(result);
+						const symbol = class_name in g ? g[class_name] : await this.settings.onsymbol(class_name);
 						data = await symbol[name](...args); // can throw error
 						break;
 					}
 					case RES.CALL:
-					{	let [name, args] = this.json_parse_unserialize_insts(result);
-						let symbol = name in g ? g[name] : await this.settings.onsymbol(name);
+					{	const [name, args] = this.json_parse_unserialize_insts(result);
+						const symbol = name in g ? g[name] : await this.settings.onsymbol(name);
 						data = await symbol(...args); // can throw error
 						break;
 					}
 					case RES.JSON_ENCODE:
-					{	let deno_inst = this.deno_insts.get(deno_inst_id);
+					{	const deno_inst = this.deno_insts.get(deno_inst_id);
 						data = JSON.stringify(deno_inst); // can throw error
 						break;
 					}
@@ -1408,8 +1411,8 @@ export class PhpInterpreter
 		}
 	}
 
-	private new_deno_inst(data: any)
-	{	let deno_inst_id = this.deno_inst_id_enum++;
+	private new_deno_inst(data: Any)
+	{	const deno_inst_id = this.deno_inst_id_enum++;
 		this.deno_inst_id_enum &= 0x7FFF_FFFF;
 		this.deno_insts.set(deno_inst_id, data);
 		return deno_inst_id;
@@ -1418,14 +1421,14 @@ export class PhpInterpreter
 	private json_parse_unserialize_insts(json: string)
 	{	return JSON.parse
 		(	json,
-			(key, value) => typeof(value)=='object' && value?.DENO_WORLD_INST_ID>=0 ? this.deno_insts.get(value.DENO_WORLD_INST_ID) : value
+			(_key, value) => typeof(value)=='object' && value?.DENO_WORLD_INST_ID>=0 ? this.deno_insts.get(value.DENO_WORLD_INST_ID) : value
 		);
 	}
 
-	private json_stringify_serialize_insts(value: any)
+	private json_stringify_serialize_insts(value: Any)
 	{	return JSON.stringify
 		(	value,
-			(key, value) =>
+			(_key, value) =>
 			{	if (value!=null && typeof(value)=='object' && value.constructor!=Object && value.constructor!=Array || typeof(value)=='function' && value[symbol_php_object]==null)
 				{	return {DENO_WORLD_INST_ID: this.new_deno_inst(value)};
 				}
@@ -1458,10 +1461,17 @@ export class PhpInterpreter
 		}
 		if (this.php_fpm_response)
 		{	try
-			{	let response = await this.php_fpm_response;
+			{	const response = await this.php_fpm_response;
 				if (response.body)
 				{	try
-					{	await copy(response.body, {async write(p: Uint8Array) {return p.length}}); // read and discard
+					{	await copy
+						(	response.body,
+							{	// deno-lint-ignore require-await
+								async write(p: Uint8Array)
+								{	return p.length;
+								}
+							}
+						); // read and discard
 					}
 					catch
 					{	// ok, maybe onresponse already read the body
@@ -1522,7 +1532,7 @@ export class PhpInterpreter
 		this.is_inited = false;
 		this.last_inst_id = -1;
 		this.stack_frames.length = 0;
-		for (let v of this.deno_insts.values())
+		for (const v of this.deno_insts.values())
 		{	dispose_inst(v);
 		}
 		this.deno_insts.clear();
@@ -1533,8 +1543,8 @@ export class PhpInterpreter
 	}
 
 	private exit_status_to_exception(status: {code: number} | undefined): never
-	{	let code = status?.code ?? -1;
-		let message = code==-1 ? 'PHP interpreter died' : code!=0 ? `PHP interpreter died with error code ${code}` : 'PHP interpreter exited';
+	{	const code = status?.code ?? -1;
+		const message = code==-1 ? 'PHP interpreter died' : code!=0 ? `PHP interpreter died with error code ${code}` : 'PHP interpreter exited';
 		throw new InterpreterExitError(message, code);
 	}
 
@@ -1546,7 +1556,7 @@ export class PhpInterpreter
 	}
 
 	private async do_pop_frame()
-	{	let last_inst_id = this.stack_frames.pop();
+	{	const last_inst_id = this.stack_frames.pop();
 		if (last_inst_id == undefined)
 		{	throw new Error('No frames to pop');
 		}
@@ -1584,13 +1594,13 @@ export class PhpInterpreter
 	}
 
 	private schedule<T>(callback: () => Promise<T>): Promise<T>
-	{	let {ongoing_level} = this;
-		let ongoing = this.ongoing[ongoing_level];
-		let promise = !ongoing ? callback() : ongoing.then(callback);
+	{	const {ongoing_level} = this;
+		const ongoing = this.ongoing[ongoing_level];
+		const promise = !ongoing ? callback() : ongoing.then(callback);
 		this.ongoing[ongoing_level] = promise;
 		queueMicrotask
 		(	() =>
-			{	let ongoing = this.ongoing[ongoing_level];
+			{	const ongoing = this.ongoing[ongoing_level];
 				if (ongoing)
 				{	this.ongoing[ongoing_level] = ongoing.catch(() => {});
 				}
