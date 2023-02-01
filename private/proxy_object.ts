@@ -1,9 +1,12 @@
-type ProxyGetterForPath = (prop_name: string) => Promise<any>;
-type ProxySetterForPath = (prop_name: string, value: any) => boolean;
+// deno-lint-ignore no-explicit-any
+type Any = any;
+
+type ProxyGetterForPath = (prop_name: string) => Promise<Any>;
+type ProxySetterForPath = (prop_name: string, value: Any) => boolean;
 type ProxyDeleterForPath = (prop_name: string) => boolean;
-type ProxyApplierForPath = (args: IArguments) => any;
-type ProxyHasInstanceForPath = (inst: Object) => boolean;
-type ProxyIteratorForPath = () => AsyncGenerator<any>;
+type ProxyApplierForPath = (args: IArguments) => Any;
+type ProxyHasInstanceForPath = (inst: Any) => boolean;
+type ProxyIteratorForPath = () => AsyncGenerator<Any>;
 
 export function create_proxy
 (	path: string[],
@@ -15,15 +18,15 @@ export function create_proxy
 	get_constructor: (path: string[]) => ProxyApplierForPath,
 	get_has_instance: (path: string[]) => ProxyHasInstanceForPath,
 	get_iterator: (path: string[]) => ProxyIteratorForPath,
-	alt_symbol_for_string_tag?: Symbol
+	alt_symbol_for_string_tag?: symbol
 )
 {	return inst(path, {getter: undefined});
 	function inst
 	(	path: string[],
 		parent_getter: {getter: ProxyGetterForPath | undefined}
-	): any
-	{	let promise: Promise<any> | undefined;
-		let for_getter = {getter: undefined};
+	): Any
+	{	let promise: Promise<Any> | undefined;
+		const for_getter = {getter: undefined};
 		let setter: ProxySetterForPath | undefined;
 		let deleter: ProxyDeleterForPath | undefined;
 		let applier: ProxyApplierForPath | undefined;
@@ -64,13 +67,13 @@ export function create_proxy
 						{	promise = parent_getter.getter(path[path.length-1]);
 						}
 						if (prop_name == 'then')
-						{	return (y: any, n: any) => promise!.then(y, n);
+						{	return (y: Any, n: Any) => promise!.then(y, n);
 						}
 						else if (prop_name == 'catch')
-						{	return (n: any) => promise!.catch(n);
+						{	return (n: Any) => promise!.catch(n);
 						}
 						else
-						{	return (y: any) => promise!.finally(y);
+						{	return (y: Any) => promise!.finally(y);
 						}
 					}
 					else
@@ -97,19 +100,19 @@ export function create_proxy
 					}
 					return deleter(prop_name);
 				},
-				apply(_, proxy, args)
+				apply(_, _proxy, args)
 				{	// case: path(args)
 					if (!applier)
 					{	applier = get_applier(path);
 					}
-					return applier(args as any);
+					return applier(args as Any);
 				},
 				construct(_, args) // new Class
 				{	// case: new path
 					if (!constructor)
 					{	constructor = get_constructor(path);
 					}
-					return constructor(args as any);
+					return constructor(args as Any);
 				}
 			}
 		);

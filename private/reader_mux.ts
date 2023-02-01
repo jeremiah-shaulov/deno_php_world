@@ -13,8 +13,9 @@ export class ReaderMux
 	}
 
 	async get_reader(): Promise<Deno.Reader>
-	{	let that = this;
-		let {buffer, end_mark} = this;
+	{	// deno-lint-ignore no-this-alias
+		const that = this;
+		const {buffer, end_mark} = this;
 
 		await this.task; // let previous reader to complete
 		let reader : Deno.Reader | null;
@@ -45,7 +46,7 @@ export class ReaderMux
 				that.buffer_len = buffer.length;
 			}
 			else
-			{	let exceeding_bytes = that.buffer_len+n_read - buffer.length;
+			{	const exceeding_bytes = that.buffer_len+n_read - buffer.length;
 				if (exceeding_bytes < 0)
 				{	buffer.set(out_buffer.subarray(0, n_read), that.buffer_len);
 					that.buffer_len += n_read;

@@ -30,7 +30,7 @@ export class PhpRequest extends PhpInterpreter
 
 	constructor(public request: ServerRequest)
 	{	super();
-		let script_filename = request.params.get('SCRIPT_FILENAME');
+		const script_filename = request.params.get('SCRIPT_FILENAME');
 		this.script_filename = script_filename==undefined ? '' : script_filename.replace(RE_FIX_SCRIPT_FILENAME, '');
 		this.settings.php_fpm.request = (request.params.get('HTTPS')=='on' ? 'https://' : 'http://') + request.params.get('HTTP_HOST') + request.url;
 	}
@@ -63,13 +63,13 @@ export class PhpRequest extends PhpInterpreter
 }
 
 export function start_proxy(options: ProxyOptions)
-{	let {frontend_listen, backend_listen, max_conns, connect_timeout, keep_alive_timeout, keep_alive_max, unix_socket_name, max_name_length, max_value_length, max_file_size, onrequest, onerror} = options;
-	let default_settings = new PhpSettings;
-	let set_max_conns = max_conns ?? default_settings.php_fpm.max_conns;
-	let set_connect_timeout = connect_timeout ?? default_settings.php_fpm.connect_timeout;
-	let set_keep_alive_timeout = keep_alive_timeout ?? default_settings.php_fpm.keep_alive_timeout;
-	let set_keep_alive_max = keep_alive_max ?? default_settings.php_fpm.keep_alive_max;
-	let set_unix_socket_name = unix_socket_name ?? default_settings.unix_socket_name;
+{	const {frontend_listen, backend_listen, max_conns, connect_timeout, keep_alive_timeout, keep_alive_max, unix_socket_name, max_name_length, max_value_length, max_file_size, onrequest, onerror} = options;
+	const default_settings = new PhpSettings;
+	const set_max_conns = max_conns ?? default_settings.php_fpm.max_conns;
+	const set_connect_timeout = connect_timeout ?? default_settings.php_fpm.connect_timeout;
+	const set_keep_alive_timeout = keep_alive_timeout ?? default_settings.php_fpm.keep_alive_timeout;
+	const set_keep_alive_max = keep_alive_max ?? default_settings.php_fpm.keep_alive_max;
+	const set_unix_socket_name = unix_socket_name ?? default_settings.unix_socket_name;
 
 	if (onerror)
 	{	fcgi.onError(onerror);
@@ -84,11 +84,11 @@ export function start_proxy(options: ProxyOptions)
 		}
 	);
 
-	let listener = fcgi.listen
+	const listener = fcgi.listen
 	(	frontend_listen,
 		'',
 		async request =>
-		{	let php = new PhpRequest(request);
+		{	const php = new PhpRequest(request);
 			php.settings.php_fpm.listen = backend_listen;
 			php.settings.php_fpm.params = request.params;
 			php.settings.php_fpm.max_conns = set_max_conns;
@@ -116,7 +116,7 @@ export function start_proxy(options: ProxyOptions)
 		}
 	);
 
-	let handle =
+	const handle =
 	{	addr: listener.addr,
 
 		/**	If you call `start_proxy()` several times in application, so running several proxies in parallel,

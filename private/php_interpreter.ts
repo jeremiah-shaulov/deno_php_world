@@ -807,7 +807,7 @@ export class PhpInterpreter
 							{	if (is_class && path.length>0 && path.findIndex(p => p.charAt(0) == '$')==-1)
 								{	const class_name = path.join('\\');
 									return function(inst)
-									{	if ((inst as Any)[symbol_php_object] === class_name)
+									{	if (inst[symbol_php_object] === class_name)
 										{	return true;
 										}
 										return false;

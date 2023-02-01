@@ -1,7 +1,6 @@
 import {PhpInterpreter} from './private/php_interpreter.ts';
 
-export {PhpInterpreter, InterpreterError, InterpreterExitError, PhpSettings} from './private/php_interpreter.ts';
-export type {PhpFpmSettings} from './private/php_interpreter.ts';
+export {PhpInterpreter, InterpreterError, InterpreterExitError, PhpSettings, type PhpFpmSettings} from './private/php_interpreter.ts';
 
 /**	Default instance of `PhpInterpreter` class for general purposes.
  **/
@@ -21,5 +20,4 @@ export const settings = php.settings;
 
 export {ResponseWithCookies, ServerRequest} from './private/deps.ts';
 
-export {start_proxy, PhpRequest} from './private/start_proxy.ts';
-export type {ProxyOptions} from './private/start_proxy.ts';
+export {start_proxy, PhpRequest, type ProxyOptions} from './private/start_proxy.ts';

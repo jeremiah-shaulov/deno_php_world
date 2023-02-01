@@ -970,24 +970,24 @@ let php_boot_filename = '';
 export async function get_interpreter_script_filename(is_debug=false)
 {	if (!php_boot_filename)
 	{	// create a temp file
-		let tmp_name = await Deno.makeTempFile();
+		const tmp_name = await Deno.makeTempFile();
 		// figure out what is tmp dir
 		let tmp_dirname = dirname(tmp_name);
 		tmp_dirname = tmp_name.slice(0, tmp_dirname.length+1); // inclide dir separator char
 		// form new tmp filename and store to php_boot_filename
-		let suffix = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER).toString(36);
+		const suffix = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER).toString(36);
 		php_boot_filename = is_debug ? `${tmp_dirname}${TMP_SCRIPT_FILENAME_PREFIX}.php` : `${tmp_dirname}${TMP_SCRIPT_FILENAME_PREFIX}-${suffix}-pid${Deno.pid}.php`;
 		// rename the tmp file to the new name
 		await Deno.rename(tmp_name, php_boot_filename);
 		// find files left from previous runs
-		let unowned_filenames = [];
+		const unowned_filenames = [];
 		try
 		{	if (await exists(`/proc`))
 			{	for await (const {isFile, name} of Deno.readDir(tmp_dirname))
 				{	if (isFile && name.startsWith(TMP_SCRIPT_FILENAME_PREFIX) && name.endsWith('.php'))
-					{	let pos = name.indexOf('-', TMP_SCRIPT_FILENAME_PREFIX.length+1);
-						if (pos!=-1 && name.substr(pos+1, 3)=='pid')
-						{	let pid = Number(name.slice(pos+4, -4));
+					{	const pos = name.indexOf('-', TMP_SCRIPT_FILENAME_PREFIX.length+1);
+						if (pos!=-1 && name.slice(pos+1, pos+4)=='pid')
+						{	const pid = Number(name.slice(pos+4, -4));
 							if (pid)
 							{	if (!await exists(`/proc/${pid}`))
 								{	unowned_filenames.push(name);
@@ -1002,7 +1002,7 @@ export async function get_interpreter_script_filename(is_debug=false)
 		{	console.error(e);
 		}
 		// delete unowned files
-		for (let f of unowned_filenames)
+		for (const f of unowned_filenames)
 		{	try
 			{	await Deno.remove(tmp_dirname+f);
 			}
@@ -1023,13 +1023,13 @@ export async function get_interpreter_script_filename(is_debug=false)
 	else
 	{	// if existing file is of valid size, use it
 		try
-		{	let stat = await Deno.stat(php_boot_filename);
+		{	const stat = await Deno.stat(php_boot_filename);
 			if (stat.isFile && stat.size==PHP_BOOT.length)
 			{	return php_boot_filename;
 			}
 		}
 		catch
-		{
+		{	// ok
 		}
 	}
 	// write PHP_BOOT file
