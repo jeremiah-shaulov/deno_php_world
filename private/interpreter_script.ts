@@ -1,4 +1,4 @@
-import {dirname, exists} from './deps.ts';
+import {dirname, exists, path} from './deps.ts';
 
 const TMP_SCRIPT_FILENAME_PREFIX = 'deno-php-world';
 
@@ -80,7 +80,7 @@ class DenoWorld implements ArrayAccess, JsonSerializable
 		return $info;
 	}
 
-	public function offsetSet($offset, $value)
+	public function offsetSet($offset, $value): void
 	{	if ($offset === null)
 		{	if ($this instanceof Countable)
 			{	$offset = $this->count();
@@ -92,19 +92,19 @@ class DenoWorld implements ArrayAccess, JsonSerializable
 		$this->$offset = $value;
 	}
 
-	public function offsetExists($offset)
-	{	return DenoWorldMain::write_read(DenoWorldMain::RES_CLASS_ISSET, $this->deno_inst_id, $offset);
+	public function offsetExists($offset): bool
+	{	return (bool)DenoWorldMain::write_read(DenoWorldMain::RES_CLASS_ISSET, $this->deno_inst_id, $offset);
 	}
 
-	public function offsetUnset($offset)
-	{	return DenoWorldMain::write_read(DenoWorldMain::RES_CLASS_UNSET, $this->deno_inst_id, $offset);
+	public function offsetUnset($offset): void
+	{	DenoWorldMain::write_read(DenoWorldMain::RES_CLASS_UNSET, $this->deno_inst_id, $offset);
 	}
 
-	public function offsetGet($offset)
+	public function offsetGet($offset): mixed
 	{	return DenoWorldMain::write_read(DenoWorldMain::RES_CLASS_GET, $this->deno_inst_id, $offset);
 	}
 
-	public function jsonSerialize()
+	public function jsonSerialize(): mixed
 	{	return json_decode(DenoWorldMain::write_read(DenoWorldMain::RES_JSON_ENCODE, $this->deno_inst_id));
 	}
 }
@@ -118,24 +118,24 @@ class DenoWorldDefaultIterator implements Iterator
 	{	$this->deno_inst_id = $deno_inst_id;
 	}
 
-	public function rewind()
+	public function rewind(): void
 	{	$this->it = DenoWorldMain::write_read(DenoWorldMain::RES_CLASS_GET_ITERATOR, $this->deno_inst_id);
 		$this->result = $this->it->next();
 	}
 
-	public function valid()
+	public function valid(): bool
 	{	return !($this->result->done ?? true);
 	}
 
-	public function current()
+	public function current(): mixed
 	{	return $this->result->value[1] ?? null;
 	}
 
-	public function key()
+	public function key(): mixed
 	{	return $this->result->value[0] ?? null;
 	}
 
-	public function next()
+	public function next(): void
 	{	$this->result = $this->it->next();
 	}
 }
@@ -150,41 +150,41 @@ class DenoWorldIterator implements Iterator
 	{	$this->deno_inst_id = $deno_inst_id;
 	}
 
-	public function rewind()
+	public function rewind(): void
 	{	$this->it = DenoWorldMain::write_read(DenoWorldMain::RES_CLASS_GET_ITERATOR, $this->deno_inst_id);
 		$this->result = $this->it->next();
 		$this->key = 0;
 	}
 
-	public function valid()
+	public function valid(): bool
 	{	return !($this->result->done ?? true);
 	}
 
-	public function current()
+	public function current(): mixed
 	{	return $this->result->value ?? null;
 	}
 
-	public function key()
+	public function key(): mixed
 	{	return $this->key;
 	}
 
-	public function next()
+	public function next(): void
 	{	$this->result = $this->it->next();
 		$this->key++;
 	}
 }
 
 trait DenoWorldHasDefaultIterator
-{	public function getIterator() {return new DenoWorldDefaultIterator($this->deno_inst_id);}
+{	public function getIterator(): Traversable {return new DenoWorldDefaultIterator($this->deno_inst_id);}
 }
 trait DenoWorldHasIterator
-{	public function getIterator() {return new DenoWorldIterator($this->deno_inst_id);}
+{	public function getIterator(): Traversable {return new DenoWorldIterator($this->deno_inst_id);}
 }
 trait DenoWorldHasLength
-{	public function count() {return $this->length;}
+{	public function count(): int {return $this->length;}
 }
 trait DenoWorldHasSize
-{	public function count() {return $this->size;}
+{	public function count(): int {return $this->size;}
 }
 
 /*	RESTYPE_HAS_ITERATOR = 1;
@@ -967,18 +967,17 @@ DenoWorldMain::main();
 export const PHP_BOOT_CLI = PHP_BOOT.slice('<?php\n\n'.length);
 
 let php_boot_filename = '';
-export async function get_interpreter_script_filename(is_debug=false)
+export async function get_interpreter_script_filename(is_debug=false, tmp_dirname='')
 {	if (!php_boot_filename)
-	{	// create a temp file
-		const tmp_name = await Deno.makeTempFile();
-		// figure out what is tmp dir
-		let tmp_dirname = dirname(tmp_name);
-		tmp_dirname = tmp_name.slice(0, tmp_dirname.length+1); // inclide dir separator char
-		// form new tmp filename and store to php_boot_filename
+	{	// create php_boot_filename
 		const suffix = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER).toString(36);
-		php_boot_filename = is_debug ? `${tmp_dirname}${TMP_SCRIPT_FILENAME_PREFIX}.php` : `${tmp_dirname}${TMP_SCRIPT_FILENAME_PREFIX}-${suffix}-pid${Deno.pid}.php`;
-		// rename the tmp file to the new name
-		await Deno.rename(tmp_name, php_boot_filename);
+		if (!tmp_dirname)
+		{	// detect default tmp dir
+			const tmp_name = await Deno.makeTempFile();
+			await Deno.remove(tmp_name);
+			tmp_dirname = dirname(tmp_name);
+		}
+		php_boot_filename = path.join(tmp_dirname, is_debug ? `${TMP_SCRIPT_FILENAME_PREFIX}.php` : `${TMP_SCRIPT_FILENAME_PREFIX}-${suffix}-pid${Deno.pid}.php`);
 		// find files left from previous runs
 		const unowned_filenames = [];
 		try

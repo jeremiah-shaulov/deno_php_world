@@ -75,7 +75,7 @@ class DenoWorld implements ArrayAccess, JsonSerializable
 		return $info;
 	}
 
-	public function offsetSet($offset, $value)
+	public function offsetSet($offset, $value): void
 	{	if ($offset === null)
 		{	if ($this instanceof Countable)
 			{	$offset = $this->count();
@@ -87,19 +87,19 @@ class DenoWorld implements ArrayAccess, JsonSerializable
 		$this->$offset = $value;
 	}
 
-	public function offsetExists($offset)
+	public function offsetExists($offset): bool
 	{	return DenoWorldMain::write_read(DenoWorldMain::RES_CLASS_ISSET, $this->deno_inst_id, $offset);
 	}
 
-	public function offsetUnset($offset)
-	{	return DenoWorldMain::write_read(DenoWorldMain::RES_CLASS_UNSET, $this->deno_inst_id, $offset);
+	public function offsetUnset($offset): void
+	{	DenoWorldMain::write_read(DenoWorldMain::RES_CLASS_UNSET, $this->deno_inst_id, $offset);
 	}
 
-	public function offsetGet($offset)
+	public function offsetGet($offset): mixed
 	{	return DenoWorldMain::write_read(DenoWorldMain::RES_CLASS_GET, $this->deno_inst_id, $offset);
 	}
 
-	public function jsonSerialize()
+	public function jsonSerialize(): mixed
 	{	return json_decode(DenoWorldMain::write_read(DenoWorldMain::RES_JSON_ENCODE, $this->deno_inst_id));
 	}
 }
@@ -113,24 +113,24 @@ class DenoWorldDefaultIterator implements Iterator
 	{	$this->deno_inst_id = $deno_inst_id;
 	}
 
-	public function rewind()
+	public function rewind(): void
 	{	$this->it = DenoWorldMain::write_read(DenoWorldMain::RES_CLASS_GET_ITERATOR, $this->deno_inst_id);
 		$this->result = $this->it->next();
 	}
 
-	public function valid()
+	public function valid(): bool
 	{	return !($this->result->done ?? true);
 	}
 
-	public function current()
+	public function current(): mixed
 	{	return $this->result->value[1] ?? null;
 	}
 
-	public function key()
+	public function key(): mixed
 	{	return $this->result->value[0] ?? null;
 	}
 
-	public function next()
+	public function next(): void
 	{	$this->result = $this->it->next();
 	}
 }
@@ -145,41 +145,41 @@ class DenoWorldIterator implements Iterator
 	{	$this->deno_inst_id = $deno_inst_id;
 	}
 
-	public function rewind()
+	public function rewind(): void
 	{	$this->it = DenoWorldMain::write_read(DenoWorldMain::RES_CLASS_GET_ITERATOR, $this->deno_inst_id);
 		$this->result = $this->it->next();
 		$this->key = 0;
 	}
 
-	public function valid()
+	public function valid(): bool
 	{	return !($this->result->done ?? true);
 	}
 
-	public function current()
+	public function current(): mixed
 	{	return $this->result->value ?? null;
 	}
 
-	public function key()
+	public function key(): mixed
 	{	return $this->key;
 	}
 
-	public function next()
+	public function next(): void
 	{	$this->result = $this->it->next();
 		$this->key++;
 	}
 }
 
 trait DenoWorldHasDefaultIterator
-{	public function getIterator() {return new DenoWorldDefaultIterator($this->deno_inst_id);}
+{	public function getIterator(): Traversable {return new DenoWorldDefaultIterator($this->deno_inst_id);}
 }
 trait DenoWorldHasIterator
-{	public function getIterator() {return new DenoWorldIterator($this->deno_inst_id);}
+{	public function getIterator(): Traversable {return new DenoWorldIterator($this->deno_inst_id);}
 }
 trait DenoWorldHasLength
-{	public function count() {return $this->length;}
+{	public function count(): int {return $this->length;}
 }
 trait DenoWorldHasSize
-{	public function count() {return $this->size;}
+{	public function count(): int {return $this->size;}
 }
 
 /*	RESTYPE_HAS_ITERATOR = 1;
