@@ -1904,7 +1904,8 @@ Deno.test
 Deno.test
 (	'Include',
 	async () =>
-	{	const tmp_name = await Deno.makeTempFile();
+	{	const tmp_name = await Deno.makeTempFile({suffix: '.php'});
+		await Deno.chmod(tmp_name, 0o664); // if PHP-FPM is running from different user
 		let i = 0;
 
 		try

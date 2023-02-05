@@ -2,6 +2,7 @@ import {debug_assert} from './debug_assert.ts';
 import {PHP_BOOT_CLI, get_interpreter_script_filename} from './interpreter_script.ts';
 import {create_proxy} from './proxy_object.ts';
 import {ReaderMux} from './reader_mux.ts';
+import {get_random_key, get_weak_random_bytes} from './util.ts';
 import {fcgi, ResponseWithCookies, writeAll, copy} from './deps.ts';
 
 // deno-lint-ignore no-explicit-any
@@ -100,38 +101,6 @@ const encoder = new TextEncoder;
 const decoder = new TextDecoder;
 
 fcgi.onError(e => {console.error(e)});
-
-async function get_random_key(buffer: Uint8Array): Promise<string>
-{	let fh;
-	try
-	{	fh = await Deno.open('/dev/urandom', {read: true});
-	}
-	catch
-	{	// assume: OS without /dev/urandom feature
-		return Math.random()+'';
-	}
-	try
-	{	let pos = 0;
-		while (pos < buffer.length)
-		{	const n_read = await fh.read(buffer.subarray(pos));
-			if (n_read == null)
-			{	throw new Error(`Failed to read from /dev/urandom`);
-			}
-			pos += n_read;
-		}
-	}
-	finally
-	{	fh.close();
-	}
-	return btoa(String.fromCharCode(...buffer));
-}
-
-function get_weak_random_bytes(buffer: Uint8Array)
-{	for (let i=0; i<buffer.length; i++)
-	{	buffer[i] = Math.floor(Math.random()*256);
-	}
-	return buffer;
-}
 
 function get_class_features(symbol: Any)
 {	let features = 0;

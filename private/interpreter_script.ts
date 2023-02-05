@@ -1,4 +1,5 @@
-import {dirname, exists, path} from './deps.ts';
+import {path} from './deps.ts';
+import {exists} from './util.ts';
 
 const TMP_SCRIPT_FILENAME_PREFIX = 'deno-php-world';
 
@@ -967,6 +968,7 @@ DenoWorldMain::main();
 export const PHP_BOOT_CLI = PHP_BOOT.slice('<?php\n\n'.length);
 
 let php_boot_filename = '';
+
 export async function get_interpreter_script_filename(is_debug=false, tmp_dirname='')
 {	if (!php_boot_filename)
 	{	// create php_boot_filename
@@ -975,7 +977,7 @@ export async function get_interpreter_script_filename(is_debug=false, tmp_dirnam
 		{	// detect default tmp dir
 			const tmp_name = await Deno.makeTempFile();
 			await Deno.remove(tmp_name);
-			tmp_dirname = dirname(tmp_name);
+			tmp_dirname = path.dirname(tmp_name);
 		}
 		php_boot_filename = path.join(tmp_dirname, is_debug ? `${TMP_SCRIPT_FILENAME_PREFIX}.php` : `${TMP_SCRIPT_FILENAME_PREFIX}-${suffix}-pid${Deno.pid}.php`);
 		// find files left from previous runs
@@ -1003,7 +1005,7 @@ export async function get_interpreter_script_filename(is_debug=false, tmp_dirnam
 		// delete unowned files
 		for (const f of unowned_filenames)
 		{	try
-			{	await Deno.remove(tmp_dirname+f);
+			{	await Deno.remove(path.join(tmp_dirname, f));
 			}
 			catch (e)
 			{	console.error(e);
