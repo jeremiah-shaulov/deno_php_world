@@ -93,7 +93,7 @@ class DenoWorld implements ArrayAccess, JsonSerializable
 	}
 
 	public function offsetExists($offset): bool
-	{	return (bool)DenoWorldMain::write_read(DenoWorldMain::RES_CLASS_ISSET, $this->deno_inst_id, $offset);
+	{	return DenoWorldMain::write_read(DenoWorldMain::RES_CLASS_ISSET, $this->deno_inst_id, $offset);
 	}
 
 	public function offsetUnset($offset): void
@@ -287,7 +287,6 @@ class DenoWorldMain extends DenoWorld
 	private const RESTYPE_IS_JSON = 16;
 	private const RESTYPE_IS_ERROR = 32;
 
-	private static ?int $error_reporting = null;
 	private static string $end_mark = '';
 	private static array $php_insts = []; // deno has handles to these objects
 	private static array $php_insts_iters = [];
@@ -296,7 +295,8 @@ class DenoWorldMain extends DenoWorld
 	private static $commands_io;
 
 	public static function error_handler($err_code, $err_msg, $file, $line)
-	{	if (error_reporting(self::$error_reporting) != 0) // error_reporting returns zero if "@" operator was used
+	{	$v = error_reporting();
+		if (($v & $err_code)) // if "@" operator was used: 1) on PHP7.4 error_reporting() returns zero; 2) on PHP8.0 error_reporting() returns previously set value with $err_code bits excluded
 		{	throw new DenoWorldException($err_msg, $err_code, $file, $line);
 		}
 	}
@@ -922,8 +922,8 @@ class DenoWorldMain extends DenoWorld
 		$window = $globalThis;
 
 		// Install error handler, that converts E_ERROR to Exception
-		self::$error_reporting = error_reporting(); // determine reporting level set by user
-		set_error_handler('DenoWorldMain::error_handler', self::$error_reporting);
+		$error_reporting = error_reporting(); // determine reporting level set by user
+		set_error_handler('DenoWorldMain::error_handler', $error_reporting);
 
 		// Register class loader
 		spl_autoload_register('DenoWorldMain::load_class');
