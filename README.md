@@ -9,7 +9,7 @@ There are several possible reasons to use `php_world`:
 
 ## Requirements
 
-PHP-CLI or PHP-FPM must be installed on your system.
+PHP-CLI or PHP-FPM at least version 8.0 must be installed on your system.
 
 ## Limitations
 

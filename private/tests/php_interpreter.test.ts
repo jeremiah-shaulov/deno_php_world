@@ -70,7 +70,6 @@ else if (WITH_DOCKER)
 		{	const args = ['-v', '/tmp:/tmp', '-v', path.dirname(INTERPRETER_SCRIPT)+':/usr/src/app'];
 			await with_docker('php:fpm', 'php_world', 9000, args, tests);
 			await with_docker('php:8.2-fpm', 'php_world', 9000, args, tests);
-			await with_docker('php:7.4-fpm', 'php_world', 9000, args, tests);
 		}
 	);
 }
@@ -82,16 +81,15 @@ else
 	console.log('PHP_CLI_NAME="php" PHP_FPM_LISTEN="localhost:9000" deno test ...');
 }
 
-async function tests(image_name: string, container_name: string, port: number)
+async function tests(_image_name: string, container_name: string, port: number)
 {	if (DEBUG_PHP_BOOT)
-	{	const is_php_7 = image_name.startsWith('php:7');
-		await system
+	{	await system
 		(	'docker',
 			[	'exec',
 				container_name,
 				'bash',
 				'-c',
-				`pecl install xdebug${is_php_7 ? '-3.1.5' : ''} && \\
+				`pecl install xdebug && \\
 				echo "xdebug.mode = debug" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini && \\
 				echo "xdebug.start_with_request = yes" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini && \\
 				echo "xdebug.client_host = host.docker.internal" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini && \\
