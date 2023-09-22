@@ -2,6 +2,9 @@ const decoder = new TextDecoder;
 
 export async function system(cmd: string, args: string[], stderr: 'inherit'|'null'='inherit')
 {	const output = await new Deno.Command(cmd, {args, stdout: 'piped', stderr}).output();
+	if (!output.success)
+	{	throw new Error(`Command failed: ${cmd} ${JSON.stringify(args)}`);
+	}
 	return decoder.decode(output.stdout);
 }
 

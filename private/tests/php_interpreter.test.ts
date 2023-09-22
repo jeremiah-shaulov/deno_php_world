@@ -90,7 +90,7 @@ async function tests(container_name: string, port: number)
 				container_name,
 				'bash',
 				'-c',
-				`pecl install xdebug && \\
+				`pecl install xdebug$(php -r 'echo intval(phpversion()) >= 8 ? "" : "-3.1.5";') && \\
 				echo "xdebug.mode = debug" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini && \\
 				echo "xdebug.start_with_request = yes" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini && \\
 				echo "xdebug.client_host = host.docker.internal" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini && \\
