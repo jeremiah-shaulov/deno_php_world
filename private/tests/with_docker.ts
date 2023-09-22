@@ -26,7 +26,7 @@ async function stop_left_running(container_name_prefix: string)
 	}
 }
 
-export async function with_docker(image_name: string, container_name_prefix: string, container_internal_port: number, params: string[], cb: (container_name: string, external_port: number) => Promise<unknown>)
+export async function with_docker(image_name: string, container_name_prefix: string, container_internal_port: number, params: string[], cb: (image_name: string, container_name: string, external_port: number) => Promise<unknown>)
 {	await stop_left_running(container_name_prefix);
 	const container_name = container_name_prefix + '_' + Math.floor(Math.random() * 256);
 	// Format command line
@@ -62,7 +62,7 @@ export async function with_docker(image_name: string, container_name_prefix: str
 		}
 		// Call the cb
 		console.log(`%s: %cReady`, image_name, 'color:blue');
-		await cb(container_name, Number(external_port));
+		await cb(image_name, container_name, Number(external_port));
 	}
 	finally
 	{	// Drop the container
