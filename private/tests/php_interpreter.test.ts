@@ -429,6 +429,10 @@ async function test_construct(php_cli_name: string|string[], php_fpm_listen: str
 				{	public $arg_value;
 					public $var = 10;
 					public $for_c2;
+					public $for_c2_num;
+					public $a;
+					public $hello;
+					public $one;
 
 					function __construct($arg)
 					{	$this->arg_value = $arg->get_value();
@@ -1279,6 +1283,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	settings.php_fpm.listen = '';
 	settings.localhost_name_bind = localhost_name_bind;
 	settings.localhost_name = localhost_name;
+	settings.interpreter_script = interpreter_script;
 	settings.unix_socket_name = '';
 	settings.stdout = 'inherit';
 
@@ -1653,6 +1658,7 @@ async function test_access_deno_from_php(php_cli_name: string|string[], _php_fpm
 	settings.php_fpm.listen = '';
 	settings.localhost_name_bind = localhost_name_bind;
 	settings.localhost_name = localhost_name;
+	settings.interpreter_script = interpreter_script;
 	settings.unix_socket_name = '';
 	settings.stdout = 'inherit';
 
@@ -1917,6 +1923,7 @@ async function test_variables_from_php(php_cli_name: string|string[], _php_fpm_l
 	settings.php_fpm.listen = '';
 	settings.localhost_name_bind = localhost_name_bind;
 	settings.localhost_name = localhost_name;
+	settings.interpreter_script = interpreter_script;
 	settings.unix_socket_name = '';
 	settings.stdout = 'inherit';
 
@@ -1972,6 +1979,7 @@ async function test_proxy(php_cli_name: string|string[], _php_fpm_listen: string
 	settings.php_fpm.listen = '';
 	settings.localhost_name_bind = localhost_name_bind;
 	settings.localhost_name = localhost_name;
+	settings.interpreter_script = interpreter_script;
 	settings.unix_socket_name = '';
 	settings.stdout = 'inherit';
 
@@ -2035,6 +2043,7 @@ async function test_json_encode(php_cli_name: string|string[], _php_fpm_listen: 
 	settings.php_fpm.listen = '';
 	settings.localhost_name_bind = localhost_name_bind;
 	settings.localhost_name = localhost_name;
+	settings.interpreter_script = interpreter_script;
 	settings.unix_socket_name = '';
 	settings.stdout = 'inherit';
 
@@ -2063,6 +2072,7 @@ async function test_pass_value_from_php_to_deno_and_then_back_to_php(php_cli_nam
 	settings.php_fpm.listen = '';
 	settings.localhost_name_bind = localhost_name_bind;
 	settings.localhost_name = localhost_name;
+	settings.interpreter_script = interpreter_script;
 	settings.unix_socket_name = '';
 	settings.stdout = 'inherit';
 
@@ -2108,6 +2118,7 @@ async function test_pass_value_from_deno_to_php_and_then_back_to_deno(php_cli_na
 	settings.php_fpm.listen = '';
 	settings.localhost_name_bind = localhost_name_bind;
 	settings.localhost_name = localhost_name;
+	settings.interpreter_script = interpreter_script;
 	settings.unix_socket_name = '';
 	settings.stdout = 'inherit';
 
@@ -2163,6 +2174,7 @@ async function test_pass_big_data(php_cli_name: string|string[], _php_fpm_listen
 	settings.php_fpm.listen = '';
 	settings.localhost_name_bind = localhost_name_bind;
 	settings.localhost_name = localhost_name;
+	settings.interpreter_script = interpreter_script;
 	settings.unix_socket_name = '';
 	settings.stdout = 'inherit';
 
