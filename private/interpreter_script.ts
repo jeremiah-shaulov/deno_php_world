@@ -1034,7 +1034,7 @@ export async function get_interpreter_script_filename(is_debug=false, tmp_dirnam
 		}
 	}
 	// write PHP_BOOT file
-	await Deno.writeTextFile(php_boot_filename, PHP_BOOT, {mode: 0o640});
+	await Deno.writeTextFile(php_boot_filename, PHP_BOOT, {mode: 0o644});
 	// done
 	return php_boot_filename;
 }

@@ -9,7 +9,7 @@ import {fcgi, ResponseWithCookies, writeAll, copy} from './deps.ts';
 type Any = any;
 
 const PHP_CLI_NAME_DEFAULT = 'php';
-const DEBUG_PHP_BOOT = false;
+export const DEBUG_PHP_BOOT = false;
 const KEY_LEN = 32;
 const READER_MUX_END_MARK_LEN = 32;
 const BUFFER_LEN = 1024; // so small packets will not need allocation
@@ -288,8 +288,9 @@ export interface PhpFpmSettings
  **/
 export class PhpSettings
 {	/**	Command that will be executed to spawn a PHP-CLI process. This setting is ignored if `php_fpm.listen` is set.
+		Use array to pass command-line arguments together with the command.
 	 **/
-	php_cli_name = PHP_CLI_NAME_DEFAULT;
+	php_cli_name: string|string[] = PHP_CLI_NAME_DEFAULT;
 
 	php_fpm: PhpFpmSettings =
 	{	listen: '',
@@ -303,10 +304,16 @@ export class PhpSettings
 
 	unix_socket_name = '';
 
-	/**	This library will create socket for communication with PHP process.
-		If communicating with remote PHP-FPM, need to specify hostname of the current host, where this application is running, and PHP-FPM must be able to discover this host by the specified name.
+	/**	This library will create socket for communication with PHP process, and bind it to `localhost_name_bind`.
+		This host must be discoverable form within PHP process by the name `localhost_name`.
+		When using PHP-CLI, or local PHP-FPM, the best choise for `localhost_name_bind` is `localhost` (or `::1` or `127.0.0.1`).
+		If communicating with remote PHP-FPM, you can bind to router network ip, or to '0.0.0.0'.
 	 **/
-	localhost_name = '::1';
+	localhost_name = 'localhost';
+
+	/**	See {@link localhost_name}
+	 **/
+	localhost_name_bind = 'localhost';
 
 	/**	This library uses interpreter script that executes commands sent from Deno end.
 		If using PHP-CLI, the default behavior is to pass the whole contents of the interpreter script as command line argument to PHP command.
@@ -325,11 +332,15 @@ export class PhpSettings
 
 	stdout: 'inherit'|'piped'|'null'|number = 'inherit';
 
-	/**	If set to existing PHP file, will chdir() to this file's directory, and execute this file before doing first requested operation (including `g.exit()`).
-		Then this setting will be reset to empty string, so next call to `g.exit()` will not reexecute the file.
-		If reexecution is needed, reassign `init_php_file`.
+	/**	If set to existing PHP file, will chdir() to this file's directory, and execute this file before doing first requested operation (even if it was `g.exit()`).
+		If after `g.exit()` another operation is performed, the script will be executed again.
 	 **/
 	init_php_file = '';
+
+	/**	By default arguments from Deno are passed to PHP.
+		Here you can override them.
+	 **/
+	override_args: string[] | undefined;
 
 	onsymbol: (name: string) => Any = () => {};
 
@@ -345,6 +356,7 @@ export class PhpSettings
 		this.unix_socket_name = init_settings?.unix_socket_name ?? this.unix_socket_name;
 		this.stdout = init_settings?.stdout ?? this.stdout;
 		this.init_php_file = init_settings?.init_php_file ?? this.init_php_file;
+		this.override_args = init_settings?.override_args;
 		this.onsymbol = init_settings?.onsymbol ?? this.onsymbol;
 	}
 }
@@ -1033,23 +1045,29 @@ export class PhpInterpreter
 		}
 		else
 		{	this.using_unix_socket = '';
-			const {localhost_name} = this.settings;
-			this.listener = Deno.listen({transport: 'tcp', hostname: localhost_name, port: 0});
+			const {localhost_name_bind, localhost_name} = this.settings;
+			this.listener = Deno.listen({transport: 'tcp', hostname: localhost_name_bind, port: 0});
 			php_socket = `tcp://${localhost_name.indexOf(':')==-1 ? localhost_name : '['+localhost_name+']'}:${(this.listener.addr as Deno.NetAddr).port}`;
 		}
 		// 3. HELO (generate random key)
 		const key = await get_random_key(this.buffer.subarray(0, KEY_LEN));
 		const end_mark = get_weak_random_bytes(this.buffer.subarray(0, READER_MUX_END_MARK_LEN));
-		const {init_php_file, interpreter_script} = this.settings;
-		this.settings.init_php_file = ''; // so second call to `exit()` will not reexecute the init script. if reexecution is needed, reassign `this.settings.init_php_file`
+		const {init_php_file, override_args, interpreter_script} = this.settings;
 		const rec_helo = key+' '+btoa(String.fromCharCode(...end_mark))+' '+btoa(php_socket)+' '+btoa(init_php_file);
 		let php_boot_file = '';
 		// 4. Run the PHP interpreter or connect to PHP-FPM service
 		if (!this.settings.php_fpm.listen)
 		{	// Run the PHP interpreter
-			const cmd = interpreter_script || DEBUG_PHP_BOOT ? [this.settings.php_cli_name, '-f', interpreter_script || await get_interpreter_script_filename(DEBUG_PHP_BOOT)] : [this.settings.php_cli_name, '-r', PHP_BOOT_CLI];
-			if (Deno.args.length)
-			{	cmd.splice(cmd.length, 0, '--', ...Deno.args);
+			const cmd = Array.isArray(this.settings.php_cli_name) ? this.settings.php_cli_name.slice() : [this.settings.php_cli_name];
+			if (interpreter_script || DEBUG_PHP_BOOT)
+			{	cmd.push('-f', interpreter_script || await get_interpreter_script_filename(DEBUG_PHP_BOOT));
+			}
+			else
+			{	cmd.push('-r', PHP_BOOT_CLI);
+			}
+			const args = override_args ?? Deno.args;
+			if (args.length)
+			{	cmd.push('--', ...args);
 			}
 			this.php_cli_proc = Deno.run({cmd, stdin: 'piped', stdout: this.settings.stdout, stderr: 'inherit'});
 			// Send the HELO packet with opened listener address and the key

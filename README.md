@@ -47,7 +47,7 @@ await g.exit();
 ```
 There are several configurable settings:
 
-1. `settings.php_cli_name` - PHP-CLI command name (default `php`).
+1. `settings.php_cli_name` - PHP-CLI command name (default `php`). To use command name with arguments, assign array of strings, like `['docker', 'exec', '-i', 'daddy_cool', 'php']`.
 2. `settings.unix_socket_name` - `php_world` uses socket channel to communicate with the remote interpreter. By default it uses random (free) TCP port. On non-Windows systems you can use unix-domain socket. Set `settings.unix_socket_name` to full path of socket node file, where it will be created.
 3. `settings.stdout` - Allows to redirect PHP process echo output (see below).
 4. `settings.php_fpm.listen` - If set, `php_world` will use PHP-FPM service, not CLI. Set this to what appears in your PHP-FPM pool configuration file (see line that contains `listen = ...`).

@@ -4,7 +4,7 @@ import {fcgi, ServerRequest, iterateReader} from './deps.ts';
 const RE_FIX_SCRIPT_FILENAME = /^(?:(?:[\w\-]+:){1,2}\/\/[^\/]+)?(?:\/(?=\/))*/; // if SetHandler is used in Apache, it sends requests prefixed with "proxy:fcgi://localhost/", or what appears in the "SetHandler"
 
 export interface ProxyOptions
-{	frontend_listen: string;
+{	frontend_listen: string | number;
 	backend_listen: string;
 	max_conns?: number;
 	connect_timeout?: number;
