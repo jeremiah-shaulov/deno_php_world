@@ -1974,16 +1974,8 @@ async function test_include(php_cli_name: string|string[], php_fpm_listen: strin
 	php.close_idle();
 }
 
-async function test_proxy(php_cli_name: string|string[], _php_fpm_listen: string, localhost_name_bind: string, localhost_name: string, interpreter_script: string)
-{	settings.php_cli_name = php_cli_name;
-	settings.php_fpm.listen = '';
-	settings.localhost_name_bind = localhost_name_bind;
-	settings.localhost_name = localhost_name;
-	settings.interpreter_script = interpreter_script;
-	settings.unix_socket_name = '';
-	settings.stdout = 'inherit';
-
-	const tmp_name = await Deno.makeTempFile({suffix: '.php'});
+async function test_proxy(_php_cli_name: string|string[], php_fpm_listen: string, localhost_name_bind: string, localhost_name: string, interpreter_script: string)
+{	const tmp_name = await Deno.makeTempFile({suffix: '.php'});
 
 	try
 	{	await Deno.writeTextFile(tmp_name, `<?php echo 'Hello all';`);
@@ -1991,7 +1983,7 @@ async function test_proxy(php_cli_name: string|string[], _php_fpm_listen: string
 
 		const proxy = start_proxy
 		(	{	frontend_listen: 0,
-				backend_listen: PHP_FPM_LISTEN,
+				backend_listen: php_fpm_listen,
 				max_conns: 128,
 				keep_alive_timeout: 10000,
 				keep_alive_max: Number.MAX_SAFE_INTEGER,
@@ -1999,6 +1991,9 @@ async function test_proxy(php_cli_name: string|string[], _php_fpm_listen: string
 				max_name_length: 256,
 				max_value_length: 4*1024, // "HTTP_COOKIE" param can have this length
 				max_file_size: 10*1024*1024,
+				localhost_name_bind,
+				localhost_name,
+				interpreter_script,
 				async onrequest(php: PhpRequest)
 				{	await php.proxy();
 				}

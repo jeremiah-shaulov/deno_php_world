@@ -11,6 +11,9 @@ export interface ProxyOptions
 	keep_alive_timeout?: number;
 	keep_alive_max?: number;
 	unix_socket_name?: string;
+	localhost_name?: string;
+	localhost_name_bind?: string;
+	interpreter_script?: string;
 	max_name_length?: number;
 	max_value_length?: number;
 	max_file_size?: number;
@@ -63,13 +66,16 @@ export class PhpRequest extends PhpInterpreter
 }
 
 export function start_proxy(options: ProxyOptions)
-{	const {frontend_listen, backend_listen, max_conns, connect_timeout, keep_alive_timeout, keep_alive_max, unix_socket_name, max_name_length, max_value_length, max_file_size, onrequest, onerror} = options;
+{	const {frontend_listen, backend_listen, max_conns, connect_timeout, keep_alive_timeout, keep_alive_max, unix_socket_name, localhost_name, localhost_name_bind, interpreter_script, max_name_length, max_value_length, max_file_size, onrequest, onerror} = options;
 	const default_settings = new PhpSettings;
 	const set_max_conns = max_conns ?? default_settings.php_fpm.max_conns;
 	const set_connect_timeout = connect_timeout ?? default_settings.php_fpm.connect_timeout;
 	const set_keep_alive_timeout = keep_alive_timeout ?? default_settings.php_fpm.keep_alive_timeout;
 	const set_keep_alive_max = keep_alive_max ?? default_settings.php_fpm.keep_alive_max;
 	const set_unix_socket_name = unix_socket_name ?? default_settings.unix_socket_name;
+	const set_localhost_name = localhost_name ?? default_settings.localhost_name;
+	const set_localhost_name_bind = localhost_name_bind ?? default_settings.localhost_name_bind;
+	const set_interpreter_script = interpreter_script ?? default_settings.interpreter_script;
 
 	if (onerror)
 	{	fcgi.onError(onerror);
@@ -96,6 +102,9 @@ export function start_proxy(options: ProxyOptions)
 			php.settings.php_fpm.keep_alive_timeout = set_keep_alive_timeout;
 			php.settings.php_fpm.keep_alive_max = set_keep_alive_max;
 			php.settings.unix_socket_name = set_unix_socket_name;
+			php.settings.localhost_name = set_localhost_name;
+			php.settings.localhost_name_bind = set_localhost_name_bind;
+			php.settings.interpreter_script = set_interpreter_script;
 
 			try
 			{	await onrequest(php);

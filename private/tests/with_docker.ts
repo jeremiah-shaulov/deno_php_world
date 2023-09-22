@@ -1,20 +1,8 @@
 const decoder = new TextDecoder;
 
 export async function system(cmd: string, args: string[], stderr: 'inherit'|'null'='inherit')
-{	const h = new Deno.Command(cmd, {args, stdout: 'piped', stderr}).spawn();
-	try
-	{	const output = await h.output();
-		return decoder.decode(output.stdout);
-	}
-	catch (e)
-	{	try
-		{	h.kill();
-		}
-		catch
-		{	// ok
-		}
-		throw e;
-	}
+{	const output = await new Deno.Command(cmd, {args, stdout: 'piped', stderr}).output();
+	return decoder.decode(output.stdout);
 }
 
 async function stop_left_running(container_name_prefix: string)
@@ -82,6 +70,7 @@ export async function with_docker(image_name: string, container_name_prefix: str
 		finally
 		{	try
 			{	process.kill();
+				await process.output();
 			}
 			catch
 			{	// ok
