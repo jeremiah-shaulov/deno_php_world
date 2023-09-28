@@ -840,7 +840,7 @@ The body can be read in regular way, as you do with `fetch()`, or it can be read
 
 ```ts
 import {g, c, php, settings} from 'https://deno.land/x/php_world@v0.0.34/mod.ts';
-export {readAll} from 'https://deno.land/std@0.135.0/streams/conversion.ts';
+import {readAll} from 'https://deno.land/std@0.175.0/streams/mod.ts';
 
 settings.php_fpm.listen = '/run/php/php-fpm.jeremiah.sock';
 settings.php_fpm.onresponse = async response =>
@@ -940,7 +940,7 @@ For more information on `ServerRequest` object see [x/fcgi](https://deno.land/x/
 There's setting that provides control on how PHP output is processed: `settings.stdout`.
 
 ```ts
-stdout: 'inherit'|'piped'|'null'|number = 'inherit'
+stdout: 'inherit'|'piped'|'null' = 'inherit'
 ```
 It's default value is `inherit`. For PHP-CLI this value means to pass PHP output to Deno. So `g.echo("msg\n")` works like `console.log("msg")`.
 
@@ -964,6 +964,7 @@ Setting `settings.stdout` to `piped` allows to catch PHP output. Initially the o
 
 ```ts
 import {php, settings} from 'https://deno.land/x/php_world@v0.0.34/mod.ts';
+import {readAll} from 'https://deno.land/std@0.175.0/streams/mod.ts';
 
 settings.stdout = 'piped';
 
@@ -972,7 +973,7 @@ php.g.echo("*".repeat(10)); // no await
 php.g.echo("."); // queue another function call
 php.drop_stdout_reader(); // reader stream will end here
 
-let data = new TextDecoder().decode(await Deno.readAll(stdout));
+let data = new TextDecoder().decode(await readAll(stdout));
 console.log(data == "*".repeat(10)+"."); // prints "true"
 
 await php.g.exit();
@@ -980,7 +981,7 @@ await php.g.exit();
 
 This technique doesn't work good with PHP-FPM, because output can be buffered in the middle between PHP and Deno.
 
-Another options for `settings.stdout` are `null` (to ignore the output), and a numeric file descriptor (rid) of an opened file/stream.
+Another option for `settings.stdout` is `'null'` meaning to ignore the output.
 
 ### Interpreter script
 

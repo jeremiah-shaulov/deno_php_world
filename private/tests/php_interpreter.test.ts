@@ -149,8 +149,6 @@ function *settings_iter(settings: PhpSettings, php_cli_name: string|string[], ph
 		yield;
 		settings.stdout = 'null';
 		yield;
-		settings.stdout = 1;
-		yield;
 		settings.interpreter_script = interpreter_script;
 		yield;
 		if (UNIX_SOCKET_NAME)
