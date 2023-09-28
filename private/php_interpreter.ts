@@ -2,8 +2,8 @@ import {debug_assert} from './debug_assert.ts';
 import {PHP_BOOT_CLI, get_interpreter_script_filename} from './interpreter_script.ts';
 import {create_proxy} from './proxy_object.ts';
 import {ReaderMux} from './reader_mux.ts';
-import {get_random_key, get_weak_random_bytes} from './util.ts';
-import {fcgi, ResponseWithCookies, writeAll, copy} from './deps.ts';
+import {get_random_key, get_weak_random_bytes, writeAll, copy} from './util.ts';
+import {fcgi, ResponseWithCookies} from './deps.ts';
 
 // deno-lint-ignore no-explicit-any
 type Any = any;

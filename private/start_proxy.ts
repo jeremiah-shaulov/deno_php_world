@@ -1,5 +1,6 @@
 import {PhpInterpreter, PhpSettings} from './php_interpreter.ts';
-import {fcgi, ServerRequest, iterateReader} from './deps.ts';
+import {fcgi, ServerRequest} from './deps.ts';
+import {iterateReader} from './util.ts';
 
 const RE_FIX_SCRIPT_FILENAME = /^(?:(?:[\w\-]+:){1,2}\/\/[^\/]+)?(?:\/(?=\/))*/; // if SetHandler is used in Apache, it sends requests prefixed with "proxy:fcgi://localhost/", or what appears in the "SetHandler"
 

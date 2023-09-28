@@ -840,7 +840,7 @@ The body can be read in regular way, as you do with `fetch()`, or it can be read
 
 ```ts
 import {g, c, php, settings} from 'https://deno.land/x/php_world@v0.0.34/mod.ts';
-import {readAll} from 'https://deno.land/std@0.175.0/streams/mod.ts';
+import {readAll} from 'https://deno.land/std@0.203.0/streams/mod.ts';
 
 settings.php_fpm.listen = '/run/php/php-fpm.jeremiah.sock';
 settings.php_fpm.onresponse = async response =>
@@ -964,7 +964,7 @@ Setting `settings.stdout` to `piped` allows to catch PHP output. Initially the o
 
 ```ts
 import {php, settings} from 'https://deno.land/x/php_world@v0.0.34/mod.ts';
-import {readAll} from 'https://deno.land/std@0.175.0/streams/mod.ts';
+import {readAll} from 'https://deno.land/std@0.203.0/streams/mod.ts';
 
 settings.stdout = 'piped';
 
