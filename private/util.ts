@@ -137,6 +137,7 @@ export async function copy(source: Deno.Reader, dest: Deno.Writer, options?: {bu
 			size = -size - 1;
 			write_promise = undefined;
 			write_pos += size;
+			n_bytes_copied += size;
 			if (read_pos==write_pos && !read_promise)
 			{	read_pos = read_pos_2;
 				read_pos_2 = 0;
@@ -145,7 +146,6 @@ export async function copy(source: Deno.Reader, dest: Deno.Writer, options?: {bu
 				{	break;
 				}
 			}
-			n_bytes_copied += size;
 		}
 	}
 	return n_bytes_copied;
