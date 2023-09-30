@@ -178,5 +178,7 @@ L:			for (let i=-mark_bytes_matching, i_end=data.length; i<i_end; i++)
 		{	const reader_or_readable = await this.get_reader_or_readable();
 			await reader_or_readable.readable.cancel();
 		}
+		this.inner_reader?.releaseLock();
+		this.inner_reader = undefined;
 	}
 }

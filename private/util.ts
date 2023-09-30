@@ -93,8 +93,8 @@ export async function copy(source: Deno.Reader, dest: Deno.Writer, options?: {bu
 	while (true)
 	{	// Start (or continue) reading and/or writing
 		read_promise ??=
-		(	is_eof ?
-				undefined : // Don't read if EOF
+		(	is_eof ? // Don't read if EOF
+				undefined :
 			read_pos<=half_buffer_size ? // Read if there's at least a half buffer free after the `read_pos`
 				source.read
 				(	read_pos==0 ? buffer.subarray(0, half_buffer_size) : // Don't try to read the full buffer, only it's half. The buffer is big enough (twice common size). This increases the chance that reading and writing will happen in parallel
