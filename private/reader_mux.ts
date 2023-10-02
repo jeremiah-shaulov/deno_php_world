@@ -1,4 +1,4 @@
-// TODO: after_end_mark
+import {ReadableStreamOfBytes} from './readable_stream_of_bytes.ts';
 
 const BUFFER_SIZE_DEFAUT = 8*1024;
 
@@ -142,22 +142,17 @@ L:			for (let i=-mark_bytes_matching, i_end=data.length; i<i_end; i++)
 			},
 
 			get readable()
-			{	return new ReadableStream
+			{	return new ReadableStreamOfBytes
 				(	{	type: 'bytes',
+						autoAllocateChunkSize: BUFFER_SIZE_DEFAUT,
 
 						async pull(controller)
-						{	const view = controller.byobRequest?.view;
-							const n_read = await schedule_inner_read(view?.byteLength ?? BUFFER_SIZE_DEFAUT);
+						{	const view = controller.byobRequest.view;
+							const n_read = await schedule_inner_read(view.byteLength);
 							if (n_read != null)
 							{	const chunk = buffer!.subarray(0, n_read);
-								if (view)
-								{	new Uint8Array(view.buffer, view.byteOffset, view.byteLength).set(chunk);
-									controller.byobRequest.respond(n_read);
-								}
-								else
-								{	controller.enqueue(chunk);
-									buffer = undefined;
-								}
+								view.set(chunk);
+								controller.byobRequest.respond(n_read);
 							}
 							else
 							{	controller.close();
