@@ -3,48 +3,194 @@ const DEFAULT_BUFFER_SIZE = 8*1024;
 // deno-lint-ignore no-explicit-any
 type Any = any;
 
+type StartOrPull = (controller: Controller) => void | PromiseLike<void>;
+
+interface Source
+{	type?: 'bytes',
+	autoAllocateChunkSize?: number;
+	start?: StartOrPull;
+	pull?: StartOrPull;
+	cancel?: (reason: Any) => void | PromiseLike<void>;
+}
+
 export class ReadableStreamOfBytes extends ReadableStream<Uint8Array>
-{	#underlyingController: ReadableStreamDefaultController<Uint8Array>;
-	#autoAllocateChunkSize: number;
-	#startPromise: PromiseLike<void>;
-	#pull: ((controller: Controller) => void | PromiseLike<void>) | undefined;
+{	#autoAllocateChunkSize: number;
+	#puller: Puller;
 
 	constructor(underlyingSource?: Source)
 	{	const autoAllocateChunkSizeU = underlyingSource?.autoAllocateChunkSize;
 		const autoAllocateChunkSize = autoAllocateChunkSizeU && autoAllocateChunkSizeU>0 ? autoAllocateChunkSizeU : DEFAULT_BUFFER_SIZE;
 		const start = underlyingSource?.start;
-		const pull = underlyingSource?.pull;
 		const cancel = underlyingSource?.cancel;
-		let underlyingController!: ReadableStreamDefaultController<Uint8Array>;
-		let startPromise!: PromiseLike<void>;
+		const pull = underlyingSource?.pull;
+		let puller!: Puller;
 		super
 		(	{	start(controller)
-				{	underlyingController = controller;
-					startPromise = start?.(new Controller(underlyingController, autoAllocateChunkSize, new Uint8Array, [])) ?? Promise.resolve();
-					return startPromise;
+				{	puller = new Puller(autoAllocateChunkSize, pull, controller);
+					return puller.start(start);
 				},
-				cancel,
+				cancel: (reason) =>
+				{	this.#puller.cancelled();
+					return cancel?.(reason);
+				},
 			}
 		);
-		this.#underlyingController = underlyingController;
 		this.#autoAllocateChunkSize = autoAllocateChunkSize;
-		this.#startPromise = startPromise;
-		this.#pull = pull;
+		this.#puller = puller;
 	}
 
 	getReader(options?: {mode?: undefined}): ReadableStreamDefaultReader<Uint8Array>;
 	getReader(options: {mode: 'byob'}): ReadableStreamBYOBReader;
 	getReader(_options?: {mode?: 'byob'}): ReadableStreamDefaultReader<Uint8Array> | ReadableStreamBYOBReader
-	{	return new Reader(super.getReader(), this.#underlyingController, this.#autoAllocateChunkSize, this.#startPromise, this.#pull);
+	{	return new Reader(super.getReader(), this.#puller);
+	}
+
+	async uint8Array()
+	{	const reader = this.getReader({mode: 'byob'});
+		try
+		{	const chunks = new Array<Uint8Array>;
+			let totalLen = 0;
+			let chunkSize = this.#autoAllocateChunkSize;
+			const readTo = chunkSize - (chunkSize >> 3);
+			while (true)
+			{	let chunk = new Uint8Array(chunkSize);
+				while (chunk.byteLength >= readTo)
+				{	const {value, done} = await reader.read(chunk);
+					if (done)
+					{	if (chunks.length == 0)
+						{	return new Uint8Array(0);
+						}
+						if (chunks.length == 1)
+						{	return chunks[0];
+						}
+						const result = new Uint8Array(totalLen);
+						let pos = 0;
+						for (const chunk of chunks)
+						{	result.set(chunk, pos);
+							pos += chunk.byteLength;
+						}
+						return result;
+					}
+					chunk = chunk.subarray(value.byteLength);
+				}
+				const chunkLen = chunk.byteOffset;
+				chunks.push(new Uint8Array(chunk.buffer, 0, chunkLen));
+				totalLen += chunkLen;
+				chunkSize *= 2;
+			}
+		}
+		finally
+		{	reader.releaseLock();
+		}
 	}
 }
 
-interface Source
-{	type?: 'bytes',
-	autoAllocateChunkSize?: number;
-	start?: (controller: Controller) => void | PromiseLike<void>;
-	pull?: (controller: Controller) => void | PromiseLike<void>;
-	cancel?: (reason: Any) => void | PromiseLike<void>;
+class Puller
+{	#ongoing: PromiseLike<void> = Promise.resolve();
+	#wantToPull = 0;
+	#nQueued = 0;
+	#recycledBuffer: Uint8Array|undefined;
+
+	constructor
+	(	private autoAllocateChunkSize: number,
+		private underlyingPull: StartOrPull|undefined,
+		private underlyingController: ReadableStreamDefaultController<Uint8Array>
+	)
+	{
+	}
+
+	start(underlyingStart: StartOrPull|undefined)
+	{	if (underlyingStart)
+		{	const startPromise = underlyingStart?.(new Controller(this, new Uint8Array, false));
+			if (startPromise)
+			{	this.#ongoing = startPromise;
+				return startPromise;
+			}
+		}
+	}
+
+	startReader()
+	{	this.#wantToPull = 0;
+	}
+
+	pull(view?: Uint8Array)
+	{	if (this.underlyingPull)
+		{	this.#wantToPull++;
+			this.#ongoing = this.#ongoing.then
+			(	async () =>
+				{	if (this.#wantToPull > this.#nQueued)
+					{	try
+						{	let recycleBuffer = false;
+							if (!view)
+							{	view = this.#recycledBuffer ?? new Uint8Array(this.autoAllocateChunkSize * 2); // allocate twice size, and try to reuse parts till they become less than the `autoAllocateChunkSize`
+								this.#recycledBuffer = undefined;
+								recycleBuffer = true;
+							}
+							await this.underlyingPull?.(new Controller(this, view, recycleBuffer));
+						}
+						catch (e)
+						{	this.underlyingPull = undefined;
+							this.underlyingController.error(e);
+						}
+					}
+				}
+			);
+		}
+	}
+
+	enqueue(chunk: Uint8Array, view: Uint8Array, recycleBuffer: boolean)
+	{	if (recycleBuffer)
+		{	if (chunk.buffer != view.buffer)
+			{	this.#recycledBuffer = view;
+			}
+			else
+			{	const end = chunk.byteOffset + chunk.byteLength;
+				if (chunk.buffer.byteLength-end >= this.autoAllocateChunkSize)
+				{	this.#recycledBuffer = new Uint8Array(chunk.buffer, end);
+				}
+			}
+		}
+		this.#nQueued++;
+		this.underlyingController.enqueue(chunk);
+	}
+
+	close()
+	{	this.underlyingPull = undefined;
+		this.underlyingController.close();
+	}
+
+	error(error?: Any)
+	{	this.underlyingPull = undefined;
+		this.underlyingController.error(error);
+	}
+
+	cancelled()
+	{	this.underlyingPull = undefined;
+	}
+}
+
+class Controller
+{	readonly byobRequest: ByobRequest;
+
+	constructor(private puller: Puller, view: Uint8Array, private recycleBuffer: boolean)
+	{	this.byobRequest = new ByobRequest(this, view);
+	}
+
+	get desiredSize()
+	{	return this.byobRequest.view.byteLength;
+	}
+
+	enqueue(chunk: Uint8Array)
+	{	this.puller.enqueue(chunk, this.byobRequest.view, this.recycleBuffer);
+	}
+
+	close()
+	{	this.puller.close();
+	}
+
+	error(error?: Any)
+	{	this.puller.error(error);
+	}
 }
 
 class ByobRequest
@@ -62,92 +208,34 @@ class ByobRequest
 	}
 }
 
-class Controller
-{	readonly byobRequest: ByobRequest;
-	#recycleBuffer = false;
-
-	constructor(private underlyingController: ReadableStreamDefaultController<Uint8Array>, private autoAllocateChunkSize: number, view: Uint8Array|undefined, private buffers: Uint8Array[])
-	{	if (!view)
-		{	view = buffers.pop() ?? new Uint8Array(autoAllocateChunkSize * 2); // allocate twice size, and try to reuse parts till they become less than the `autoAllocateChunkSize`
-			this.#recycleBuffer = true;
-		}
-		this.byobRequest = new ByobRequest(this, view);
-	}
-
-	get desiredSize()
-	{	return this.underlyingController.desiredSize;
-	}
-
-	close()
-	{	this.underlyingController.close();
-	}
-
-	enqueue(chunk: Uint8Array)
-	{	if (this.#recycleBuffer)
-		{	const {view} = this.byobRequest;
-			if (chunk.buffer != view.buffer)
-			{	this.buffers.push(view);
-			}
-			else
-			{	const end = chunk.byteOffset + chunk.byteLength;
-				if (chunk.buffer.byteLength-end >= this.autoAllocateChunkSize)
-				{	this.buffers.push(new Uint8Array(chunk.buffer, end));
-				}
-			}
-		}
-		this.underlyingController.enqueue(chunk);
-	}
-
-	error(error?: Any)
-	{	this.underlyingController.error(error);
-	}
-}
-
 /**	The same as `ReadableStreamBYOBReader`, but it's `read()` stores it's argument (`view`) to be used in `byobRequest` without transferring.
  **/
 class Reader
-{	#buffers = new Array<Uint8Array>;
-
-	constructor
-	(	private parentReader: ReadableStreamDefaultReader<Uint8Array>,
-		private underlyingController: ReadableStreamDefaultController<Uint8Array>,
-		private autoAllocateChunkSize: number,
-		private ongoing: PromiseLike<void>,
-		private pull?: (controller: Controller) => void | PromiseLike<void>,
+{	constructor
+	(	private underlyingReader: ReadableStreamDefaultReader<Uint8Array>,
+		private puller: Puller,
 	)
-	{
+	{	puller.startReader();
 	}
 
 	get closed()
-	{	return this.parentReader.closed;
+	{	return this.underlyingReader.closed;
 	}
 
 	cancel(reason?: Any)
-	{	return this.parentReader.cancel(reason);
+	{	return this.underlyingReader.cancel(reason);
 	}
 
 	releaseLock()
-	{	this.parentReader.releaseLock();
+	{	this.underlyingReader.releaseLock();
 	}
 
 	async read<V extends ArrayBufferView>(view?: V): Promise<ReadableStreamBYOBReadResult<V>>
 	{	if (view && !(view instanceof Uint8Array))
 		{	throw new Error('Only Uint8Array is supported'); // i always return `Uint8Array`, and it must be `V`
 		}
-		const {pull} = this;
-		if (pull)
-		{	this.ongoing = this.ongoing.then
-			(	async () =>
-				{	try
-					{	await pull(new Controller(this.underlyingController, this.autoAllocateChunkSize, view, this.#buffers));
-					}
-					catch (e)
-					{	this.underlyingController.error(e);
-					}
-				}
-			);
-		}
-		const {value, done} = await this.parentReader.read();
+		this.puller.pull(view);
+		const {value, done} = await this.underlyingReader.read();
 		return {value: value as Any, done};
 	}
 }
