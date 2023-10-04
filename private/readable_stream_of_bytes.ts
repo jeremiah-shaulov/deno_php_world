@@ -69,6 +69,140 @@ export class ReadableStreamOfBytes extends ReadableStream<Uint8Array>
 	{	return new Reader(super.getReader(), this.#puller);
 	}
 
+	tee(options?: {requireParallelRead?: boolean}): [ReadableStreamOfBytes, ReadableStreamOfBytes]
+	{	const reader = this.getReader({mode: 'byob'});
+
+		if (options?.requireParallelRead)
+		{	let promise = Promise.resolve({} as ReadableStreamBYOBReadResult<Uint8Array>);
+			let resolve: VoidFunction|undefined;
+			let secondReaderOffset = 0;
+
+			// deno-lint-ignore no-inner-declarations
+			async function pull(controller: Controller)
+			{	if (!resolve)
+				{	// First reader
+					secondReaderOffset = 0;
+					promise = reader.read(controller.byobRequest.view);
+					const promise2 = new Promise<void>(y => {resolve = y});
+					const {value, done} = await promise;
+					if (done)
+					{	controller.close();
+					}
+					else
+					{	controller.byobRequest.respond(value.byteLength);
+					}
+					// Wait for the second reader
+					await promise2;
+				}
+				else
+				{	// Second reader
+					const {value, done} = await promise; // get the result of the first reader
+					if (done)
+					{	controller.close();
+					}
+					else
+					{	const {view} = controller.byobRequest;
+						const wantLen = value.byteLength - secondReaderOffset;
+						const hasLen = view.byteLength;
+						const len = Math.min(wantLen, hasLen);
+						view.set(value.subarray(secondReaderOffset, secondReaderOffset+len));
+						controller.byobRequest.respond(len);
+						if (len < wantLen)
+						{	// Target buffer is too small, so i return without releasing the first pull (`resolve()`), and wait for another pull from the second reader.
+							secondReaderOffset += len;
+							return;
+						}
+					}
+					resolve();
+					resolve = undefined;
+				}
+			}
+
+			return [new ReadableStreamOfBytes({pull}), new ReadableStreamOfBytes({pull})];
+		}
+		else
+		{	let promise = Promise.resolve();
+			let buffered = new Uint8Array;
+			let bufferedFor: -1|0|1 = 0;
+			let isEof = false;
+
+			// deno-lint-ignore no-inner-declarations no-redeclare
+			async function pull(controller: Controller, nReader: -1|1)
+			{	if (bufferedFor == nReader)
+				{	// Have something buffered for me
+					await promise;
+					const wantLen = buffered.byteLength;
+					if (wantLen > 0)
+					{	// Data
+						if (isEof && !controller.byobRequest.isUserSuppliedBuffer)
+						{	controller.enqueue(buffered);
+							buffered = new Uint8Array;
+						}
+						else
+						{	const {view} = controller.byobRequest;
+							const hasLen = view.byteLength;
+							const len = Math.min(wantLen, hasLen);
+							view.set(buffered.subarray(0, len));
+							controller.byobRequest.respond(len);
+							if (len < wantLen)
+							{	buffered = buffered.subarray(len);
+							}
+							else
+							{	buffered = new Uint8Array(buffered.buffer, 0, 0);
+							}
+							bufferedFor = 0;
+						}
+					}
+					else if (isEof)
+					{	// Eof
+						controller.close();
+					}
+				}
+				else
+				{	// Read from the underlying reader
+					bufferedFor = -nReader as -1|1;
+					let resolve: VoidFunction|undefined;
+					promise = new Promise<void>(y => {resolve = y});
+					const {value, done} = await reader.read(controller.byobRequest.view);
+					if (done)
+					{	controller.close();
+						isEof = true; // Eof
+					}
+					else
+					{	controller.byobRequest.respond(value.byteLength);
+						// Buffer for the second reader
+						const curLen = buffered.byteLength;
+						const newLen = curLen + value.byteLength;
+						const totalLen = buffered.buffer.byteLength;
+						const {byteOffset} = buffered;
+						let newBuffered;
+						if (totalLen < newLen)
+						{	// The current buffer is too small (so allocate new and copy data from old)
+							newBuffered = new Uint8Array(curLen==0 ? value.buffer.byteLength : bufferSizeFor(newLen)).subarray(0, newLen);
+							newBuffered.set(buffered);
+						}
+						else if (totalLen-byteOffset < newLen)
+						{	// Space in the current buffer after the current content is too small (so enlarge view region and copyWithin)
+							newBuffered = new Uint8Array(buffered.buffer, 0, newLen);
+							if (byteOffset > 0)
+							{	new Uint8Array(buffered.buffer, 0, totalLen).copyWithin(0, byteOffset, byteOffset+curLen);
+							}
+						}
+						else
+						{	// There's space after the current content (so enlarge view region)
+							newBuffered = new Uint8Array(buffered.buffer, byteOffset, newLen);
+						}
+						newBuffered.set(value, curLen);
+						buffered = newBuffered;
+					}
+					resolve?.();
+				}
+			}
+
+			return [new ReadableStreamOfBytes({pull: c => pull(c, -1)}), new ReadableStreamOfBytes({pull: c => pull(c, 1)})];
+		}
+	}
+
 	async uint8Array()
 	{	const reader = this.getReader({mode: 'byob'});
 		try
@@ -112,18 +246,16 @@ export class ReadableStreamOfBytes extends ReadableStream<Uint8Array>
 /**	This class plays the same role in `ReadableStreamOfBytes` as does `ReadableByteStreamController` in `ReadableStream<Uint8Array>`.
  **/
 class Controller
-{	readonly byobRequest: ByobRequest;
+{	readonly desiredSize: number;
+	readonly byobRequest: ByobRequest;
 
-	constructor(private puller: Puller, view: Uint8Array, private recycleBuffer: boolean)
-	{	this.byobRequest = new ByobRequest(this, view);
-	}
-
-	get desiredSize()
-	{	return this.byobRequest.view.byteLength;
+	constructor(private puller: Puller, view: Uint8Array, private isUserSuppliedBuffer: boolean)
+	{	this.desiredSize = view.byteLength;
+		this.byobRequest = new ByobRequest(this, view, isUserSuppliedBuffer);
 	}
 
 	enqueue(chunk: Uint8Array)
-	{	this.puller.enqueue(chunk, this.byobRequest.view, this.recycleBuffer);
+	{	this.puller.enqueue(chunk, this.byobRequest.view, this.isUserSuppliedBuffer);
 	}
 
 	close()
@@ -140,6 +272,7 @@ class Controller
 class ByobRequest
 {	constructor
 	(	private controller: Controller,
+
 		/**	If the caller uses `reader.read(view)` to read from his reader, this property contains the `view` from the call.
 			It can be of any size.
 
@@ -152,6 +285,10 @@ class ByobRequest
 			If the original view was allocated by me, and you reassign it, i'll use the assigned object as it was mine.
 		 **/
 		public view: Uint8Array,
+
+		/**	True if the caller passes his own buffer to `reader.read` (`reader.read(view)`), and false if not (`reader.read()`).
+		 **/
+		readonly isUserSuppliedBuffer: boolean,
 	)
 	{
 	}
@@ -184,7 +321,7 @@ class Reader
 	(	private underlyingReader: ReadableStreamDefaultReader<Uint8Array>,
 		private puller: Puller,
 	)
-	{	puller.startReader();
+	{
 	}
 
 	get closed()
@@ -234,10 +371,6 @@ class Puller
 		}
 	}
 
-	startReader()
-	{	this.#wantToPull = 0;
-	}
-
 	pull(view?: Uint8Array)
 	{	if (this.underlyingPull)
 		{	this.#wantToPull++;
@@ -245,14 +378,14 @@ class Puller
 			(	async () =>
 				{	if (this.underlyingPull && this.#wantToPull>this.#nQueued)
 					{	try
-						{	let recycleBuffer = false;
+						{	let isUserSuppliedBuffer = true;
 							if (!view)
 							{	view = this.#recycledBuffer ?? new Uint8Array(this.autoAllocateChunkSize);
 								this.#recycledBuffer = undefined;
-								recycleBuffer = true;
+								isUserSuppliedBuffer = false;
 							}
 							const prevNQueued = this.#nQueued;
-							await this.underlyingPull(new Controller(this, view, recycleBuffer));
+							await this.underlyingPull(new Controller(this, view, isUserSuppliedBuffer));
 							if (this.#nQueued == prevNQueued)
 							{	this.underlyingPull = undefined; // don't call `pull` if it doesn't enqueue
 							}
@@ -266,8 +399,8 @@ class Puller
 		}
 	}
 
-	enqueue(chunk: Uint8Array, view: Uint8Array, recycleBuffer: boolean)
-	{	if (recycleBuffer)
+	enqueue(chunk: Uint8Array, view: Uint8Array, isUserSuppliedBuffer: boolean)
+	{	if (!isUserSuppliedBuffer)
 		{	if (chunk.buffer != view.buffer)
 			{	this.#recycledBuffer = view;
 			}
@@ -295,4 +428,12 @@ class Puller
 	cancelled()
 	{	this.underlyingPull = undefined; // don't call `pull` anymore
 	}
+}
+
+function bufferSizeFor(dataSize: number)
+{	let bufferSize = 1024;
+	while (bufferSize < dataSize)
+	{	bufferSize *= 2;
+	}
+	return bufferSize;
 }

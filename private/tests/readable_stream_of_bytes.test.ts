@@ -282,3 +282,149 @@ Deno.test
 		}
 	}
 );
+
+Deno.test
+(	'Tee and read in parallel',
+	async () =>
+	{	const BUFFER_SIZE = 13;
+		for (let a=0; a<3; a++) // ReadableStream, ReadableStreamOfBytes, ReadableStreamOfBytes with requireParallelRead
+		{	let i = 1;
+			const all = new Set<ArrayBufferLike>;
+			const rs = new (a==0 ? ReadableStream : ReadableStreamOfBytes)
+			(	{	type: 'bytes',
+
+					async pull(controller)
+					{	const view = controller.byobRequest?.view;
+						if (view)
+						{	await new Promise(y => setTimeout(y, 3 - i%3));
+							assertEquals(view.byteLength, BUFFER_SIZE);
+							assertEquals(view.buffer.byteLength, BUFFER_SIZE);
+							all.add(view.buffer);
+							const view2 = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+							for (let j=0; j<i && j<BUFFER_SIZE; j++)
+							{	view2[j] = i;
+							}
+							controller.byobRequest!.respond(Math.min(i, BUFFER_SIZE));
+							if (i == 100)
+							{	controller.close();
+							}
+							i++;
+						}
+					}
+				}
+			);
+
+			await Promise.all
+			(	(rs instanceof ReadableStreamOfBytes && a==2 ? rs.tee({requireParallelRead: true}) : rs.tee()).map
+				(	async rs =>
+					{	const r = rs.getReader({mode: 'byob'});
+
+						let b = new Uint8Array(BUFFER_SIZE);
+						for (let i2=1; i2<=100; i2++)
+						{	b = (await r.read(new Uint8Array(b.buffer, 0, b.buffer.byteLength))).value!;
+							assertEquals(b.length, Math.min(i2, BUFFER_SIZE));
+							for (let j=0; j<i2 && j<BUFFER_SIZE; j++)
+							{	assertEquals(b[j], i2);
+							}
+						}
+
+						const {value, done} = await r.read(new Uint8Array(b.buffer, 0, b.buffer.byteLength));
+						assertEquals(done, true);
+						assertEquals(value instanceof Uint8Array, true);
+						r.releaseLock();
+
+						const r2 = rs.getReader();
+						const res = await r2.read();
+						assertEquals(res.done, true);
+
+						if (a == 1)
+						{	assertEquals(all.size, 1);
+						}
+					}
+				)
+			);
+		}
+	}
+);
+
+Deno.test
+(	'Tee and read one after another',
+	async () =>
+	{	const BUFFER_SIZE = 13;
+		for (let a=0; a<2; a++) // ReadableStream or ReadableStreamOfBytes
+		{	let i = 1;
+			const all = new Set<ArrayBufferLike>;
+			const rs = new (a==0 ? ReadableStream : ReadableStreamOfBytes)
+			(	{	type: 'bytes',
+
+					async pull(controller)
+					{	const view = controller.byobRequest?.view;
+						if (view)
+						{	await new Promise(y => setTimeout(y, 3 - i%3));
+							assertEquals(view.byteLength, BUFFER_SIZE);
+							assertEquals(view.buffer.byteLength, BUFFER_SIZE);
+							all.add(view.buffer);
+							const view2 = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+							for (let j=0; j<i && j<BUFFER_SIZE; j++)
+							{	view2[j] = i;
+							}
+							controller.byobRequest!.respond(Math.min(i, BUFFER_SIZE));
+							if (i == 100)
+							{	controller.close();
+							}
+							i++;
+						}
+					}
+				}
+			);
+
+			const [rs1, rs2] = rs.tee();
+
+			// rs1
+			const r1 = rs1.getReader({mode: 'byob'});
+
+			let b = new Uint8Array(BUFFER_SIZE);
+			let totalLen = 0;
+			for (let i2=1; i2<=100; i2++)
+			{	b = (await r1.read(new Uint8Array(b.buffer, 0, b.buffer.byteLength))).value!;
+				assertEquals(b.length, Math.min(i2, BUFFER_SIZE));
+				for (let j=0; j<i2 && j<BUFFER_SIZE; j++)
+				{	assertEquals(b[j], i2);
+					totalLen++;
+				}
+			}
+
+			const {value, done} = await r1.read(new Uint8Array(b.buffer, 0, b.buffer.byteLength));
+			assertEquals(done, true);
+			assertEquals(value instanceof Uint8Array, true);
+			r1.releaseLock();
+
+			const r12 = rs1.getReader();
+			const res = await r12.read();
+			assertEquals(res.done, true);
+
+			// rs2
+			const r2 = rs2.getReader({mode: 'byob'});
+			let res2 = await r2.read(new Uint8Array(totalLen));
+			assertEquals(res2.done, false);
+			assertEquals(res2.value?.byteLength, totalLen);
+			let k = 0;
+			for (let i2=1; i2<=100; i2++)
+			{	for (let j=0; j<i2 && j<BUFFER_SIZE; j++)
+				{	assertEquals(res2.value?.[k++], i2);
+				}
+			}
+			assertEquals(k, totalLen);
+			r2.releaseLock();
+
+			const r22 = rs2.getReader();
+			res2 = await r22.read();
+			assertEquals(res2.done, true);
+
+			// a
+			if (a == 1)
+			{	assertEquals(all.size, 1);
+			}
+		}
+	}
+);
