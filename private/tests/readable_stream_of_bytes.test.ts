@@ -5,7 +5,7 @@ Deno.test
 (	'Await each',
 	async () =>
 	{	const BUFFER_SIZE = 13;
-		for (let a=0; a<2; a++)
+		for (let a=0; a<2; a++) // ReadableStream or ReadableStreamOfBytes
 		{	let i = 1;
 			const all = new Set<ArrayBufferLike>;
 			const rs = new (a==0 ? ReadableStream : ReadableStreamOfBytes)
@@ -51,7 +51,7 @@ Deno.test
 	async () =>
 	{	const BUFFER_SIZE = 13;
 		const BUFFER_SIZE_2 = 17;
-		for (let a=0; a<2; a++)
+		for (let a=0; a<2; a++) // ReadableStream or ReadableStreamOfBytes
 		{	let i = 1;
 			const all = new Set<ArrayBufferLike>;
 			const rs = new (a==0 ? ReadableStream : ReadableStreamOfBytes)
@@ -108,7 +108,7 @@ Deno.test
 (	'No pull, only start',
 	async () =>
 	{	const BUFFER_SIZE = 13;
-		for (let a=0; a<2; a++)
+		for (let a=0; a<2; a++) // ReadableStream or ReadableStreamOfBytes
 		{	const rs = new (a==0 ? ReadableStream : ReadableStreamOfBytes)
 			(	{	type: 'bytes',
 
@@ -141,13 +141,15 @@ Deno.test
 Deno.test
 (	'No byob',
 	async () =>
-	{	for (let a=0; a<2; a++)
+	{	for (let a=0; a<2; a++) // ReadableStream or ReadableStreamOfBytes
 		{	for (const BUFFER_SIZE of a==0 ? [13] : [13, 3000, 10_000])
-			{	let i = 1;
+			{	const autoAllocateMin = BUFFER_SIZE >> 3;
+				let i = 1;
 				const all = new Set<ArrayBufferLike>;
 				const rs = new (a==0 ? ReadableStream : ReadableStreamOfBytes)
 				(	{	type: 'bytes',
 						autoAllocateChunkSize: BUFFER_SIZE,
+						autoAllocateMin,
 
 						async pull(controller)
 						{	const view = controller.byobRequest?.view;
@@ -155,10 +157,10 @@ Deno.test
 							{	await new Promise(y => setTimeout(y, 3 - i%3));
 								all.add(view.buffer);
 								const view2 = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
-								for (let j=0; j<i && j<BUFFER_SIZE; j++)
+								for (let j=0; j<i && j<autoAllocateMin; j++)
 								{	view2[j] = i;
 								}
-								controller.byobRequest!.respond(Math.min(i, BUFFER_SIZE));
+								controller.byobRequest!.respond(Math.min(i, autoAllocateMin));
 								i++;
 							}
 						}
@@ -174,20 +176,107 @@ Deno.test
 					const b = (await res).value!;
 					const b2 = (await res2).value!;
 
-					assertEquals(b.length, Math.min(i2, BUFFER_SIZE));
-					for (let j=0; j<i2 && j<BUFFER_SIZE; j++)
+					assertEquals(b.length, Math.min(i2, autoAllocateMin));
+					for (let j=0; j<i2 && j<autoAllocateMin; j++)
 					{	assertEquals(b[j], i2);
 					}
 
 					i2++;
 
-					assertEquals(b2.length, Math.min(i2, BUFFER_SIZE));
-					for (let j=0; j<i2 && j<BUFFER_SIZE; j++)
+					assertEquals(b2.length, Math.min(i2, autoAllocateMin));
+					for (let j=0; j<i2 && j<autoAllocateMin; j++)
 					{	assertEquals(b2[j], i2);
 					}
 				}
 				if (a == 1)
-				{	assertEquals(all.size, BUFFER_SIZE==13 ? 48 : BUFFER_SIZE==3000 ? 2 : 1);
+				{	assertEquals(all.size, BUFFER_SIZE==13 ? 8 : BUFFER_SIZE==3000 ? 2 : 1);
+				}
+			}
+		}
+	}
+);
+
+Deno.test
+(	'Close, error',
+	async () =>
+	{	const BUFFER_SIZE = 13;
+		for (let c=0; c<2; c++) // close or error
+		{	for (let a=0; a<2; a++) // ReadableStream or ReadableStreamOfBytes
+			{	let i = 1;
+				const all = new Set<ArrayBufferLike>;
+				const rs = new (a==0 ? ReadableStream : ReadableStreamOfBytes)
+				(	{	type: 'bytes',
+
+						async pull(controller)
+						{	const view = controller.byobRequest?.view;
+							if (view)
+							{	await new Promise(y => setTimeout(y, 3 - i%3));
+								assertEquals(view.byteLength, BUFFER_SIZE);
+								assertEquals(view.buffer.byteLength, BUFFER_SIZE);
+								all.add(view.buffer);
+								const view2 = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+								for (let j=0; j<i && j<BUFFER_SIZE; j++)
+								{	view2[j] = i;
+								}
+								controller.byobRequest!.respond(Math.min(i, BUFFER_SIZE));
+								if (i == 3)
+								{	if (c == 0)
+									{	controller.close();
+									}
+									else
+									{	controller.error('hello all');
+									}
+								}
+								i++;
+							}
+						}
+					}
+				);
+
+				const r = rs.getReader({mode: 'byob'});
+
+				let b = new Uint8Array(BUFFER_SIZE);
+				for (let i2=1; i2<=3; i2++)
+				{	b = (await r.read(new Uint8Array(b.buffer, 0, b.buffer.byteLength))).value!;
+					assertEquals(b.length, Math.min(i2, BUFFER_SIZE));
+					for (let j=0; j<i2 && j<BUFFER_SIZE; j++)
+					{	assertEquals(b[j], i2);
+					}
+				}
+				if (c == 0)
+				{	const {value, done} = await r.read(new Uint8Array(b.buffer, 0, b.buffer.byteLength));
+					assertEquals(done, true);
+					assertEquals(value instanceof Uint8Array, true);
+
+					r.releaseLock();
+					const r2 = rs.getReader();
+					const res = await r2.read();
+					assertEquals(res.done, true);
+					assertEquals(res.value === undefined, true);
+				}
+				else
+				{	let error;
+					try
+					{	await r.read(new Uint8Array(b.buffer, 0, b.buffer.byteLength));
+					}
+					catch (e)
+					{	error = e;
+					}
+					assertEquals(error, 'hello all');
+
+					r.releaseLock();
+					const r2 = rs.getReader();
+					error = undefined;
+					try
+					{	await r2.read();
+					}
+					catch (e)
+					{	error = e;
+					}
+					assertEquals(error, 'hello all');
+				}
+				if (a == 1)
+				{	assertEquals(all.size, 1);
 				}
 			}
 		}
