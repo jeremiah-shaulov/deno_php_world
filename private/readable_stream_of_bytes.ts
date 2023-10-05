@@ -69,138 +69,30 @@ export class ReadableStreamOfBytes extends ReadableStream<Uint8Array>
 	{	return new Reader(super.getReader(), this.#puller);
 	}
 
+	/**	If one reader reads faster than another, or one of the readers doesn't read at all,
+		the default behavior is to buffer the data.
+
+		If `requireParallelRead` is set, will not buffer. Parent reader will suspend after each item,
+		till it's read by both of the streams.
+		In this case if you read and await from the first reader, and don't start reading from the second,
+		this will cause a deadlock situation.
+	 **/
 	tee(options?: {requireParallelRead?: boolean}): [ReadableStreamOfBytes, ReadableStreamOfBytes]
 	{	const reader = this.getReader({mode: 'byob'});
+		const tee =  options?.requireParallelRead ? new TeeRequireParallelRead(reader) : new TeeRegular(reader);
 
-		if (options?.requireParallelRead)
-		{	let promise = Promise.resolve({} as ReadableStreamBYOBReadResult<Uint8Array>);
-			let resolve: VoidFunction|undefined;
-			let secondReaderOffset = 0;
-
-			// deno-lint-ignore no-inner-declarations
-			async function pull(controller: Controller)
-			{	if (!resolve)
-				{	// First reader
-					secondReaderOffset = 0;
-					promise = reader.read(controller.byobRequest.view);
-					const promise2 = new Promise<void>(y => {resolve = y});
-					const {value, done} = await promise;
-					if (done)
-					{	controller.close();
-					}
-					else
-					{	controller.byobRequest.respond(value.byteLength);
-					}
-					// Wait for the second reader
-					await promise2;
+		return [
+			new ReadableStreamOfBytes
+			(	{	pull: controller => tee.pull(controller, -1),
+					cancel: reason => tee.cancel(reason, -1),
 				}
-				else
-				{	// Second reader
-					const {value, done} = await promise; // get the result of the first reader
-					if (done)
-					{	controller.close();
-					}
-					else
-					{	const {view} = controller.byobRequest;
-						const wantLen = value.byteLength - secondReaderOffset;
-						const hasLen = view.byteLength;
-						const len = Math.min(wantLen, hasLen);
-						view.set(value.subarray(secondReaderOffset, secondReaderOffset+len));
-						controller.byobRequest.respond(len);
-						if (len < wantLen)
-						{	// Target buffer is too small, so i return without releasing the first pull (`resolve()`), and wait for another pull from the second reader.
-							secondReaderOffset += len;
-							return;
-						}
-					}
-					resolve();
-					resolve = undefined;
+			),
+			new ReadableStreamOfBytes
+			(	{	pull: controller => tee.pull(controller, +1),
+					cancel: reason => tee.cancel(reason, +1),
 				}
-			}
-
-			return [new ReadableStreamOfBytes({pull}), new ReadableStreamOfBytes({pull})];
-		}
-		else
-		{	let promise = Promise.resolve();
-			let buffered = new Uint8Array;
-			let bufferedFor: -1|0|1 = 0;
-			let isEof = false;
-
-			// deno-lint-ignore no-inner-declarations no-redeclare
-			async function pull(controller: Controller, nReader: -1|1)
-			{	if (bufferedFor == nReader)
-				{	// Have something buffered for me
-					await promise;
-					const wantLen = buffered.byteLength;
-					if (wantLen > 0)
-					{	// Data
-						if (isEof && !controller.byobRequest.isUserSuppliedBuffer)
-						{	controller.enqueue(buffered);
-							buffered = new Uint8Array;
-						}
-						else
-						{	const {view} = controller.byobRequest;
-							const hasLen = view.byteLength;
-							const len = Math.min(wantLen, hasLen);
-							view.set(buffered.subarray(0, len));
-							controller.byobRequest.respond(len);
-							if (len < wantLen)
-							{	buffered = buffered.subarray(len);
-							}
-							else
-							{	buffered = new Uint8Array(buffered.buffer, 0, 0);
-							}
-							bufferedFor = 0;
-						}
-					}
-					else if (isEof)
-					{	// Eof
-						controller.close();
-					}
-				}
-				else
-				{	// Read from the underlying reader
-					bufferedFor = -nReader as -1|1;
-					let resolve: VoidFunction|undefined;
-					promise = new Promise<void>(y => {resolve = y});
-					const {value, done} = await reader.read(controller.byobRequest.view);
-					if (done)
-					{	controller.close();
-						isEof = true; // Eof
-					}
-					else
-					{	controller.byobRequest.respond(value.byteLength);
-						// Buffer for the second reader
-						const curLen = buffered.byteLength;
-						const newLen = curLen + value.byteLength;
-						const totalLen = buffered.buffer.byteLength;
-						const {byteOffset} = buffered;
-						let newBuffered;
-						if (totalLen < newLen)
-						{	// The current buffer is too small (so allocate new and copy data from old)
-							newBuffered = new Uint8Array(curLen==0 ? value.buffer.byteLength : bufferSizeFor(newLen)).subarray(0, newLen);
-							newBuffered.set(buffered);
-						}
-						else if (totalLen-byteOffset < newLen)
-						{	// Space in the current buffer after the current content is too small (so enlarge view region and copyWithin)
-							newBuffered = new Uint8Array(buffered.buffer, 0, newLen);
-							if (byteOffset > 0)
-							{	new Uint8Array(buffered.buffer, 0, totalLen).copyWithin(0, byteOffset, byteOffset+curLen);
-							}
-						}
-						else
-						{	// There's space after the current content (so enlarge view region)
-							newBuffered = new Uint8Array(buffered.buffer, byteOffset, newLen);
-						}
-						newBuffered.set(value, curLen);
-						buffered = newBuffered;
-					}
-					resolve?.();
-				}
-			}
-
-			return [new ReadableStreamOfBytes({pull: c => pull(c, -1)}), new ReadableStreamOfBytes({pull: c => pull(c, 1)})];
-		}
+			),
+		];
 	}
 
 	async uint8Array()
@@ -436,4 +328,171 @@ function bufferSizeFor(dataSize: number)
 	{	bufferSize *= 2;
 	}
 	return bufferSize;
+}
+
+class TeeRegular
+{	#promise = Promise.resolve();
+	#buffered = new Uint8Array;
+	#bufferedFor: -1|0|1 = 0;
+	#isEof = false;
+	#cancelledNReader: -1|0|1 = 0;
+
+	constructor(private reader: ReadableStreamBYOBReader)
+	{
+	}
+
+	async pull(controller: Controller, nReader: -1|1)
+	{	if (this.#bufferedFor == nReader)
+		{	// Have something buffered for me
+			await this.#promise;
+			const wantLen = this.#buffered.byteLength;
+			if (wantLen > 0)
+			{	// Data
+				if (this.#isEof && !controller.byobRequest.isUserSuppliedBuffer)
+				{	// Last item before EOF, and the user doesn't read to his own buffer
+					controller.enqueue(this.#buffered);
+					this.#buffered = new Uint8Array;
+				}
+				else
+				{	const {view} = controller.byobRequest;
+					const hasLen = view.byteLength;
+					const len = Math.min(wantLen, hasLen);
+					view.set(this.#buffered.subarray(0, len));
+					controller.byobRequest.respond(len);
+					if (len < wantLen)
+					{	this.#buffered = this.#buffered.subarray(len);
+					}
+					else
+					{	this.#buffered = new Uint8Array(this.#buffered.buffer, 0, 0);
+					}
+					this.#bufferedFor = 0;
+				}
+			}
+			else if (this.#isEof)
+			{	// Eof
+				controller.close();
+			}
+			else
+			{	// Buffered empty buffer (because the parent reader returned empty item)
+				controller.enqueue(this.#buffered);
+			}
+		}
+		else
+		{	// Read from the underlying reader
+			this.#bufferedFor = -nReader as -1|1;
+			let resolve: VoidFunction|undefined;
+			if (this.#bufferedFor != this.#cancelledNReader)
+			{	this.#promise = new Promise<void>(y => {resolve = y});
+			}
+			const {value, done} = await this.reader.read(controller.byobRequest.view);
+			if (done)
+			{	controller.close();
+				this.#isEof = true; // Eof
+			}
+			else
+			{	controller.byobRequest.respond(value.byteLength);
+				if (this.#bufferedFor != this.#cancelledNReader)
+				{	// Buffer for the second reader
+					const curLen = this.#buffered.byteLength;
+					const newLen = curLen + value.byteLength;
+					const totalLen = this.#buffered.buffer.byteLength;
+					const {byteOffset} = this.#buffered;
+					let newBuffered;
+					if (totalLen < newLen)
+					{	// The current buffer is too small (so allocate new and copy data from old)
+						newBuffered = new Uint8Array(curLen==0 ? value.buffer.byteLength : bufferSizeFor(newLen)).subarray(0, newLen);
+						newBuffered.set(this.#buffered);
+					}
+					else if (totalLen-byteOffset < newLen)
+					{	// Space in the current buffer after the current content is too small (so enlarge view region and copyWithin)
+						newBuffered = new Uint8Array(this.#buffered.buffer, 0, newLen);
+						if (byteOffset > 0)
+						{	new Uint8Array(this.#buffered.buffer, 0, totalLen).copyWithin(0, byteOffset, byteOffset+curLen);
+						}
+					}
+					else
+					{	// There's space after the current content (so enlarge view region)
+						newBuffered = new Uint8Array(this.#buffered.buffer, byteOffset, newLen);
+					}
+					newBuffered.set(value, curLen);
+					this.#buffered = newBuffered;
+				}
+			}
+			resolve?.();
+		}
+	}
+
+	cancel(reason: Any, nReader: -1|1)
+	{	if (this.#cancelledNReader == 0)
+		{	this.#cancelledNReader = nReader;
+			if (this.#bufferedFor == nReader)
+			{	this.#buffered = new Uint8Array;
+			}
+		}
+		else
+		{	this.reader.cancel(reason);
+		}
+	}
+}
+
+class TeeRequireParallelRead
+{	#promise = Promise.resolve({} as ReadableStreamBYOBReadResult<Uint8Array>);
+	#resolve: VoidFunction|undefined;
+	#secondReaderOffset = 0;
+	#oneCancelled = false;
+
+	constructor(private reader: ReadableStreamBYOBReader)
+	{
+	}
+
+	async pull(controller: Controller)
+	{	if (!this.#resolve)
+		{	// First reader
+			this.#secondReaderOffset = 0;
+			this.#promise = this.reader.read(controller.byobRequest.view);
+			const promise2 = this.#oneCancelled ? undefined : new Promise<void>(y => {this.#resolve = y});
+			const {value, done} = await this.#promise;
+			if (done)
+			{	controller.close();
+			}
+			else
+			{	controller.byobRequest.respond(value.byteLength);
+			}
+			// Wait for the second reader
+			if (promise2)
+			{	await promise2;
+			}
+		}
+		else
+		{	// Second reader
+			const {value, done} = await this.#promise; // get the result of the first reader
+			if (done)
+			{	controller.close();
+			}
+			else
+			{	const {view} = controller.byobRequest;
+				const wantLen = value.byteLength - this.#secondReaderOffset;
+				const hasLen = view.byteLength;
+				const len = Math.min(wantLen, hasLen);
+				view.set(value.subarray(this.#secondReaderOffset, this.#secondReaderOffset+len));
+				controller.byobRequest.respond(len);
+				if (len < wantLen)
+				{	// Target buffer is too small, so i return without releasing the first pull (`resolve()`), and wait for another pull from the second reader.
+					this.#secondReaderOffset += len;
+					return;
+				}
+			}
+			this.#resolve();
+			this.#resolve = undefined;
+		}
+	}
+
+	cancel(reason: Any)
+	{	if (!this.#oneCancelled)
+		{	this.#oneCancelled = true;
+		}
+		else
+		{	this.reader.cancel(reason);
+		}
+	}
 }
