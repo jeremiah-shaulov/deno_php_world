@@ -315,12 +315,14 @@ Deno.test
 					}
 				);
 
+				const iAllocated = new Set<ArrayBufferLike>;
 				await Promise.all
 				(	(rs instanceof ReadableStreamOfBytes && a==2 ? rs.tee({requireParallelRead: true}) : rs.tee()).map
 					(	async (rs, nRs) =>
 						{	const r = rs.getReader({mode: 'byob'});
 
 							let b = new Uint8Array(BUFFER_SIZE);
+							iAllocated.add(b.buffer);
 							for (let i2=1; i2<=100; i2++)
 							{	const promise = r.read(new Uint8Array(b.buffer, 0, b.buffer.byteLength));
 								const wantCancel = nRs==0 && (c==1 || c==3) && i2==50 || nRs==1 && (c==2 || c==3) && i2==60;
@@ -351,14 +353,16 @@ Deno.test
 							const r2 = rs.getReader();
 							const res = await r2.read();
 							assertEquals(res.done, true);
-
-							if (a >= 1)
-							{	//assertEquals(all.size, 1);
-								console.log(`a=${a}, c=${c}, all=${all.size}`);
-							}
 						}
 					)
 				);
+
+				if (a >= 1)
+				{	for (const b of iAllocated)
+					{	all.delete(b);
+					}
+					assertEquals(all.size, 0);
+				}
 			}
 		}
 	}
@@ -452,6 +456,7 @@ Deno.test
 					b2Offset += nRead;
 				}
 				assertEquals(b2Offset, totalLen);
+				all.delete(b2.buffer);
 				let k = 0;
 				for (let i2=1; i2<=100; i2++)
 				{	for (let j=0; j<i2 && j<BUFFER_SIZE; j++)
@@ -470,11 +475,55 @@ Deno.test
 				assertEquals(res2.done, true);
 
 				// a
-				if (a == 1)
-				{	//assertEquals(all.size, 1);
-					console.log(`a=${a}, c=${c}, all=${all.size}`);
+				if (a >= 1)
+				{	assertEquals(all.size, 1);
 				}
 			}
 		}
+	}
+);
+
+Deno.test
+(	'Iterator',
+	async () =>
+	{	const BUFFER_SIZE = 13;
+		let i = 1;
+		const all = new Set<ArrayBufferLike>;
+		const rs = new ReadableStreamOfBytes
+		(	{	type: 'bytes',
+				autoAllocateMin: BUFFER_SIZE,
+
+				async pull(controller)
+				{	const view = controller.byobRequest?.view;
+					if (view)
+					{	await new Promise(y => setTimeout(y, 3 - i%3));
+						assertEquals(view.byteLength >= BUFFER_SIZE, true);
+						all.add(view.buffer);
+						const view2 = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+						for (let j=0; j<i && j<BUFFER_SIZE; j++)
+						{	view2[j] = i;
+						}
+						controller.byobRequest!.respond(Math.min(i, BUFFER_SIZE));
+						i++;
+					}
+				}
+			}
+		);
+
+		assertEquals(rs.locked, false);
+		let i2 = 1;
+		for await (const b of rs)
+		{	assertEquals(b.length, Math.min(i2, BUFFER_SIZE));
+			for (let j=0; j<i2 && j<BUFFER_SIZE; j++)
+			{	assertEquals(b[j], i2);
+			}
+			i2++;
+			if (i2 == 100)
+			{	break;
+			}
+		}
+		assertEquals(rs.locked, false);
+
+		assertEquals(all.size, 1);
 	}
 );

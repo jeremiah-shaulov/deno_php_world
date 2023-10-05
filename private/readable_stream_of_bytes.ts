@@ -1,6 +1,4 @@
-// TODO: new enqueued is passed back to read(b)
-
-const DEFAULT_BUFFER_SIZE = 8*1024;
+const DEFAULT_AUTO_ALLOCATE_SIZE = 32*1024;
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -37,11 +35,91 @@ interface Source
  **/
 export class ReadableStreamOfBytes extends ReadableStream<Uint8Array>
 {	#autoAllocateChunkSize: number;
+	#autoAllocateMin: number;
 	#puller: Puller;
+
+	static from<R>(source: AsyncIterable<R> | Iterable<R | PromiseLike<R>>): ReadableStream<R> & ReadableStreamOfBytes
+	{	if (source instanceof ReadableStreamOfBytes)
+		{	return source as Any;
+		}
+		else if (source instanceof ReadableStream)
+		{	let reader: ReadableStreamBYOBReader|undefined;
+			return new ReadableStreamOfBytes
+			(	{	async pull(controller)
+					{	if (!reader)
+						{	reader = source.getReader({mode: 'byob'});
+							reader.closed.then(() => reader?.releaseLock(), () => {});
+						}
+						const {value, done} = await reader.read(controller.byobRequest.view);
+						if (value)
+						{	controller.byobRequest.view = value;
+							controller.byobRequest.respond(value.byteLength);
+						}
+						if (done)
+						{	controller.close();
+						}
+					},
+					cancel(reason)
+					{	(reader ?? source).cancel(reason);
+					}
+				}
+			) as Any;
+		}
+		else if (Symbol.asyncIterator in source)
+		{	const it = source[Symbol.asyncIterator]();
+			return new ReadableStreamOfBytes
+			(	{	autoAllocateChunkSize: 0,
+					async pull(controller)
+					{	const {value, done} = await it.next();
+						if (done)
+						{	controller.close();
+						}
+						else if (value instanceof Uint8Array)
+						{	controller.enqueue(value);
+						}
+						else
+						{	controller.error('Must be async iterator of Uint8Array');
+						}
+					},
+					async cancel()
+					{	await it.return?.();
+					}
+				}
+			) as Any;
+		}
+		else if (Symbol.iterator in source)
+		{	const it = source[Symbol.iterator]();
+			return new ReadableStreamOfBytes
+			(	{	autoAllocateChunkSize: 0,
+					async pull(controller)
+					{	const {value, done} = it.next();
+						if (done)
+						{	controller.close();
+						}
+						else
+						{	const item = await value;
+							if (item instanceof Uint8Array)
+							{	controller.enqueue(item);
+							}
+							else
+							{	controller.error('Must be iterator of Uint8Array');
+							}
+						}
+					},
+					cancel()
+					{	it.return?.();
+					}
+				}
+			) as Any;
+		}
+		else
+		{	throw new Error('Invalid argument');
+		}
+	}
 
 	constructor(underlyingSource?: Source)
 	{	const autoAllocateChunkSizeU = underlyingSource?.autoAllocateChunkSize;
-		const autoAllocateChunkSize = autoAllocateChunkSizeU==undefined || autoAllocateChunkSizeU<0 ? DEFAULT_BUFFER_SIZE : autoAllocateChunkSizeU;
+		const autoAllocateChunkSize = autoAllocateChunkSizeU==undefined || autoAllocateChunkSizeU<0 ? DEFAULT_AUTO_ALLOCATE_SIZE : autoAllocateChunkSizeU;
 		const autoAllocateMinU = underlyingSource?.autoAllocateMin;
 		const autoAllocateMin = autoAllocateMinU==undefined || autoAllocateMinU<0 ? autoAllocateChunkSize >> 3 : autoAllocateMinU;
 		const start = underlyingSource?.start;
@@ -60,6 +138,7 @@ export class ReadableStreamOfBytes extends ReadableStream<Uint8Array>
 			}
 		);
 		this.#autoAllocateChunkSize = autoAllocateChunkSize;
+		this.#autoAllocateMin = autoAllocateMin;
 		this.#puller = puller;
 	}
 
@@ -67,6 +146,14 @@ export class ReadableStreamOfBytes extends ReadableStream<Uint8Array>
 	getReader(options: {mode: 'byob'}): ReadableStreamBYOBReader;
 	getReader(_options?: {mode?: 'byob'}): ReadableStreamDefaultReader<Uint8Array> | ReadableStreamBYOBReader
 	{	return new Reader(super.getReader(), this.#puller);
+	}
+
+	[Symbol.asyncIterator](options?: {preventCancel?: boolean})
+	{	return new ReadableStreamIterator(this, options?.preventCancel===true);
+	}
+
+	values(options?: {preventCancel?: boolean})
+	{	return new ReadableStreamIterator(this, options?.preventCancel===true);
 	}
 
 	/**	If one reader reads faster than another, or one of the readers doesn't read at all,
@@ -100,11 +187,11 @@ export class ReadableStreamOfBytes extends ReadableStream<Uint8Array>
 		try
 		{	const chunks = new Array<Uint8Array>;
 			let totalLen = 0;
-			let chunkSize = this.#autoAllocateChunkSize || DEFAULT_BUFFER_SIZE;
-			const readTo = chunkSize - (chunkSize >> 3);
+			let chunkSize = this.#autoAllocateChunkSize || DEFAULT_AUTO_ALLOCATE_SIZE;
+			const autoAllocateMin = this.#autoAllocateMin;
 			while (true)
 			{	let chunk = new Uint8Array(chunkSize);
-				while (chunk.byteLength >= readTo)
+				while (chunk.byteLength >= autoAllocateMin)
 				{	const {value, done} = await reader.read(chunk);
 					if (done)
 					{	if (chunks.length == 0)
@@ -322,12 +409,37 @@ class Puller
 	}
 }
 
-function bufferSizeFor(dataSize: number)
-{	let bufferSize = 1024;
-	while (bufferSize < dataSize)
-	{	bufferSize *= 2;
+class ReadableStreamIterator implements AsyncIterableIterator<Uint8Array>
+{	#reader: ReadableStreamDefaultReader<Uint8Array>;
+
+	constructor(stream: ReadableStreamOfBytes, private preventCancel: boolean)
+	{	this.#reader = stream.getReader();
 	}
-	return bufferSize;
+
+	[Symbol.asyncIterator]()
+	{	return this;
+	}
+
+	async next(): Promise<IteratorResult<Uint8Array>>
+	{	const {value, done} = await this.#reader.read();
+		if (value?.byteLength || !done)
+		{	return {value, done: false};
+		}
+		return await this.return();
+	}
+
+	// deno-lint-ignore require-await
+	async return(value?: Uint8Array): Promise<IteratorResult<Uint8Array>>
+	{	if (!this.preventCancel)
+		{	this.#reader.cancel();
+		}
+		this.#reader.releaseLock();
+		return {value, done: true};
+	}
+
+	throw(): Promise<IteratorResult<Uint8Array>>
+	{	return this.return();
+	}
 }
 
 class TeeRegular
@@ -495,4 +607,12 @@ class TeeRequireParallelRead
 		{	this.reader.cancel(reason);
 		}
 	}
+}
+
+function bufferSizeFor(dataSize: number)
+{	let bufferSize = 1024;
+	while (bufferSize < dataSize)
+	{	bufferSize *= 2;
+	}
+	return bufferSize;
 }
