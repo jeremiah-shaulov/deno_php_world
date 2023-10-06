@@ -33,7 +33,7 @@ interface Source
 	The main difference is that it doesn't transfer buffers.
 	Buffers that you give to `reader.read(buffer)` remain usable after the call.
  **/
-export class ReadableStreamOfBytes extends ReadableStream<Uint8Array>
+export class ReadableStreamOfBytes extends ReadableStream<Uint8Array> implements Deno.Reader
 {	#autoAllocateChunkSize: number;
 	#autoAllocateMin: number;
 	#puller: Puller;
@@ -44,16 +44,18 @@ export class ReadableStreamOfBytes extends ReadableStream<Uint8Array>
 		}
 		else if (source instanceof ReadableStream)
 		{	let reader: ReadableStreamBYOBReader|undefined;
+			let buffer = new Uint8Array(DEFAULT_AUTO_ALLOCATE_SIZE);
 			return new ReadableStreamOfBytes
 			(	{	async pull(controller)
 					{	if (!reader)
 						{	reader = source.getReader({mode: 'byob'});
 							reader.closed.then(() => reader?.releaseLock(), () => {});
 						}
-						const {value, done} = await reader.read(controller.byobRequest.view);
+						const {value, done} = await reader.read(buffer.subarray(0, Math.min(controller.byobRequest.view.byteLength, buffer.byteLength)));
 						if (value)
-						{	controller.byobRequest.view = value;
+						{	controller.byobRequest.view.set(value);
 							controller.byobRequest.respond(value.byteLength);
+							buffer = new Uint8Array(value.buffer);
 						}
 						if (done)
 						{	controller.close();
@@ -166,7 +168,7 @@ export class ReadableStreamOfBytes extends ReadableStream<Uint8Array>
 	 **/
 	tee(options?: {requireParallelRead?: boolean}): [ReadableStreamOfBytes, ReadableStreamOfBytes]
 	{	const reader = this.getReader({mode: 'byob'});
-		const tee =  options?.requireParallelRead ? new TeeRequireParallelRead(reader) : new TeeRegular(reader);
+		const tee = options?.requireParallelRead ? new TeeRequireParallelRead(reader) : new TeeRegular(reader);
 
 		return [
 			new ReadableStreamOfBytes
@@ -180,6 +182,17 @@ export class ReadableStreamOfBytes extends ReadableStream<Uint8Array>
 				}
 			),
 		];
+	}
+
+	async read(buffer: Uint8Array)
+	{	const reader = this.getReader({mode: 'byob'});
+		try
+		{	const {value, done} = await reader.read(buffer);
+			return value?.byteLength || (done ? null : 0);
+		}
+		finally
+		{	reader.releaseLock();
+		}
 	}
 
 	async uint8Array()
