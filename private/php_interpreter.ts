@@ -10,7 +10,7 @@ import {SimpleWritableStream} from './simple_streams/mod.ts';
 type Any = any;
 
 const PHP_CLI_NAME_DEFAULT = 'php';
-export const DEBUG_PHP_BOOT = true;
+export const DEBUG_PHP_BOOT = false;
 const KEY_LEN = 32;
 const READER_MUX_END_MARK_LEN = 32;
 const BUFFER_LEN = 1024; // so small packets will not need allocation
