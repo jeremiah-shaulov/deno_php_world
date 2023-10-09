@@ -2,14 +2,15 @@ import {debug_assert} from './debug_assert.ts';
 import {PHP_BOOT_CLI, get_interpreter_script_filename} from './interpreter_script.ts';
 import {create_proxy} from './proxy_object.ts';
 import {ReaderMux} from './reader_mux.ts';
-import {get_random_key, get_weak_random_bytes, writeAll, copy} from './util.ts';
+import {get_random_key, get_weak_random_bytes, writeAll} from './util.ts';
 import {fcgi, ResponseWithCookies} from './deps.ts';
+import {SimpleWritableStream} from './simple_streams/mod.ts';
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
 
 const PHP_CLI_NAME_DEFAULT = 'php';
-export const DEBUG_PHP_BOOT = false;
+export const DEBUG_PHP_BOOT = true;
 const KEY_LEN = 32;
 const READER_MUX_END_MARK_LEN = 32;
 const BUFFER_LEN = 1024; // so small packets will not need allocation
@@ -1083,7 +1084,7 @@ export class PhpInterpreter
 			// Mux stdout
 			if (stdout == 'piped')
 			{	this.stdout_mux = new ReaderMux(Promise.resolve(this.php_cli_proc.stdout), end_mark.slice());
-				this.stdout_mux.get_reader_or_readable().then(r => copy(r, Deno.stdout));
+				this.stdout_mux.get_readable_stream().then(r => r.pipeTo(new SimpleWritableStream(Deno.stdout))); // Begin with piping to stdout. Then the output can be switched.
 			}
 		}
 		else
@@ -1130,7 +1131,7 @@ export class PhpInterpreter
 			}
 			else if (stdout == 'piped')
 			{	this.stdout_mux = new ReaderMux(this.php_fpm_response.then(r => r.body), end_mark.slice());
-				this.stdout_mux.get_reader_or_readable().then(r => copy(r, Deno.stdout));
+				this.stdout_mux.get_readable_stream().then(r => r.pipeTo(new SimpleWritableStream(Deno.stdout)));
 			}
 			// onresponse
 			if (this.settings.php_fpm.onresponse)
@@ -1419,17 +1420,18 @@ export class PhpInterpreter
 	{	const response = await php_fpm_response;
 		if (response.body)
 		{	try
-			{	await copy
-				(	response.body,
-					{	// deno-lint-ignore require-await
-						async write(p: Uint8Array)
-						{	return p.length;
+			{	// Read and discard
+				await response.body.pipeTo
+				(	new SimpleWritableStream
+					(	{	write(chunk: Uint8Array)
+							{	return chunk.length;
+							}
 						}
-					}
-				); // read and discard
+					)
+				);
 			}
 			catch
-			{	// ok, maybe onresponse already read the body
+			{	// Ok, maybe onresponse already read the body
 			}
 		}
 	}
@@ -1531,7 +1533,7 @@ export class PhpInterpreter
 		return await this.do_read();
 	}
 
-	private async do_get_stdout_reader_or_readable()
+	private async do_get_stdout_readable_stream()
 	{	if (!this.is_inited)
 		{	await this.do_init();
 		}
@@ -1539,7 +1541,7 @@ export class PhpInterpreter
 		{	throw new Error("Set settings.stdout to 'piped' to be able to redirect stdout");
 		}
 		await this.do_write(REC.END_STDOUT, '');
-		return this.stdout_mux.get_reader_or_readable();
+		return this.stdout_mux.get_readable_stream();
 	}
 
 	private schedule<T>(callback: () => Promise<T>): Promise<T>
@@ -1638,11 +1640,11 @@ export class PhpInterpreter
 	}
 
 	get_stdout_reader()
-	{	return this.schedule(() => this.do_get_stdout_reader_or_readable());
+	{	return this.schedule(() => this.do_get_stdout_readable_stream());
 	}
 
 	drop_stdout_reader()
-	{	return this.schedule(() => this.do_get_stdout_reader_or_readable().then(r => {copy(r, Deno.stdout)}));
+	{	return this.schedule(() => this.do_get_stdout_readable_stream().then(r => {r.pipeTo(new SimpleWritableStream(Deno.stdout))}));
 	}
 
 	/**	If PHP-FPM interface was used, and `settings.php_fpm.keep_alive_timeout` was > 0, connections to PHP-FPM service will be reused.

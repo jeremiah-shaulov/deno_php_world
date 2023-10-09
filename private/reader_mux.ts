@@ -1,4 +1,4 @@
-import {ReadableStreamOfBytes} from './readable_stream_of_bytes.ts';
+import {SimpleReadableStream} from './simple_streams/mod.ts';
 
 const BUFFER_SIZE_DEFAUT = 8*1024;
 
@@ -13,7 +13,7 @@ export class ReaderMux
 	{
 	}
 
-	async get_reader_or_readable(): Promise<Deno.Reader & {readable: ReadableStream<Uint8Array>}>
+	async get_readable_stream(): Promise<ReadableStream<Uint8Array> & Deno.Reader>
 	{	// 1. Wait for previous `readable` to close
 		let free: VoidFunction | undefined;
 		while (true)
@@ -24,16 +24,16 @@ export class ReaderMux
 			}
 		}
 
-		// 2. Create new `reader_or_readable`
+		// 2. Create new stream
 		const {inner_stream_promise, end_mark} = this;
 		// deno-lint-ignore no-this-alias
 		const that = this;
 		let mark_bytes_matching = 0;
 		let buffer: Uint8Array | undefined;
-		let ongoing = Promise.resolve(null as number|null);
 		this.busy = new Promise(y => free = y);
 		this.free = free;
 
+		// Init `inner_reader`
 		if (!this.inner_reader && !this.is_eof)
 		{	const inner_stream = await inner_stream_promise;
 			if (inner_stream)
@@ -46,7 +46,7 @@ export class ReaderMux
 		let {inner_reader} = this;
 
 		/**	Read from `inner_stream_promise` to `buffer`.
-			@return number of bytes read
+			@return number of bytes read, or null on EOF
 		 **/
 		async function inner_read(want_size: number)
 		{	if (inner_reader && mark_bytes_matching<end_mark.length)
@@ -96,15 +96,9 @@ export class ReaderMux
 			return null;
 		}
 
-		function schedule_inner_read(want_size: number)
-		{	const promise = ongoing.then(() => inner_read(want_size));
-			ongoing = promise;
-			return promise;
-		}
-
 		async function inner_discard()
 		{	while (true)
-			{	const n_read = await schedule_inner_read(BUFFER_SIZE_DEFAUT);
+			{	const n_read = await inner_read(BUFFER_SIZE_DEFAUT);
 				if (n_read == null)
 				{	break;
 				}
@@ -131,47 +125,27 @@ L:			for (let i=-mark_bytes_matching, i_end=data.length; i<i_end; i++)
 			return data.length;
 		}
 
-		const result =
-		{	async read(read_buffer: Uint8Array)
-			{	const n_read = await schedule_inner_read(read_buffer.byteLength);
-				if (n_read != null)
-				{	const chunk = buffer!.subarray(0, n_read);
-					read_buffer.set(chunk);
-				}
-				return n_read;
-			},
+		return new SimpleReadableStream
+		(	{	autoAllocateChunkSize: BUFFER_SIZE_DEFAUT,
 
-			get readable()
-			{	return new ReadableStreamOfBytes
-				(	{	type: 'bytes',
-						autoAllocateChunkSize: BUFFER_SIZE_DEFAUT,
-
-						async pull(controller)
-						{	const view = controller.byobRequest.view;
-							const n_read = await schedule_inner_read(view.byteLength);
-							if (n_read != null)
-							{	const chunk = buffer!.subarray(0, n_read);
-								view.set(chunk);
-								controller.byobRequest.respond(n_read);
-							}
-							else
-							{	controller.close();
-							}
-						},
-
-						cancel: inner_discard,
+				async read(read_buffer: Uint8Array)
+				{	const n_read = await inner_read(read_buffer.byteLength);
+					if (n_read != null)
+					{	const chunk = buffer!.subarray(0, n_read);
+						read_buffer.set(chunk);
 					}
-				);
-			},
-		};
+					return n_read;
+				},
 
-		return result;
+				cancel: inner_discard,
+			}
+		);
 	}
 
 	async dispose()
 	{	while (!this.is_eof)
-		{	const reader_or_readable = await this.get_reader_or_readable();
-			await reader_or_readable.readable.cancel();
+		{	const stream = await this.get_readable_stream();
+			await stream.cancel();
 		}
 		this.inner_reader?.releaseLock();
 		this.inner_reader = undefined;

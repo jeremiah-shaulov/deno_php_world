@@ -1,35 +1,64 @@
-import {ReadableStreamOfBytes} from '../readable_stream_of_bytes.ts';
+import {SimpleReadableStream, SimpleWritableStream} from '../simple_streams/mod.ts';
 import {assertEquals} from "../deps.ts";
 
+function read_to_pull(read: (view: Uint8Array) => Promise<number|null>, limitItems=Number.MAX_SAFE_INTEGER): UnderlyingByteSource
+{	let i = 0;
+	return {
+		type: 'bytes',
+
+		async pull(controller: ReadableByteStreamController)
+		{	const view = controller.byobRequest?.view;
+			const readTo = !view ? new Uint8Array(8*1024) : new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+			const n = await read(readTo);
+			if (n == null)
+			{	controller.close();
+			}
+			else if (view)
+			{	controller.byobRequest.respond(n);
+			}
+			else
+			{	controller.enqueue(readTo.subarray(0, n));
+			}
+			if (++i == limitItems)
+			{	controller.close();
+			}
+		}
+	};
+}
+
+function write_to_write(write: (chunk: Uint8Array) => Promise<number>)
+{	return {
+		async write(chunk: Uint8Array)
+		{	while (chunk.byteLength > 0)
+			{	const nWritten = await write(chunk);
+				chunk = chunk.subarray(nWritten);
+			}
+		}
+	};
+}
+
 Deno.test
-(	'Await each',
+(	'Reader: Await each',
 	async () =>
 	{	const BUFFER_SIZE = 13;
-		for (let a=0; a<2; a++) // ReadableStream or ReadableStreamOfBytes
+		for (let a=0; a<2; a++) // ReadableStream or SimpleReadableStream
 		{	let i = 1;
 			const all = new Set<ArrayBufferLike>;
-			const rs = new (a==0 ? ReadableStream : ReadableStreamOfBytes)
-			(	{	type: 'bytes',
-
-					async pull(controller)
-					{	const view = controller.byobRequest?.view;
-						if (view)
-						{	await new Promise(y => setTimeout(y, 3 - i%3));
-							assertEquals(view.byteLength, BUFFER_SIZE);
-							assertEquals(view.buffer.byteLength, BUFFER_SIZE);
-							all.add(view.buffer);
-							const view2 = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
-							for (let j=0; j<i && j<BUFFER_SIZE; j++)
-							{	view2[j] = i;
-							}
-							controller.byobRequest!.respond(Math.min(i, BUFFER_SIZE));
-							i++;
-						}
-					}
-				}
-			);
-
+			const rs = a==0 ? new ReadableStream(read_to_pull(read)) : new SimpleReadableStream({read});
 			const r = rs.getReader({mode: 'byob'});
+
+			// deno-lint-ignore no-inner-declarations
+			async function read(view: Uint8Array)
+			{	await new Promise(y => setTimeout(y, 3 - i%3));
+				assertEquals(view.byteLength, BUFFER_SIZE);
+				assertEquals(view.buffer.byteLength, BUFFER_SIZE);
+				all.add(view.buffer);
+				const view2 = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+				for (let j=0; j<i && j<BUFFER_SIZE; j++)
+				{	view2[j] = i;
+				}
+				return Math.min(i++, BUFFER_SIZE);
+			}
 
 			let b = new Uint8Array(BUFFER_SIZE);
 			for (let i2=1; i2<100; i2++)
@@ -47,35 +76,28 @@ Deno.test
 );
 
 Deno.test
-(	'2 in parallel',
+(	'Reader: 2 in parallel',
 	async () =>
 	{	const BUFFER_SIZE = 13;
 		const BUFFER_SIZE_2 = 17;
-		for (let a=0; a<2; a++) // ReadableStream or ReadableStreamOfBytes
+		for (let a=0; a<2; a++) // ReadableStream or SimpleReadableStream
 		{	let i = 1;
 			const all = new Set<ArrayBufferLike>;
-			const rs = new (a==0 ? ReadableStream : ReadableStreamOfBytes)
-			(	{	type: 'bytes',
-
-					async pull(controller)
-					{	const view = controller.byobRequest?.view;
-						if (view)
-						{	await new Promise(y => setTimeout(y, 3 - i%3));
-							assertEquals(view.byteLength, i%2==1 ? BUFFER_SIZE : BUFFER_SIZE_2);
-							assertEquals(view.buffer.byteLength, i%2==1 ? BUFFER_SIZE : BUFFER_SIZE_2);
-							all.add(view.buffer);
-							const view2 = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
-							for (let j=0; j<i && j<view.buffer.byteLength; j++)
-							{	view2[j] = i;
-							}
-							controller.byobRequest!.respond(Math.min(i, view.buffer.byteLength));
-							i++;
-						}
-					}
-				}
-			);
-
+			const rs = a==0 ? new ReadableStream(read_to_pull(read)) : new SimpleReadableStream({read});
 			const r = rs.getReader({mode: 'byob'});
+
+			// deno-lint-ignore no-inner-declarations
+			async function read(view: Uint8Array)
+			{	await new Promise(y => setTimeout(y, 3 - i%3));
+				assertEquals(view.byteLength, i%2==1 ? BUFFER_SIZE : BUFFER_SIZE_2);
+				assertEquals(view.buffer.byteLength, i%2==1 ? BUFFER_SIZE : BUFFER_SIZE_2);
+				all.add(view.buffer);
+				const view2 = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+				for (let j=0; j<i && j<view.buffer.byteLength; j++)
+				{	view2[j] = i;
+				}
+				return Math.min(i++, view.buffer.byteLength);
+			}
 
 			let b = new Uint8Array(BUFFER_SIZE);
 			let b2 = new Uint8Array(BUFFER_SIZE_2);
@@ -105,69 +127,26 @@ Deno.test
 );
 
 Deno.test
-(	'No pull, only start',
+(	'Reader: No byob',
 	async () =>
-	{	const BUFFER_SIZE = 13;
-		for (let a=0; a<2; a++) // ReadableStream or ReadableStreamOfBytes
-		{	const rs = new (a==0 ? ReadableStream : ReadableStreamOfBytes)
-			(	{	type: 'bytes',
-
-					async start(controller)
-					{	for (let i2=1; i2<100; i2++)
-						{	await new Promise(y => setTimeout(y, 3 - i2%3));
-							controller.enqueue(new Uint8Array([i2, i2]));
-						}
-						controller.close();
-					}
-				}
-			);
-
-			const r = rs.getReader({mode: 'byob'});
-
-			let b = new Uint8Array(BUFFER_SIZE);
-			for (let i2=1; i2<100; i2++)
-			{	b = (await r.read(new Uint8Array(b.buffer, 0, b.buffer.byteLength))).value!;
-				assertEquals(b.length, 2);
-				assertEquals(b[0], i2);
-				assertEquals(b[1], i2);
-			}
-
-			const res = await r.read(new Uint8Array(b.buffer, 0, b.buffer.byteLength));
-			assertEquals(res.done, true);
-		}
-	}
-);
-
-Deno.test
-(	'No byob',
-	async () =>
-	{	for (let a=0; a<2; a++) // ReadableStream or ReadableStreamOfBytes
+	{	for (let a=0; a<2; a++) // ReadableStream or SimpleReadableStream
 		{	for (const BUFFER_SIZE of a==0 ? [13] : [13, 3000, 10_000])
 			{	const autoAllocateMin = BUFFER_SIZE >> 3;
 				let i = 1;
 				const all = new Set<ArrayBufferLike>;
-				const rs = new (a==0 ? ReadableStream : ReadableStreamOfBytes)
-				(	{	type: 'bytes',
-						autoAllocateChunkSize: BUFFER_SIZE,
-						autoAllocateMin,
-
-						async pull(controller)
-						{	const view = controller.byobRequest?.view;
-							if (view)
-							{	await new Promise(y => setTimeout(y, 3 - i%3));
-								all.add(view.buffer);
-								const view2 = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
-								for (let j=0; j<i && j<autoAllocateMin; j++)
-								{	view2[j] = i;
-								}
-								controller.byobRequest!.respond(Math.min(i, autoAllocateMin));
-								i++;
-							}
-						}
-					}
-				);
-
+				const rs = a==0 ? new ReadableStream(read_to_pull(read)) : new SimpleReadableStream({autoAllocateChunkSize: BUFFER_SIZE, autoAllocateMin, read});
 				const r = rs.getReader();
+
+				// deno-lint-ignore no-inner-declarations
+				async function read(view: Uint8Array)
+				{	await new Promise(y => setTimeout(y, 3 - i%3));
+					all.add(view.buffer);
+					const view2 = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+					for (let j=0; j<i && j<autoAllocateMin; j++)
+					{	view2[j] = i;
+					}
+					return Math.min(i++, autoAllocateMin);
+				}
 
 				for (let i2=1; i2<100; i2++)
 				{	const res = r.read();
@@ -197,45 +176,38 @@ Deno.test
 );
 
 Deno.test
-(	'Close, error',
+(	'Reader: Close, error',
 	async () =>
 	{	const BUFFER_SIZE = 13;
 		for (let c=0; c<2; c++) // close or error
-		{	for (let a=0; a<2; a++) // ReadableStream or ReadableStreamOfBytes
+		{	for (let a=0; a<2; a++) // ReadableStream or SimpleReadableStream
 			{	let i = 1;
 				const all = new Set<ArrayBufferLike>;
-				const rs = new (a==0 ? ReadableStream : ReadableStreamOfBytes)
-				(	{	type: 'bytes',
+				const rs = a==0 ? new ReadableStream(read_to_pull(read, c==0 ? 3 : Number.MAX_SAFE_INTEGER)) : new SimpleReadableStream({read});
+				const r = rs.getReader({mode: 'byob'});
+				let b = new Uint8Array(BUFFER_SIZE);
 
-						async pull(controller)
-						{	const view = controller.byobRequest?.view;
-							if (view)
-							{	await new Promise(y => setTimeout(y, 3 - i%3));
-								assertEquals(view.byteLength, BUFFER_SIZE);
-								assertEquals(view.buffer.byteLength, BUFFER_SIZE);
-								all.add(view.buffer);
-								const view2 = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
-								for (let j=0; j<i && j<BUFFER_SIZE; j++)
-								{	view2[j] = i;
-								}
-								controller.byobRequest!.respond(Math.min(i, BUFFER_SIZE));
-								if (i == 3)
-								{	if (c == 0)
-									{	controller.close();
-									}
-									else
-									{	controller.error('hello all');
-									}
-								}
-								i++;
-							}
+				// deno-lint-ignore no-inner-declarations
+				async function read(view: Uint8Array)
+				{	await new Promise(y => setTimeout(y, 3 - i%3));
+					assertEquals(view.byteLength, BUFFER_SIZE);
+					assertEquals(view.buffer.byteLength, BUFFER_SIZE);
+					all.add(view.buffer);
+					if (i == 4)
+					{	if (c == 0)
+						{	return null;
+						}
+						else
+						{	throw new Error('hello all');
 						}
 					}
-				);
+					const view2 = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+					for (let j=0; j<i && j<BUFFER_SIZE; j++)
+					{	view2[j] = i;
+					}
+					return Math.min(i++, BUFFER_SIZE);
+				}
 
-				const r = rs.getReader({mode: 'byob'});
-
-				let b = new Uint8Array(BUFFER_SIZE);
 				for (let i2=1; i2<=3; i2++)
 				{	b = (await r.read(new Uint8Array(b.buffer, 0, b.buffer.byteLength))).value!;
 					assertEquals(b.length, Math.min(i2, BUFFER_SIZE));
@@ -262,7 +234,7 @@ Deno.test
 					catch (e)
 					{	error = e;
 					}
-					assertEquals(error, 'hello all');
+					assertEquals(error?.message, 'hello all');
 
 					r.releaseLock();
 					const r2 = rs.getReader();
@@ -273,7 +245,7 @@ Deno.test
 					catch (e)
 					{	error = e;
 					}
-					assertEquals(error, 'hello all');
+					assertEquals(error?.message, 'hello all');
 				}
 				if (a == 1)
 				{	assertEquals(all.size, 1);
@@ -284,40 +256,35 @@ Deno.test
 );
 
 Deno.test
-(	'Tee and read in parallel',
+(	'Reader: Tee and read in parallel',
 	async () =>
 	{	const BUFFER_SIZE = 13;
 		for (let c=0; c<4; c++) // 0: no cancel, 1: cancel first, 2: cancel second, 3: cancel both
-		{	for (let a=0; a<3; a++) // 0: ReadableStream, 1: ReadableStreamOfBytes, 2: ReadableStreamOfBytes with requireParallelRead
+		{	for (let a=0; a<3; a++) // 0: ReadableStream, 1: SimpleReadableStream, 2: SimpleReadableStream with requireParallelRead
 			{	let i = 1;
 				const all = new Set<ArrayBufferLike>;
-				const rs = new (a==0 ? ReadableStream : ReadableStreamOfBytes)
-				(	{	type: 'bytes',
-
-						async pull(controller)
-						{	const view = controller.byobRequest?.view;
-							if (view)
-							{	await new Promise(y => setTimeout(y, 3 - i%3));
-								assertEquals(view.byteLength, BUFFER_SIZE);
-								assertEquals(view.buffer.byteLength, BUFFER_SIZE);
-								all.add(view.buffer);
-								const view2 = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
-								for (let j=0; j<i && j<BUFFER_SIZE; j++)
-								{	view2[j] = i;
-								}
-								controller.byobRequest!.respond(Math.min(i, BUFFER_SIZE));
-								if (i == 100)
-								{	controller.close();
-								}
-								i++;
-							}
-						}
-					}
-				);
-
 				const iAllocated = new Set<ArrayBufferLike>;
+				const rs = a==0 ? new ReadableStream(read_to_pull(read, 100)) : new SimpleReadableStream({read});
+
+				// deno-lint-ignore no-inner-declarations
+				async function read(view: Uint8Array)
+				{	await new Promise(y => setTimeout(y, 3 - i%3));
+					assertEquals(view.byteLength, BUFFER_SIZE);
+					assertEquals(view.buffer.byteLength, BUFFER_SIZE);
+					all.add(view.buffer);
+					const view2 = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+					for (let j=0; j<i && j<BUFFER_SIZE; j++)
+					{	view2[j] = i;
+					}
+					if (i > 100)
+					{	return null;
+					}
+					return Math.min(i++, BUFFER_SIZE);
+				}
+
+
 				await Promise.all
-				(	(rs instanceof ReadableStreamOfBytes && a==2 ? rs.tee({requireParallelRead: true}) : rs.tee()).map
+				(	(rs instanceof SimpleReadableStream && a==2 ? rs.tee({requireParallelRead: true}) : rs.tee()).map
 					(	async (rs, nRs) =>
 						{	const r = rs.getReader({mode: 'byob'});
 
@@ -369,36 +336,29 @@ Deno.test
 );
 
 Deno.test
-(	'Tee and read one after another',
+(	'Reader: Tee and read one after another',
 	async () =>
 	{	const BUFFER_SIZE = 13;
 		for (let c=0; c<4; c++) // 0: no cancel, 1: cancel first, 2: cancel second, 3: cancel both
-		{	for (let a=0; a<2; a++) // ReadableStream or ReadableStreamOfBytes
+		{	for (let a=0; a<2; a++) // ReadableStream or SimpleReadableStream
 			{	let i = 1;
 				const all = new Set<ArrayBufferLike>;
-				const rs = new (a==0 ? ReadableStream : ReadableStreamOfBytes)
-				(	{	type: 'bytes',
-
-						async pull(controller)
-						{	const view = controller.byobRequest?.view;
-							if (view)
-							{	await new Promise(y => setTimeout(y, 3 - i%3));
-								all.add(view.buffer);
-								const view2 = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
-								for (let j=0; j<i && j<BUFFER_SIZE; j++)
-								{	view2[j] = i;
-								}
-								controller.byobRequest!.respond(Math.min(i, BUFFER_SIZE));
-								if (i == 100)
-								{	controller.close();
-								}
-								i++;
-							}
-						}
-					}
-				);
-
+				const rs = a==0 ? new ReadableStream(read_to_pull(read, 100)) : new SimpleReadableStream({read});
 				const [rs1, rs2] = rs.tee();
+
+				// deno-lint-ignore no-inner-declarations
+				async function read(view: Uint8Array)
+				{	await new Promise(y => setTimeout(y, 3 - i%3));
+					all.add(view.buffer);
+					const view2 = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+					for (let j=0; j<i && j<BUFFER_SIZE; j++)
+					{	view2[j] = i;
+					}
+					if (i > 100)
+					{	return null;
+					}
+					return Math.min(i++, BUFFER_SIZE);
+				}
 
 				// rs1
 				const r1 = rs1.getReader({mode: 'byob'});
@@ -470,42 +430,37 @@ Deno.test
 				assertEquals(k, totalLen);
 				r2.releaseLock();
 
-				const r22 = rs2.getReader();
-				const res2 = await r22.read();
-				assertEquals(res2.done, true);
-
 				// a
 				if (a >= 1)
 				{	assertEquals(all.size, 1);
 				}
+
+				const r22 = rs2.getReader();
+				const res2 = await r22.read();
+				assertEquals(res2.done, true);
 			}
 		}
 	}
 );
 
 Deno.test
-(	'Iterator',
+(	'Reader: Iterator',
 	async () =>
 	{	const BUFFER_SIZE = 13;
 		let i = 1;
 		const all = new Set<ArrayBufferLike>;
-		const rs = new ReadableStreamOfBytes
-		(	{	type: 'bytes',
-				autoAllocateMin: BUFFER_SIZE,
+		const rs = new SimpleReadableStream
+		(	{	autoAllocateMin: BUFFER_SIZE,
 
-				async pull(controller)
-				{	const view = controller.byobRequest?.view;
-					if (view)
-					{	await new Promise(y => setTimeout(y, 3 - i%3));
-						assertEquals(view.byteLength >= BUFFER_SIZE, true);
-						all.add(view.buffer);
-						const view2 = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
-						for (let j=0; j<i && j<BUFFER_SIZE; j++)
-						{	view2[j] = i;
-						}
-						controller.byobRequest!.respond(Math.min(i, BUFFER_SIZE));
-						i++;
+				async read(view: Uint8Array)
+				{	await new Promise(y => setTimeout(y, 3 - i%3));
+					assertEquals(view.byteLength >= BUFFER_SIZE, true);
+					all.add(view.buffer);
+					const view2 = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+					for (let j=0; j<i && j<BUFFER_SIZE; j++)
+					{	view2[j] = i;
 					}
+					return Math.min(i++, BUFFER_SIZE);
 				}
 			}
 		);
@@ -525,5 +480,41 @@ Deno.test
 		assertEquals(rs.locked, false);
 
 		assertEquals(all.size, 1);
+	}
+);
+
+Deno.test
+(	'Writer',
+	async () =>
+	{	for (let a=0; a<2; a++) // WritableStream or SimpleWritableStream
+		{	let src = new Uint8Array(3*1024);
+			for (let i=0; i<src.byteLength; i++)
+			{	src[i] = Math.floor(Math.random() * 255);
+			}
+			const dest = new Uint8Array(src.byteLength);
+			let destLen = 0;
+			const ws = a==0 ? new WritableStream(write_to_write(write)) : new SimpleWritableStream({write});
+
+			// deno-lint-ignore no-inner-declarations
+			async function write(chunk: Uint8Array)
+			{	await new Promise(y => setTimeout(y, 3 - destLen/3%3));
+				assertEquals(chunk.buffer.byteLength, src.buffer.byteLength);
+				let i = 0;
+				for (; i<3 && i<chunk.byteLength; i++)
+				{	dest[destLen++] = chunk[i];
+				}
+				return i;
+			}
+
+			assertEquals(ws.locked, false);
+			const w = ws.getWriter();
+			while (src.byteLength > 0)
+			{	const copyLen = Math.floor(Math.random() * 255);
+				await w.write(src.subarray(0, copyLen));
+				src = src.subarray(copyLen);
+			}
+			src = new Uint8Array(src.buffer);
+			assertEquals(src, dest);
+		}
 	}
 );
