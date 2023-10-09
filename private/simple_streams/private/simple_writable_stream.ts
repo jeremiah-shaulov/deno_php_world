@@ -26,21 +26,21 @@ export class SimpleWritableStream extends WritableStream<Uint8Array>
 
 	abort(reason?: Any)
 	{	if (this.#locked)
-		{	throw new Error('This stream is locked');
+		{	throw new TypeError('WritableStream is locked.');
 		}
 		return this.#callbackAccessor.cancelOrAbort(reason);
 	}
 
 	close()
 	{	if (this.#locked)
-		{	throw new Error('This stream is locked');
+		{	throw new TypeError('WritableStream is locked.');
 		}
 		return this.#callbackAccessor.close();
 	}
 
 	getWriter(): WritableStreamDefaultWriter<Uint8Array>
 	{	if (this.#locked)
-		{	throw new Error('This stream is locked');
+		{	throw new TypeError('WritableStream is locked.');
 		}
 		this.#locked = true;
 		return new Writer

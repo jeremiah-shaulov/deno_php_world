@@ -158,7 +158,7 @@ export class ReaderOrWriter
 	protected getCallbackAccessor()
 	{	const {callbackAccessor} = this;
 		if (!callbackAccessor)
-		{	throw new Error('This object is detached');
+		{	throw new TypeError('Reader or writer has no associated stream.');
 		}
 		return callbackAccessor;
 	}

@@ -155,7 +155,7 @@ export class SimpleReadableStream extends ReadableStream<Uint8Array>
 
 	cancel(reason?: Any)
 	{	if (this.#locked)
-		{	throw new Error('This stream is locked');
+		{	throw new TypeError('Cannot cancel a locked ReadableStream.');
 		}
 		return this.#callbackAccessor.cancelOrAbort(reason);
 	}
@@ -164,7 +164,7 @@ export class SimpleReadableStream extends ReadableStream<Uint8Array>
 	getReader(options: {mode: 'byob'}): ReadableStreamBYOBReader;
 	getReader(_options?: {mode?: 'byob'}): ReadableStreamDefaultReader<Uint8Array> | ReadableStreamBYOBReader
 	{	if (this.#locked)
-		{	throw new Error('This stream is locked');
+		{	throw new TypeError('ReadableStream is locked.');
 		}
 		this.#locked = true;
 		return new Reader

@@ -1,3 +1,6 @@
+// To run:
+// rm -rf .vscode/coverage/profile && deno test --fail-fast --allow-all --coverage=.vscode/coverage/profile private/tests/simple_streams.test.ts && deno coverage --unstable .vscode/coverage/profile --lcov > .vscode/coverage/lcov.info
+
 import {SimpleReadableStream, SimpleWritableStream} from '../simple_streams/mod.ts';
 import {assertEquals} from "../deps.ts";
 
@@ -251,6 +254,116 @@ Deno.test
 				{	assertEquals(all.size, 1);
 				}
 			}
+		}
+	}
+);
+
+Deno.test
+(	'Reader: Release',
+	async () =>
+	{	const BUFFER_SIZE = 13;
+		for (let a=0; a<2; a++) // ReadableStream or SimpleReadableStream
+		{	let i = 1;
+			const all = new Set<ArrayBufferLike>;
+			const rs = a==0 ? new ReadableStream(read_to_pull(read)) : new SimpleReadableStream({read});
+			let b = new Uint8Array(BUFFER_SIZE);
+
+			// deno-lint-ignore no-inner-declarations
+			async function read(view: Uint8Array)
+			{	await new Promise(y => setTimeout(y, 3 - i%3));
+				assertEquals(view.byteLength, BUFFER_SIZE);
+				assertEquals(view.buffer.byteLength, BUFFER_SIZE);
+				all.add(view.buffer);
+				const view2 = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+				for (let j=0; j<i && j<BUFFER_SIZE; j++)
+				{	view2[j] = i;
+				}
+				return Math.min(i++, BUFFER_SIZE);
+			}
+
+			let r = rs.getReader({mode: 'byob'});
+			let promise = r.read(new Uint8Array(b.buffer, 0, b.buffer.byteLength));
+			const res = await promise;
+			assertEquals(res, {done: false, value: new Uint8Array([1])});
+			b = res.value!;
+			r.releaseLock();
+			try
+			{	promise = r.read(new Uint8Array(b.buffer, 0, b.buffer.byteLength));
+				await promise;
+			}
+			catch (e)
+			{	assertEquals(e instanceof TypeError, true);
+				assertEquals(e.message, a==0 ? 'Reader has no associated stream.' : 'Reader or writer has no associated stream.');
+			}
+
+			r = rs.getReader({mode: 'byob'});
+			promise = r.read(new Uint8Array(b.buffer, 0, b.buffer.byteLength));
+			r.releaseLock();
+			try
+			{	await promise;
+			}
+			catch (e)
+			{	assertEquals(e instanceof TypeError, true);
+				assertEquals(e.message, a==0 ? 'The reader was released.' : 'Reader or writer has no associated stream.');
+			}
+
+			r.releaseLock();
+		}
+	}
+);
+
+Deno.test
+(	'Reader: Invalid usage',
+	async () =>
+	{	const BUFFER_SIZE = 13;
+		for (let a=0; a<2; a++) // ReadableStream or SimpleReadableStream
+		{	let i = 1;
+			const all = new Set<ArrayBufferLike>;
+			const rs = a==0 ? new ReadableStream(read_to_pull(read)) : new SimpleReadableStream({read});
+			let b = new Uint8Array(BUFFER_SIZE);
+
+			// deno-lint-ignore no-inner-declarations
+			async function read(view: Uint8Array)
+			{	await new Promise(y => setTimeout(y, 3 - i%3));
+				assertEquals(view.byteLength, BUFFER_SIZE);
+				assertEquals(view.buffer.byteLength, BUFFER_SIZE);
+				all.add(view.buffer);
+				const view2 = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+				for (let j=0; j<i && j<BUFFER_SIZE; j++)
+				{	view2[j] = i;
+				}
+				return Math.min(i++, BUFFER_SIZE);
+			}
+
+			let r = rs.getReader({mode: 'byob'});
+			try
+			{	rs.getReader({mode: 'byob'});
+			}
+			catch (e)
+			{	assertEquals(e instanceof TypeError, true);
+				assertEquals(e.message, 'ReadableStream is locked.');
+			}
+			r.releaseLock();
+
+			r = rs.getReader({mode: 'byob'});
+			let res = await r.read(new Uint8Array(b.buffer, 0, b.buffer.byteLength));
+			assertEquals(res, {done: false, value: new Uint8Array([1])});
+			b = res.value!;
+
+			try
+			{	await rs.cancel();
+			}
+			catch (e)
+			{	assertEquals(e instanceof TypeError, true);
+				assertEquals(e.message, 'Cannot cancel a locked ReadableStream.');
+			}
+			r.releaseLock();
+
+			await rs.cancel();
+
+			r = rs.getReader({mode: 'byob'});
+			res = await r.read(new Uint8Array(b.buffer, 0, b.buffer.byteLength));
+			assertEquals(res.done, true);
 		}
 	}
 );
