@@ -28,7 +28,7 @@ export class SimpleWritableStream extends WritableStream<Uint8Array>
 	{	if (this.#locked)
 		{	throw new TypeError('WritableStream is locked.');
 		}
-		return this.#callbackAccessor.cancelOrAbort(reason);
+		return this.#callbackAccessor.close(true, reason);
 	}
 
 	close()
@@ -123,6 +123,6 @@ export class Writer extends ReaderOrWriter
 	}
 
 	abort(reason?: Any)
-	{	return this.getCallbackAccessor().cancelOrAbort(reason);
+	{	return this.getCallbackAccessor().close(true, reason);
 	}
 }

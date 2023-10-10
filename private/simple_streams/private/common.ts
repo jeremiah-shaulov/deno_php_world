@@ -14,7 +14,8 @@ export type CallbackCancelOrAbort = (reason: Any) => void | PromiseLike<void>;
 export class CallbackAccessor
 {	closed: Promise<void>;
 	error: Any;
-	ongoing = Promise.resolve();
+	ongoing: Promise<void>;
+	#cancelCurOp: ((value?: undefined) => void) | undefined;
 	#reportClosed: VoidFunction|undefined;
 	#reportClosedWithError: ((error: Any) => void) | undefined;
 	#autoAllocateBuffer: Uint8Array|undefined;
@@ -33,22 +34,24 @@ export class CallbackAccessor
 				this.#reportClosedWithError = n;
 			}
 		);
-		this.closed.catch(() => {});
-		try
-		{	const startPromise = callbackStart?.();
-			if (startPromise)
-			{	this.ongoing = this.ongoing.then(() => startPromise).then
-				(	undefined,
-					e =>
-					{	this.error = e;
-						return this.close();
-					}
-				);
-			}
+		this.closed.then(undefined, () => {});
+		const startPromise = callbackStart?.();
+		if (startPromise)
+		{	this.ongoing = new Promise<void>
+			(	y =>
+				{	this.#cancelCurOp = y;
+					startPromise.then
+					(	y,
+						e =>
+						{	this.error = e;
+							this.close().then(y, y);
+						}
+					);
+				}
+			);
 		}
-		catch (e)
-		{	this.error = e;
-			this.ongoing = this.close();
+		else
+		{	this.ongoing = Promise.resolve();
 		}
 	}
 
@@ -56,9 +59,21 @@ export class CallbackAccessor
 	{	if (this.callbackReadOrWrite)
 		{	const promise = this.ongoing.then
 			(	async () =>
-				{	if (this.callbackReadOrWrite)
+				{	const {callbackReadOrWrite} = this;
+					if (callbackReadOrWrite)
 					{	try
-						{	return await callback(this.callbackReadOrWrite);
+						{	const resultOrPromise = callback(callbackReadOrWrite);
+							if (typeof(resultOrPromise)=='object' && resultOrPromise!=null && 'then' in resultOrPromise)
+							{	return await new Promise<T | undefined>
+								(	(y, n) =>
+									{	this.#cancelCurOp = y;
+										resultOrPromise.then(y, n);
+									}
+								);
+							}
+							else
+							{	return resultOrPromise;
+							}
 						}
 						catch (e)
 						{	this.error = e;
@@ -66,7 +81,7 @@ export class CallbackAccessor
 							throw e;
 						}
 					}
-					else if (this.error)
+					else if (this.error != undefined)
 					{	throw this.error;
 					}
 				}
@@ -74,7 +89,7 @@ export class CallbackAccessor
 			this.ongoing = promise.then(undefined, () => {});
 			return promise;
 		}
-		else if (this.error)
+		else if (this.error != undefined)
 		{	throw this.error;
 		}
 	}
@@ -109,43 +124,45 @@ export class CallbackAccessor
 	{	return this.useCallback(callbackReadOrWrite => callbackReadOrWrite(view));
 	}
 
-	async cancelOrAbort(reason: Any)
-	{	const {callbackCancelOrAbort} = this;
-		await this.close();
-		if (callbackCancelOrAbort)
-		{	const promise = this.ongoing.then(() => callbackCancelOrAbort(reason), () => {});
-			this.ongoing = promise;
-			await promise;
-		}
-	}
-
-	async close()
-	{	const {callbackClose} = this;
+	async close(isCancelOrAbort=false, reason?: Any)
+	{	const {callbackClose, callbackCancelOrAbort} = this;
+		const cancelCurOp = this.#cancelCurOp;
 		const reportClosed = this.#reportClosed;
 		const reportClosedWithError = this.#reportClosedWithError;
 
 		this.callbackClose = undefined; // don't call `close` anymore
 		this.callbackReadOrWrite = undefined; // don't call `read` anymore
 		this.callbackCancelOrAbort = undefined; // don't call `cancel` anymore
+		this.#cancelCurOp = undefined;
 		this.#reportClosed = undefined;
 		this.#reportClosedWithError = undefined;
-
-		if (callbackClose)
-		{	try
-			{	await callbackClose();
-			}
-			catch (e)
-			{	if (!this.error)
-				{	this.error = e;
-				}
-			}
-		}
 
 		if (this.error != undefined)
 		{	reportClosedWithError?.(this.error);
 		}
 		else
-		{	reportClosed?.();
+		{	if (!isCancelOrAbort)
+			{	if (callbackClose)
+				{	try
+					{	await callbackClose();
+					}
+					catch (e)
+					{	this.error = e;
+					}
+				}
+			}
+			else
+			{	if (callbackCancelOrAbort)
+				{	cancelCurOp?.();
+					try
+					{	await callbackCancelOrAbort(reason);
+					}
+					catch (e)
+					{	this.error = e;
+					}
+				}
+			}
+			reportClosed?.();
 		}
 	}
 }

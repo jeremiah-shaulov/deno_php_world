@@ -157,7 +157,7 @@ export class SimpleReadableStream extends ReadableStream<Uint8Array>
 	{	if (this.#locked)
 		{	throw new TypeError('Cannot cancel a locked ReadableStream.');
 		}
-		return this.#callbackAccessor.cancelOrAbort(reason);
+		return this.#callbackAccessor.close(true, reason);
 	}
 
 	getReader(options?: {mode?: undefined}): ReadableStreamDefaultReader<Uint8Array>;
@@ -369,7 +369,7 @@ export class Reader extends ReaderOrWriter
 	}
 
 	cancel(reason?: Any)
-	{	return this.getCallbackAccessor().cancelOrAbort(reason);
+	{	return this.getCallbackAccessor().close(true, reason);
 	}
 }
 
