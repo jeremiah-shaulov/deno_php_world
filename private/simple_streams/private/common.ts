@@ -35,7 +35,7 @@ export class CallbackAccessor
 			}
 		);
 		this.closed.then(undefined, () => {});
-		const startPromise = callbackStart?.();
+		const startPromise = callbackStart?.(); // can throw before returning promise, and this should break the constructor, because this is the behavior of `ReadableStream`
 		if (startPromise)
 		{	this.ongoing = new Promise<void>
 			(	y =>
@@ -126,7 +126,7 @@ export class CallbackAccessor
 
 	async close(isCancelOrAbort=false, reason?: Any)
 	{	const {callbackClose, callbackCancelOrAbort} = this;
-		const cancelCurOp = this.#cancelCurOp;
+		let cancelCurOp = this.#cancelCurOp;
 		const reportClosed = this.#reportClosed;
 		const reportClosedWithError = this.#reportClosedWithError;
 
@@ -150,19 +150,24 @@ export class CallbackAccessor
 					{	this.error = e;
 					}
 				}
+				reportClosed?.();
 			}
 			else
-			{	if (callbackCancelOrAbort)
-				{	cancelCurOp?.();
-					try
-					{	await callbackCancelOrAbort(reason);
-					}
-					catch (e)
-					{	this.error = e;
+			{	try
+				{	const promise = callbackCancelOrAbort?.(reason);
+					cancelCurOp?.();
+					cancelCurOp = undefined;
+					reportClosed?.();
+					if (promise)
+					{	await promise;
 					}
 				}
+				catch (e)
+				{	this.error = e;
+					cancelCurOp?.();
+					throw e;
+				}
 			}
-			reportClosed?.();
 		}
 	}
 }

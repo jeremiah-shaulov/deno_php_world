@@ -16,8 +16,30 @@ export class SimpleWritableStream extends WritableStream<Uint8Array>
 	#writerRequests = new Array<(writer: WritableStreamDefaultWriter<Uint8Array>) => void>;
 
 	constructor(sink: Sink)
-	{	super();
-		this.#callbackAccessor = new CallbackAccessor(0, 0, sink.start, sink.write, sink.close, sink.abort);
+	{	const callbackAccessor = new CallbackAccessor(0, 0, sink.start, sink.write, sink.close, sink.abort);
+		super
+		(	// `deno_web/06_streams.js` uses hackish way to call methods of `WritableStream` subclasses.
+			// When this class is being used like this, the following callbacks are called:
+			{	async write(chunk)
+				{	while (chunk.byteLength > 0)
+					{	const nWritten = await callbackAccessor.write(chunk);
+						if (nWritten == null)
+						{	throw new Error('This writer is closed');
+						}
+						chunk = chunk.subarray(nWritten);
+					}
+				},
+
+				close()
+				{	return callbackAccessor.close();
+				},
+
+				abort(reason)
+				{	return callbackAccessor.close(true, reason);
+				}
+			}
+		);
+		this.#callbackAccessor = callbackAccessor;
 	}
 
 	get locked()
@@ -63,7 +85,7 @@ export class SimpleWritableStream extends WritableStream<Uint8Array>
 	}
 
 	async write(chunk: Uint8Array)
-	{	const reader = this.getWriter();
+	{	const writer = this.getWriter();
 		try
 		{	const nWritten = await this.#callbackAccessor.write(chunk);
 			if (nWritten == null)
@@ -72,17 +94,17 @@ export class SimpleWritableStream extends WritableStream<Uint8Array>
 			return nWritten;
 		}
 		finally
-		{	reader.releaseLock();
+		{	writer.releaseLock();
 		}
 	}
 
 	async writeAll(chunk: Uint8Array)
-	{	const reader = this.getWriter();
+	{	const writer = this.getWriter();
 		try
-		{	await reader.write(chunk);
+		{	await writer.write(chunk);
 		}
 		finally
-		{	reader.releaseLock();
+		{	writer.releaseLock();
 		}
 	}
 }
@@ -107,7 +129,7 @@ export class Writer extends ReaderOrWriter
 			}
 			chunk = chunk.subarray(nWritten);
 		}
-		this.#desiredSize = DEFAULT_AUTO_ALLOCATE_SIZE; // if i don't reach this line of code, the `desiredSize` will remain `0`
+		this.#desiredSize = DEFAULT_AUTO_ALLOCATE_SIZE; // if i don't reach this line of code, the `desiredSize` must remain `0`
 	}
 
 	/**	@internal
@@ -115,7 +137,7 @@ export class Writer extends ReaderOrWriter
 	async useLowLevelCallback<T>(callback: (callbackWrite: CallbackReadOrWrite) => T | PromiseLike<T>)
 	{	this.#desiredSize = 0;
 		await this.getCallbackAccessor().useCallback(callback);
-		this.#desiredSize = DEFAULT_AUTO_ALLOCATE_SIZE; // if i don't reach this line of code, the `desiredSize` will remain `0`
+		this.#desiredSize = DEFAULT_AUTO_ALLOCATE_SIZE; // if i don't reach this line of code, the `desiredSize` must remain `0`
 	}
 
 	close(): Promise<void>

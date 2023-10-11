@@ -38,19 +38,62 @@ export class SimpleReadableStream extends ReadableStream<Uint8Array>
 		}
 		else if (source instanceof ReadableStream)
 		{	let reader: ReadableStreamBYOBReader|undefined;
-			let buffer = new Uint8Array(DEFAULT_AUTO_ALLOCATE_SIZE);
+			let reader2: ReadableStreamDefaultReader<unknown>|undefined;
+			let buffer: Uint8Array|undefined;
 			return new SimpleReadableStream
 			(	{	async read(view)
-					{	if (!reader)
-						{	reader = source.getReader({mode: 'byob'});
-							reader.closed.then(() => reader?.releaseLock(), () => {});
+					{	try
+						{	if (!reader && !reader2)
+							{	try
+								{	reader = source.getReader({mode: 'byob'});
+									buffer = new Uint8Array(DEFAULT_AUTO_ALLOCATE_SIZE);
+								}
+								catch
+								{	reader2 = source.getReader();
+								}
+							}
+							if (reader)
+							{	const {value, done} = await reader.read(buffer!.subarray(0, Math.min(view.byteLength, buffer!.byteLength)));
+								if (done)
+								{	reader.releaseLock();
+								}
+								if (value)
+								{	view.set(value);
+									buffer = new Uint8Array(value.buffer);
+									return value.byteLength || (done ? null : 0);
+								}
+								return done ? null : 0;
+							}
+							else
+							{	if (!buffer)
+								{	const {value, done} = await reader2!.read();
+									if (done)
+									{	reader2!.releaseLock();
+										return null;
+									}
+									if (!(value instanceof Uint8Array))
+									{	throw new Error('Must be async iterator of Uint8Array');
+									}
+									buffer = value;
+								}
+								const haveLen = buffer.byteLength;
+								const askedLen = view.byteLength;
+								if (haveLen <= askedLen)
+								{	view.set(buffer);
+									buffer = undefined;
+									return haveLen;
+								}
+								else
+								{	view.set(buffer.subarray(0, askedLen));
+									buffer = buffer.subarray(askedLen);
+									return askedLen;
+								}
+							}
 						}
-						const {value, done} = await reader.read(buffer.subarray(0, Math.min(view.byteLength, buffer.byteLength)));
-						if (value)
-						{	buffer = new Uint8Array(value.buffer);
-							return value.byteLength || (done ? null : 0);
+						catch (e)
+						{	(reader ?? reader2)?.releaseLock();
+							throw e;
 						}
-						return done ? null : 0;
 					},
 					cancel(reason)
 					{	(reader ?? source).cancel(reason);
@@ -591,11 +634,9 @@ async function pipeTo
 				throw signal.reason;
 			}
 			// Start (or continue) reading and/or writing
-			if (readPromise === undefined)
+			if (readPromise===undefined && !isEof)
 			{	readPromise =
-				(	isEof ? // Don't read if EOF
-						undefined :
-					readPos<=autoAllocateMin ? // Read if there's at least a half buffer free after the `read_pos`
+				(	readPos<=autoAllocateMin ? // Read if there's at least a half buffer free after the `read_pos`
 						callbackRead
 						(	readPos==0 ? buffer.subarray(0, autoAllocateMin) : // Don't try to read the full buffer, only it's half. The buffer is big enough (twice common size). This increases the chance that reading and writing will happen in parallel
 							buffer.subarray(readPos)
@@ -605,12 +646,9 @@ async function pipeTo
 						undefined
 				);
 			}
-			if (writePromise === undefined)
-			{	writePromise =
-				(	readPos>0 ? // Write if there's something already read in the buffer
-						callbackWriteInverting(buffer.subarray(writePos, readPos)) :
-						undefined
-				);
+			if (writePromise===undefined && readPos>writePos)
+			{	// Write if there's something already read in the buffer
+				writePromise = callbackWriteInverting(buffer.subarray(writePos, readPos));
 			}
 			// Await for the most fast promise
 			let size =
