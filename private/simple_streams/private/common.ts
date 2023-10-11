@@ -120,8 +120,41 @@ export class CallbackAccessor
 		);
 	}
 
-	write(view: Uint8Array)
-	{	return this.useCallback(callbackReadOrWrite => callbackReadOrWrite(view));
+	write(chunk: Uint8Array)
+	{	return this.useCallback(callbackReadOrWrite => callbackReadOrWrite(chunk));
+	}
+
+	writeAll(chunk: Uint8Array)
+	{	return this.useCallback
+		(	callbackReadOrWrite =>
+			{	while (chunk.byteLength > 0)
+				{	const resultOrPromise = callbackReadOrWrite(chunk);
+					if (resultOrPromise == null)
+					{	throw new Error('This writer is closed');
+					}
+					else if (typeof(resultOrPromise) == 'number')
+					{	chunk = chunk.subarray(resultOrPromise);
+					}
+					else
+					{	return resultOrPromise.then
+						(	async nWritten =>
+							{	if (nWritten == null)
+								{	throw new Error('This writer is closed');
+								}
+								chunk = chunk.subarray(nWritten);
+								while (chunk.byteLength > 0)
+								{	nWritten = await callbackReadOrWrite(chunk);
+									if (nWritten == null)
+									{	throw new Error('This writer is closed');
+									}
+									chunk = chunk.subarray(nWritten);
+								}
+							}
+						);
+					}
+				}
+			}
+		);
 	}
 
 	async close(isCancelOrAbort=false, reason?: Any)

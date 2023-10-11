@@ -20,14 +20,8 @@ export class SimpleWritableStream extends WritableStream<Uint8Array>
 		super
 		(	// `deno_web/06_streams.js` uses hackish way to call methods of `WritableStream` subclasses.
 			// When this class is being used like this, the following callbacks are called:
-			{	async write(chunk)
-				{	while (chunk.byteLength > 0)
-					{	const nWritten = await callbackAccessor.write(chunk);
-						if (nWritten == null)
-						{	throw new Error('This writer is closed');
-						}
-						chunk = chunk.subarray(nWritten);
-					}
+			{	write(chunk)
+				{	return callbackAccessor.writeAll(chunk);
 				},
 
 				close()
@@ -101,7 +95,7 @@ export class SimpleWritableStream extends WritableStream<Uint8Array>
 	async writeAll(chunk: Uint8Array)
 	{	const writer = this.getWriter();
 		try
-		{	await writer.write(chunk);
+		{	await this.#callbackAccessor.writeAll(chunk);
 		}
 		finally
 		{	writer.releaseLock();
@@ -122,13 +116,7 @@ export class Writer extends ReaderOrWriter
 
 	async write(chunk: Uint8Array)
 	{	this.#desiredSize = 0;
-		while (chunk.byteLength > 0)
-		{	const nWritten = await this.getCallbackAccessor().write(chunk);
-			if (nWritten == null)
-			{	throw new Error('This writer is closed');
-			}
-			chunk = chunk.subarray(nWritten);
-		}
+		await this.getCallbackAccessor().writeAll(chunk);
 		this.#desiredSize = DEFAULT_AUTO_ALLOCATE_SIZE; // if i don't reach this line of code, the `desiredSize` must remain `0`
 	}
 
