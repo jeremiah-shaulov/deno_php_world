@@ -1,7 +1,7 @@
 // To run:
 // rm -rf .vscode/coverage/profile && deno test --fail-fast --allow-all --coverage=.vscode/coverage/profile private/tests/simple_streams.test.ts && deno coverage --unstable .vscode/coverage/profile --lcov > .vscode/coverage/lcov.info
 
-import {SimpleReadableStream, SimpleWritableStream} from '../simple_streams/mod.ts';
+import {SimpleReadableStream, SimpleTransformStream, SimpleWritableStream} from '../simple_streams/mod.ts';
 import {assertEquals} from "../deps.ts";
 
 function read_to_pull(read: (view: Uint8Array) => number | null | Promise<number|null>, limitItems=Number.MAX_SAFE_INTEGER): UnderlyingByteSource
@@ -849,50 +849,68 @@ Deno.test
 		{	src[i] = Math.floor(Math.random() * 255);
 		}
 		for (let s=0; s<2; s++) // async write, sync write
-		{	for (let a=0; a<2; a++) // ReadableStream or SimpleReadableStream
-			{	for (let a2=0; a2<2; a2++) // WritableStream or SimpleWritableStream
-				{	const dest = new Uint8Array(src.byteLength);
-					let srcPos = 0;
-					let destPos = 0;
-					const all = new Set<ArrayBufferLike>;
+		{	for (let p=0; p<2; p++) // without pipeThrough, with pipeThrough
+			{	for (let a=0; a<2; a++) // ReadableStream or SimpleReadableStream
+				{	for (let a2=0; a2<2; a2++) // WritableStream or SimpleWritableStream
+					{	const dest = new Uint8Array(src.byteLength);
+						let srcPos = 0;
+						let destPos = 0;
+						const all = new Set<ArrayBufferLike>;
 
-					const read = async function(view: Uint8Array)
-					{	await new Promise(y => setTimeout(y, 3 - srcPos/3%3));
-						all.add(view.buffer);
-						if (srcPos == src.byteLength)
-						{	return null;
-						}
-						const n = Math.min(view.byteLength, src.byteLength-srcPos, Math.floor(Math.random() * src.byteLength/10) + 1);
-						view.set(src.subarray(srcPos, srcPos+n));
-						srcPos += n;
-						return n;
-					};
-
-					const write = s == 0 ?
-						async function(chunk: Uint8Array)
-						{	await new Promise(y => setTimeout(y, 3 - destPos/3%3));
-							const n = chunk.byteLength<=src.byteLength/20 ? chunk.byteLength : Math.ceil(Math.random() * chunk.byteLength);
-							dest.set(chunk.subarray(0, n), destPos);
-							destPos += n;
-							return n;
-						} :
-						function(chunk: Uint8Array)
-						{	const n = chunk.byteLength<=src.byteLength/20 ? chunk.byteLength : Math.ceil(Math.random() * chunk.byteLength);
-							dest.set(chunk.subarray(0, n), destPos);
-							destPos += n;
+						const read = async function(view: Uint8Array)
+						{	await new Promise(y => setTimeout(y, 3 - srcPos/3%3));
+							all.add(view.buffer);
+							if (srcPos == src.byteLength)
+							{	return null;
+							}
+							const n = Math.min(view.byteLength, src.byteLength-srcPos, Math.floor(Math.random() * src.byteLength/10) + 1);
+							view.set(src.subarray(srcPos, srcPos+n));
+							srcPos += n;
 							return n;
 						};
 
-					const rs = a==0 ? new ReadableStream(read_to_pull(read, 3*1024)) : new SimpleReadableStream({read});
-					const ws = a2==0 ? new WritableStream(write_to_write(write)) : new SimpleWritableStream({write});
-					assertEquals(rs.locked, false);
-					assertEquals(ws.locked, false);
+						const write = s == 0 ?
+							async function(chunk: Uint8Array)
+							{	await new Promise(y => setTimeout(y, 3 - destPos/3%3));
+								const n = chunk.byteLength<=src.byteLength/20 ? chunk.byteLength : Math.ceil(Math.random() * chunk.byteLength);
+								dest.set(chunk.subarray(0, n), destPos);
+								destPos += n;
+								return n;
+							} :
+							function(chunk: Uint8Array)
+							{	const n = chunk.byteLength<=src.byteLength/20 ? chunk.byteLength : Math.ceil(Math.random() * chunk.byteLength);
+								dest.set(chunk.subarray(0, n), destPos);
+								destPos += n;
+								return n;
+							};
 
-					await rs.pipeTo(ws);
+						const rs = a==0 ? new ReadableStream(read_to_pull(read, 3*1024)) : new SimpleReadableStream({read});
+						const ws = a2==0 ? new WritableStream(write_to_write(write)) : new SimpleWritableStream({write});
+						assertEquals(rs.locked, false);
+						assertEquals(ws.locked, false);
 
-					assertEquals(rs.locked, false);
-					assertEquals(ws.locked, false);
-					assertEquals(dest, src);
+						let useRs = rs;
+						if (p == 1)
+						{	useRs = rs.pipeThrough<Uint8Array>
+							(	new SimpleTransformStream
+								(	{	async transform(chunk, writer)
+										{	for (let i=0; i<chunk.length; i++)
+											{	chunk[i] = ~chunk[i];
+											}
+											await writer.write(chunk);
+											return chunk.length;
+										}
+									}
+								)
+							);
+						}
+
+						await useRs.pipeTo(ws);
+
+						assertEquals(rs.locked, false);
+						assertEquals(ws.locked, false);
+						assertEquals(dest, p==0 ? src : src.map(b => ~b));
+					}
 				}
 			}
 		}

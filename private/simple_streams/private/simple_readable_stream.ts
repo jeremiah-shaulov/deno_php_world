@@ -1,8 +1,12 @@
-import {DEFAULT_AUTO_ALLOCATE_SIZE, CallbackStart, CallbackReadOrWrite, CallbackCancelOrAbort, CallbackAccessor, ReaderOrWriter} from './common.ts';
+import {DEFAULT_AUTO_ALLOCATE_SIZE, CallbackAccessor, ReaderOrWriter} from './common.ts';
 import {Writer} from './simple_writable_stream.ts';
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
+
+type CallbackStart = () => void | PromiseLike<void>;
+type CallbackRead = (view: Uint8Array) => number | null | PromiseLike<number|null>;
+type CallbackCancel = (reason: Any) => void | PromiseLike<void>;
 
 export type Source =
 {	// Properties:
@@ -17,8 +21,8 @@ export type Source =
 	autoAllocateMin?: number;
 
 	start?: CallbackStart;
-	read: CallbackReadOrWrite;
-	cancel?: CallbackCancelOrAbort;
+	read: CallbackRead;
+	cancel?: CallbackCancel;
 };
 
 /**	This class extends `ReadableStream<Uint8Array>`, and can be used as it's substitutor.
@@ -177,7 +181,7 @@ export class SimpleReadableStream extends ReadableStream<Uint8Array>
 
 	#autoAllocateChunkSize: number;
 	#autoAllocateMin: number;
-	#callbackAccessor: CallbackAccessor;
+	#callbackAccessor: ReadCallbackAccessor;
 	#locked = false;
 	#readerRequests = new Array<(reader: ReadableStreamDefaultReader<Uint8Array> | ReadableStreamBYOBReader) => void>;
 
@@ -189,7 +193,7 @@ export class SimpleReadableStream extends ReadableStream<Uint8Array>
 		const autoAllocateMin = autoAllocateMinU==undefined || autoAllocateMinU<0 ? autoAllocateChunkSize >> 3 : autoAllocateMinU;
 		this.#autoAllocateChunkSize = autoAllocateChunkSize;
 		this.#autoAllocateMin = autoAllocateMin;
-		this.#callbackAccessor = new CallbackAccessor(autoAllocateChunkSize, autoAllocateMin, source.start, source.read, undefined, source.cancel);
+		this.#callbackAccessor = new ReadCallbackAccessor(autoAllocateChunkSize, autoAllocateMin, source.start, source.read, source.cancel);
 	}
 
 	get locked()
@@ -281,14 +285,11 @@ export class SimpleReadableStream extends ReadableStream<Uint8Array>
 									callbackRead,
 									view =>
 									{	const resultOrPromise = callbackWrite(view);
-										if (resultOrPromise == null)
-										{	throw new Error('This writer is closed');
-										}
 										if (typeof(resultOrPromise) != 'object')
 										{	return -resultOrPromise - 1;
 										}
 										return resultOrPromise.then
-										(	result => result==null ? Promise.reject('This writer is closed') : -result - 1
+										(	result => -result - 1
 										);
 									}
 								)
@@ -397,9 +398,49 @@ export class SimpleReadableStream extends ReadableStream<Uint8Array>
 	}
 }
 
+class ReadCallbackAccessor extends CallbackAccessor<number|null>
+{	#autoAllocateBuffer: Uint8Array|undefined;
+
+	constructor
+	(	private autoAllocateChunkSize: number,
+		private autoAllocateMin: number,
+		callbackStart: CallbackStart|undefined,
+		callbackRead: CallbackRead|undefined,
+		callbackCancel: CallbackCancel|undefined,
+	)
+	{	super(callbackStart, callbackRead, undefined, callbackCancel);
+	}
+
+	read(view?: Uint8Array)
+	{	return this.useCallback
+		(	async callbackRead =>
+			{	let isUserSuppliedBuffer = true;
+				if (!view)
+				{	view = this.#autoAllocateBuffer ?? new Uint8Array(this.autoAllocateChunkSize);
+					this.#autoAllocateBuffer = undefined;
+					isUserSuppliedBuffer = false;
+				}
+				const nRead = await callbackRead(view);
+				if (!isUserSuppliedBuffer)
+				{	const end = view.byteOffset + (nRead ?? 0);
+					if (view.buffer.byteLength-end >= this.autoAllocateMin)
+					{	this.#autoAllocateBuffer = new Uint8Array(view.buffer, end);
+					}
+				}
+				if (nRead == null)
+				{	await this.close();
+				}
+				else
+				{	return view.subarray(0, nRead);
+				}
+			}
+		);
+	}
+}
+
 /**	This class plays the same role in `SimpleReadableStream` as does `ReadableStreamBYOBReader` in `ReadableStream<Uint8Array>`.
  **/
-export class Reader extends ReaderOrWriter
+export class Reader extends ReaderOrWriter<ReadCallbackAccessor>
 {	async read<V extends ArrayBufferView>(view?: V): Promise<ReadableStreamBYOBReadResult<V>>
 	{	if (view && !(view instanceof Uint8Array))
 		{	throw new Error('Only Uint8Array is supported'); // i always return `Uint8Array`, and it must be `V`
@@ -617,7 +658,7 @@ async function pipeTo
 (	autoAllocateChunkSize: number,
 	autoAllocateMin: number,
 	signal: AbortSignal|undefined,
-	callbackRead: CallbackReadOrWrite,
+	callbackRead: CallbackRead,
 	callbackWriteInverting: (view: Uint8Array) => number | PromiseLike<number>,
 )
 {	const buffer = new Uint8Array(autoAllocateChunkSize);

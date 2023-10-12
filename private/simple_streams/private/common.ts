@@ -5,27 +5,22 @@ export const DEFAULT_AUTO_ALLOCATE_SIZE = 32*1024;
 // deno-lint-ignore no-explicit-any
 type Any = any;
 
-export type CallbackStart = () => void | PromiseLike<void>;
-export type CallbackReadOrWrite = (view: Uint8Array) => number | null | PromiseLike<number|null>;
-export type CallbackWrite = (view: Uint8Array) => number | PromiseLike<number>;
-export type CallbackClose = () => void | PromiseLike<void>;
-export type CallbackCancelOrAbort = (reason: Any) => void | PromiseLike<void>;
+type CallbackStartOrCloseOrFlush = () => void | PromiseLike<void>;
+type CallbackReadOrWriteOrTransform<Result> = (view: Uint8Array) => Result | PromiseLike<Result>;
+type CallbackCancelOrAbort = (reason: Any) => void | PromiseLike<void>;
 
-export class CallbackAccessor
+export class CallbackAccessor<Result>
 {	closed: Promise<void>;
 	error: Any;
 	ongoing: Promise<void>;
 	#cancelCurOp: ((value?: undefined) => void) | undefined;
 	#reportClosed: VoidFunction|undefined;
 	#reportClosedWithError: ((error: Any) => void) | undefined;
-	#autoAllocateBuffer: Uint8Array|undefined;
 
 	constructor
-	(	private autoAllocateChunkSize: number,
-		private autoAllocateMin: number,
-		callbackStart: CallbackStart|undefined,
-		private callbackReadOrWrite: CallbackReadOrWrite|undefined,
-		private callbackClose: CallbackClose|undefined,
+	(	callbackStart: CallbackStartOrCloseOrFlush|undefined,
+		private callbackReadOrWrite: CallbackReadOrWriteOrTransform<Result> | undefined,
+		private callbackClose: CallbackStartOrCloseOrFlush|undefined,
 		private callbackCancelOrAbort: CallbackCancelOrAbort|undefined,
 	)
 	{	this.closed = new Promise<void>
@@ -55,14 +50,14 @@ export class CallbackAccessor
 		}
 	}
 
-	useCallback<T>(callback: (callbackReadOrWrite: CallbackReadOrWrite) => T | PromiseLike<T>)
+	useCallback<T>(useCallback: (callbackReadOrWrite: (view: Uint8Array) => Result | PromiseLike<Result>) => T | PromiseLike<T>)
 	{	if (this.callbackReadOrWrite)
 		{	const promise = this.ongoing.then
 			(	async () =>
 				{	const {callbackReadOrWrite} = this;
 					if (callbackReadOrWrite)
 					{	try
-						{	const resultOrPromise = callback(callbackReadOrWrite);
+						{	const resultOrPromise = useCallback(callbackReadOrWrite);
 							if (typeof(resultOrPromise)=='object' && resultOrPromise!=null && 'then' in resultOrPromise)
 							{	return await new Promise<T | undefined>
 								(	(y, n) =>
@@ -92,69 +87,6 @@ export class CallbackAccessor
 		else if (this.error != undefined)
 		{	throw this.error;
 		}
-	}
-
-	read(view?: Uint8Array)
-	{	return this.useCallback
-		(	async callbackReadOrWrite =>
-			{	let isUserSuppliedBuffer = true;
-				if (!view)
-				{	view = this.#autoAllocateBuffer ?? new Uint8Array(this.autoAllocateChunkSize);
-					this.#autoAllocateBuffer = undefined;
-					isUserSuppliedBuffer = false;
-				}
-				const nRead = await callbackReadOrWrite(view);
-				if (!isUserSuppliedBuffer)
-				{	const end = view.byteOffset + (nRead ?? 0);
-					if (view.buffer.byteLength-end >= this.autoAllocateMin)
-					{	this.#autoAllocateBuffer = new Uint8Array(view.buffer, end);
-					}
-				}
-				if (nRead == null)
-				{	await this.close();
-				}
-				else
-				{	return view.subarray(0, nRead);
-				}
-			}
-		);
-	}
-
-	write(chunk: Uint8Array)
-	{	return this.useCallback(callbackReadOrWrite => callbackReadOrWrite(chunk));
-	}
-
-	writeAll(chunk: Uint8Array)
-	{	return this.useCallback
-		(	callbackReadOrWrite =>
-			{	while (chunk.byteLength > 0)
-				{	const resultOrPromise = callbackReadOrWrite(chunk);
-					if (resultOrPromise == null)
-					{	throw new Error('This writer is closed');
-					}
-					else if (typeof(resultOrPromise) == 'number')
-					{	chunk = chunk.subarray(resultOrPromise);
-					}
-					else
-					{	return resultOrPromise.then
-						(	async nWritten =>
-							{	if (nWritten == null)
-								{	throw new Error('This writer is closed');
-								}
-								chunk = chunk.subarray(nWritten);
-								while (chunk.byteLength > 0)
-								{	nWritten = await callbackReadOrWrite(chunk);
-									if (nWritten == null)
-									{	throw new Error('This writer is closed');
-									}
-									chunk = chunk.subarray(nWritten);
-								}
-							}
-						);
-					}
-				}
-			}
-		);
 	}
 
 	async close(isCancelOrAbort=false, reason?: Any)
@@ -205,8 +137,8 @@ export class CallbackAccessor
 	}
 }
 
-export class ReaderOrWriter
-{	constructor(protected callbackAccessor: CallbackAccessor|undefined, private onRelease: VoidFunction)
+export class ReaderOrWriter<SomeCallbackAccessor extends CallbackAccessor<unknown>>
+{	constructor(protected callbackAccessor: SomeCallbackAccessor|undefined, private onRelease: VoidFunction)
 	{
 	}
 
