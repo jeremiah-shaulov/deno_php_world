@@ -97,7 +97,7 @@ export class SimpleTransformStream extends TransformStream<Uint8Array, Uint8Arra
 
 				write(chunk)
 				{	if (!transform)
-					{	return writer.write(chunk).then(() => chunk.byteLength);
+					{	return writer.useLowLevelCallback(callbackWrite => callbackWrite(chunk)).then(n => n==undefined ? Promise.reject('This writer is closed') : n);
 					}
 					else
 					{	return transform(chunk, writer);

@@ -190,7 +190,7 @@ export class SimpleReadableStream extends ReadableStream<Uint8Array>
 		const autoAllocateChunkSizeU = source.autoAllocateChunkSize;
 		const autoAllocateMinU = source.autoAllocateMin;
 		const autoAllocateChunkSize = autoAllocateChunkSizeU==undefined || autoAllocateChunkSizeU<0 ? DEFAULT_AUTO_ALLOCATE_SIZE : autoAllocateChunkSizeU;
-		const autoAllocateMin = autoAllocateMinU==undefined || autoAllocateMinU<0 ? autoAllocateChunkSize >> 3 : autoAllocateMinU;
+		const autoAllocateMin = autoAllocateMinU==undefined || autoAllocateMinU<0 ? autoAllocateChunkSize >> 3 : Math.min(autoAllocateMinU, autoAllocateChunkSize);
 		this.#autoAllocateChunkSize = autoAllocateChunkSize;
 		this.#autoAllocateMin = autoAllocateMin;
 		this.#callbackAccessor = new ReadCallbackAccessor(autoAllocateChunkSize, autoAllocateMin, source.start, source.read, source.cancel);
@@ -661,13 +661,16 @@ async function pipeTo
 	callbackRead: CallbackRead,
 	callbackWriteInverting: (view: Uint8Array) => number | PromiseLike<number>,
 )
-{	const buffer = new Uint8Array(autoAllocateChunkSize);
-	let readPos = 0;
-	let readPos2 = 0;
-	let writePos = 0;
-	let isEof = false;
-	let readPromise: number | null | PromiseLike<number|null> | undefined;
-	let writePromise: number | PromiseLike<number> | undefined;
+{	const readTo = autoAllocateChunkSize - autoAllocateMin;
+	const halfBufferSize = autoAllocateChunkSize<2 ? autoAllocateChunkSize : autoAllocateChunkSize >> 1;
+	const buffer = new Uint8Array(autoAllocateChunkSize);
+	let readPos = 0; // read to `buffer[readPos ..]`
+	let writePos = 0; // write from `buffer[writePos .. readPos]`
+	let readPos2 = 0; // when `readPos > readTo` read to `buffer[readPos2 .. writePos]` over already read and written part of the buffer on the left of `writePos`
+	let usingReadPos2 = false; // where do i read to? to `readPos` or `readPos2`
+	let readPromise: number | null | PromiseLike<number|null> | undefined; // pending read operation that reads to the buffer
+	let writePromise: number | PromiseLike<number> | undefined; // pending write operation that writes from the buffer
+	let isEof = false; // i'll not read (i.e. create `readPromise`) if EOF reached
 	try
 	{	while (true)
 		{	if (signal?.aborted)
@@ -676,16 +679,23 @@ async function pipeTo
 			}
 			// Start (or continue) reading and/or writing
 			if (readPromise===undefined && !isEof)
-			{	readPromise =
-				(	readPos<=autoAllocateMin ? // Read if there's at least a half buffer free after the `read_pos`
-						callbackRead
-						(	readPos==0 ? buffer.subarray(0, autoAllocateMin) : // Don't try to read the full buffer, only it's half. The buffer is big enough (twice common size). This increases the chance that reading and writing will happen in parallel
+			{	if (readPos<=readTo || readPos2==0 && writePos>=1 && autoAllocateChunkSize-readPos>=writePos)
+				{	// Read if there's at least `autoAllocateMin` bytes free after the `readPos`, or if `readPos2 == 0` and space at `buffer[.. writePos]` is not larger than the space at `buffer[readPos ..]`
+					// `autoAllocateChunkSize-readPos` is number of free bytes after `readPos` (`buffer[readPos ..]`)
+					// `writePos` is number of free bytes on the left (`buffer[.. writePos]`)
+					// `writePos>=1 && autoAllocateChunkSize-readPos>=writePos` means that `autoAllocateChunkSize-readPos>=1` (i.e. there's space after `readPos`)
+					usingReadPos2 = false;
+					readPromise = callbackRead
+					(	readPos == 0 ?
+							buffer.subarray(0, halfBufferSize) : // Don't try to read the full buffer, only it's half. The buffer is big enough (twice common size). This increases the chance that reading and writing will happen in parallel
 							buffer.subarray(readPos)
-						) :
-					writePos-readPos2>=autoAllocateMin ? // Read if there's at least a half buffer free on the left side of the already written position
-						callbackRead(buffer.subarray(readPos2, writePos)) :
-						undefined
-				);
+					);
+				}
+				else if (readPos2 < writePos)
+				{	// Read if there's free space on the left side of the already written position
+					usingReadPos2 = true;
+					readPromise = callbackRead(buffer.subarray(readPos2, writePos));
+				}
 			}
 			if (writePromise===undefined && readPos>writePos)
 			{	// Write if there's something already read in the buffer
@@ -711,12 +721,12 @@ async function pipeTo
 			else if (size >= 0)
 			{	// Read a chunk
 				readPromise = undefined;
-				if (readPos <= autoAllocateMin)
-				{	// Read from `read_pos` to `read_pos + size`
+				if (!usingReadPos2)
+				{	// Read from `readPos` to `readPos + size`
 					readPos += size;
 				}
 				else
-				{	// Read from `read_pos_2` to `read_pos_2 + size`
+				{	// Read from `readPos2` to `readPos2 + size`
 					readPos2 += size;
 				}
 			}
@@ -724,6 +734,39 @@ async function pipeTo
 			{	// Written
 				size = -size - 1;
 				writePromise = undefined;
+				if (size == 0)
+				{	// They want a larger chunk
+					const holeSize = autoAllocateChunkSize - readPos;
+					if (holeSize) // If there's hole on the right (because i prefer to read to the left when there's more space)
+					{	if (readPos2 > 0)  // If there's something read on the left
+						{	// Move the data from left to right
+							const copySize = Math.min(holeSize, readPos2);
+							buffer.copyWithin(readPos, 0, copySize);
+							buffer.copyWithin(0, copySize, readPos2);
+							readPos += copySize;
+							readPos2 -= copySize;
+						}
+						// Else i'll continue to read to the hole
+					}
+					else if (writePos == 0)
+					{	throw new Error(`write() returned 0 for ${autoAllocateChunkSize} bytes chunk`);
+					}
+					else
+					{	let leftPart;
+						if (readPos2 > 0)  // If there's something read on the left
+						{	leftPart = new Uint8Array(readPos2);
+							leftPart.set(buffer.subarray(0, readPos2));
+							readPos2 = 0;
+						}
+						buffer.copyWithin(0, writePos, readPos);
+						readPos -= writePos;
+						writePos = 0;
+						if (leftPart)
+						{	buffer.set(leftPart, readPos);
+							readPos += leftPart.byteLength;
+						}
+					}
+				}
 				writePos += size;
 				if (readPos==writePos && !readPromise)
 				{	readPos = readPos2;

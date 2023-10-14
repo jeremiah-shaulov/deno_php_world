@@ -143,8 +143,8 @@ export class Writer extends ReaderOrWriter<WriteCallbackAccessor>
 	{	return this.#desiredSize;
 	}
 
-	get ready(): Promise<void>
-	{	return this.callbackAccessor?.ongoing ?? Promise.resolve();
+	get ready()
+	{	return this.callbackAccessor?.ready ?? Promise.resolve();
 	}
 
 	async write(chunk: Uint8Array)
@@ -157,8 +157,9 @@ export class Writer extends ReaderOrWriter<WriteCallbackAccessor>
 	 **/
 	async useLowLevelCallback<T>(callback: (callbackWrite: CallbackWrite) => T | PromiseLike<T>)
 	{	this.#desiredSize = 0;
-		await this.getCallbackAccessor().useCallback(callback);
+		const result = await this.getCallbackAccessor().useCallback(callback);
 		this.#desiredSize = DEFAULT_AUTO_ALLOCATE_SIZE; // if i don't reach this line of code, the `desiredSize` must remain `0`
+		return result;
 	}
 
 	close(): Promise<void>

@@ -12,7 +12,7 @@ type CallbackCancelOrAbort = (reason: Any) => void | PromiseLike<void>;
 export class CallbackAccessor<Result>
 {	closed: Promise<void>;
 	error: Any;
-	ongoing: Promise<void>;
+	ready: Promise<void>;
 	#cancelCurOp: ((value?: undefined) => void) | undefined;
 	#reportClosed: VoidFunction|undefined;
 	#reportClosedWithError: ((error: Any) => void) | undefined;
@@ -32,7 +32,7 @@ export class CallbackAccessor<Result>
 		this.closed.then(undefined, () => {});
 		const startPromise = callbackStart?.(); // can throw before returning promise, and this should break the constructor, because this is the behavior of `ReadableStream`
 		if (startPromise)
-		{	this.ongoing = new Promise<void>
+		{	this.ready = new Promise<void>
 			(	y =>
 				{	this.#cancelCurOp = y;
 					startPromise.then
@@ -46,13 +46,13 @@ export class CallbackAccessor<Result>
 			);
 		}
 		else
-		{	this.ongoing = Promise.resolve();
+		{	this.ready = Promise.resolve();
 		}
 	}
 
 	useCallback<T>(useCallback: (callbackReadOrWrite: (view: Uint8Array) => Result | PromiseLike<Result>) => T | PromiseLike<T>)
 	{	if (this.callbackReadOrWrite)
-		{	const promise = this.ongoing.then
+		{	const promise = this.ready.then
 			(	async () =>
 				{	const {callbackReadOrWrite} = this;
 					if (callbackReadOrWrite)
@@ -81,7 +81,7 @@ export class CallbackAccessor<Result>
 					}
 				}
 			);
-			this.ongoing = promise.then(undefined, () => {});
+			this.ready = promise.then(undefined, () => {});
 			return promise;
 		}
 		else if (this.error != undefined)
