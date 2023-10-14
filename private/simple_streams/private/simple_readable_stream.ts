@@ -288,9 +288,7 @@ export class SimpleReadableStream extends ReadableStream<Uint8Array>
 										if (typeof(resultOrPromise) != 'object')
 										{	return -resultOrPromise - 1;
 										}
-										return resultOrPromise.then
-										(	result => -result - 1
-										);
+										return resultOrPromise.then(result => -result - 1);
 									}
 								)
 							);
@@ -427,7 +425,7 @@ class ReadCallbackAccessor extends CallbackAccessor<number|null>
 					{	this.#autoAllocateBuffer = new Uint8Array(view.buffer, end);
 					}
 				}
-				if (nRead == null)
+				if (!nRead)
 				{	await this.close();
 				}
 				else
@@ -710,7 +708,7 @@ async function pipeTo
 					await (!writePromise ? readPromise : !readPromise ? writePromise : Promise.race([readPromise, writePromise]))
 			);
 			// Now we have either read or written something
-			if (size == null)
+			if (!size)
 			{	// Read EOF
 				readPromise = undefined;
 				if (!writePromise)
@@ -749,7 +747,7 @@ async function pipeTo
 						// Else i'll continue to read to the hole
 					}
 					else if (writePos == 0)
-					{	throw new Error(`write() returned 0 for ${autoAllocateChunkSize} bytes chunk`);
+					{	throw new Error(`write() returned 0 for ${autoAllocateChunkSize} bytes chunk during pipeTo()`);
 					}
 					else
 					{	let leftPart;
