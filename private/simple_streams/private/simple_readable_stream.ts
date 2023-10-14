@@ -709,10 +709,15 @@ async function pipeTo
 			if (!size)
 			{	// Read EOF
 				readPromise = undefined;
-				if (!writePromise)
-				{	break;
-				}
 				isEof = true;
+				if (!writePromise)
+				{	if (!usingReadPos2 || readPos2==0)
+					{	break;
+					}
+					readPos = readPos2;
+					readPos2 = 0;
+					writePos = 0;
+				}
 			}
 			else if (size >= 0)
 			{	// Read a chunk
@@ -724,6 +729,11 @@ async function pipeTo
 				else
 				{	// Read from `readPos2` to `readPos2 + size`
 					readPos2 += size;
+					if (readPos == writePos)
+					{	readPos = readPos2;
+						readPos2 = 0;
+						writePos = 0;
+					}
 				}
 			}
 			else
