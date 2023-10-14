@@ -35,46 +35,41 @@ export class SimpleTransformStream extends TransformStream<Uint8Array, Uint8Arra
 		// Callbacks will write to this writer data that is about to be read by `this.readable`
 		const writer = new Writer
 		(	new WriteCallbackAccessor
-			(	// start()
-				undefined,
+			(	{	write(chunk)
+					{	if (currentViewResolve)
+						{	const n = Math.min(currentChunk.byteLength, chunk.byteLength);
+							currentChunk.set(chunk.subarray(0, n));
+							currentViewResolve(n);
+							currentViewResolve = undefined;
+							currentViewReject = undefined;
+							return n;
+						}
+						else
+						{	currentChunk = chunk;
+							return new Promise(y => {currentChunkResolve = y});
+						}
+					},
 
-				// write()
-				chunk =>
-				{	if (currentViewResolve)
-					{	const n = Math.min(currentChunk.byteLength, chunk.byteLength);
-						currentChunk.set(chunk.subarray(0, n));
-						currentViewResolve(n);
+					close()
+					{	// `transform()` called `writer.close()`
+						isEof = true;
+						currentChunk = EMPTY_CHUNK;
+						currentViewResolve?.(null);
 						currentViewResolve = undefined;
 						currentViewReject = undefined;
-						return n;
-					}
-					else
-					{	currentChunk = chunk;
-						return new Promise(y => {currentChunkResolve = y});
-					}
-				},
+					},
 
-				// close()
-				() =>
-				{	// `transform()` called `writer.close()`
-					isEof = true;
-					currentChunk = EMPTY_CHUNK;
-					currentViewResolve?.(null);
-					currentViewResolve = undefined;
-					currentViewReject = undefined;
-				},
-
-				// abort()
-				reason =>
-				{	// `transform()` called `writer.abort()`
-					isError = true;
-					error = reason;
-					isEof = true;
-					currentChunk = EMPTY_CHUNK;
-					currentViewReject?.(error);
-					currentViewResolve = undefined;
-					currentViewReject = undefined;
-				},
+					abort(reason)
+					{	// `transform()` called `writer.abort()`
+						isError = true;
+						error = reason;
+						isEof = true;
+						currentChunk = EMPTY_CHUNK;
+						currentViewReject?.(error);
+						currentViewResolve = undefined;
+						currentViewReject = undefined;
+					},
+				}
 			),
 
 			// onRelease()
@@ -97,7 +92,7 @@ export class SimpleTransformStream extends TransformStream<Uint8Array, Uint8Arra
 
 				write(chunk)
 				{	if (!transform)
-					{	return writer.useLowLevelCallback(callbackWrite => callbackWrite(chunk)).then(n => n==undefined ? Promise.reject('This writer is closed') : n);
+					{	return writer.useLowLevelCallbacks(callbacks => callbacks.write!(chunk)).then(n => n==undefined ? Promise.reject('This writer is closed') : n);
 					}
 					else
 					{	return transform(chunk, writer);

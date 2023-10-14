@@ -1,4 +1,4 @@
-import {DEFAULT_AUTO_ALLOCATE_SIZE, CallbackAccessor, ReaderOrWriter} from './common.ts';
+import {DEFAULT_AUTO_ALLOCATE_SIZE, Callbacks, CallbackAccessor, ReaderOrWriter} from './common.ts';
 import {Writer} from './simple_writable_stream.ts';
 
 // deno-lint-ignore no-explicit-any
@@ -193,7 +193,7 @@ export class SimpleReadableStream extends ReadableStream<Uint8Array>
 		const autoAllocateMin = autoAllocateMinU==undefined || autoAllocateMinU<0 ? autoAllocateChunkSize >> 3 : Math.min(autoAllocateMinU, autoAllocateChunkSize);
 		this.#autoAllocateChunkSize = autoAllocateChunkSize;
 		this.#autoAllocateMin = autoAllocateMin;
-		this.#callbackAccessor = new ReadCallbackAccessor(autoAllocateChunkSize, autoAllocateMin, source.start, source.read, source.cancel);
+		this.#callbackAccessor = new ReadCallbackAccessor(autoAllocateChunkSize, autoAllocateMin, source);
 	}
 
 	get locked()
@@ -274,17 +274,17 @@ export class SimpleReadableStream extends ReadableStream<Uint8Array>
 		try
 		{	const writer = dest.getWriter();
 			try
-			{	await this.#callbackAccessor.useCallback
-				(	async callbackRead =>
-					{	if ('useLowLevelCallback' in writer)
-						{	await (writer as Writer).useLowLevelCallback
-							(	callbackWrite => pipeTo
+			{	await this.#callbackAccessor.useCallbacks
+				(	async callbacksForRead =>
+					{	if ('useLowLevelCallbacks' in writer)
+						{	await (writer as Writer).useLowLevelCallbacks
+							(	callbacksForWrite => pipeTo
 								(	this.#autoAllocateChunkSize || DEFAULT_AUTO_ALLOCATE_SIZE,
 									this.#autoAllocateMin,
 									options?.signal,
-									callbackRead,
+									callbacksForRead,
 									view =>
-									{	const resultOrPromise = callbackWrite(view);
+									{	const resultOrPromise = callbacksForWrite.write!(view);
 										if (typeof(resultOrPromise) != 'object')
 										{	return -resultOrPromise - 1;
 										}
@@ -298,7 +298,7 @@ export class SimpleReadableStream extends ReadableStream<Uint8Array>
 							(	this.#autoAllocateChunkSize || DEFAULT_AUTO_ALLOCATE_SIZE,
 								this.#autoAllocateMin,
 								options?.signal,
-								callbackRead,
+								callbacksForRead,
 								async view =>
 								{	await writer.write(view);
 									return -view.byteLength - 1;
@@ -402,23 +402,21 @@ class ReadCallbackAccessor extends CallbackAccessor<number|null>
 	constructor
 	(	private autoAllocateChunkSize: number,
 		private autoAllocateMin: number,
-		callbackStart: CallbackStart|undefined,
-		callbackRead: CallbackRead|undefined,
-		callbackCancel: CallbackCancel|undefined,
+		callbacks: Callbacks,
 	)
-	{	super(callbackStart, callbackRead, undefined, callbackCancel);
+	{	super(callbacks);
 	}
 
 	read(view?: Uint8Array)
-	{	return this.useCallback
-		(	async callbackRead =>
+	{	return this.useCallbacks
+		(	async callbacks =>
 			{	let isUserSuppliedBuffer = true;
 				if (!view)
 				{	view = this.#autoAllocateBuffer ?? new Uint8Array(this.autoAllocateChunkSize);
 					this.#autoAllocateBuffer = undefined;
 					isUserSuppliedBuffer = false;
 				}
-				const nRead = await callbackRead(view);
+				const nRead = await callbacks.read!(view);
 				if (!isUserSuppliedBuffer)
 				{	const end = view.byteOffset + (nRead ?? 0);
 					if (view.buffer.byteLength-end >= this.autoAllocateMin)
@@ -656,7 +654,7 @@ async function pipeTo
 (	autoAllocateChunkSize: number,
 	autoAllocateMin: number,
 	signal: AbortSignal|undefined,
-	callbackRead: CallbackRead,
+	callbacksForRead: Callbacks,
 	callbackWriteInverting: (view: Uint8Array) => number | PromiseLike<number>,
 )
 {	const readTo = autoAllocateChunkSize - autoAllocateMin;
@@ -683,7 +681,7 @@ async function pipeTo
 					// `writePos` is number of free bytes on the left (`buffer[.. writePos]`)
 					// `writePos>=1 && autoAllocateChunkSize-readPos>=writePos` means that `autoAllocateChunkSize-readPos>=1` (i.e. there's space after `readPos`)
 					usingReadPos2 = false;
-					readPromise = callbackRead
+					readPromise = callbacksForRead.read!
 					(	readPos == 0 ?
 							buffer.subarray(0, halfBufferSize) : // Don't try to read the full buffer, only it's half. The buffer is big enough (twice common size). This increases the chance that reading and writing will happen in parallel
 							buffer.subarray(readPos)
@@ -692,7 +690,7 @@ async function pipeTo
 				else if (readPos2 < writePos)
 				{	// Read if there's free space on the left side of the already written position
 					usingReadPos2 = true;
-					readPromise = callbackRead(buffer.subarray(readPos2, writePos));
+					readPromise = callbacksForRead.read!(buffer.subarray(readPos2, writePos));
 				}
 			}
 			if (writePromise===undefined && readPos>writePos)

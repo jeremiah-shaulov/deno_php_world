@@ -1,4 +1,4 @@
-import {DEFAULT_AUTO_ALLOCATE_SIZE, CallbackAccessor, ReaderOrWriter} from './common.ts';
+import {DEFAULT_AUTO_ALLOCATE_SIZE, Callbacks, CallbackAccessor, ReaderOrWriter} from './common.ts';
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -21,7 +21,7 @@ export class SimpleWritableStream extends WritableStream<Uint8Array>
 	#writerRequests = new Array<(writer: WritableStreamDefaultWriter<Uint8Array>) => void>;
 
 	constructor(sink: Sink)
-	{	const callbackAccessor = new WriteCallbackAccessor(sink.start, sink.write, sink.close, sink.abort);
+	{	const callbackAccessor = new WriteCallbackAccessor(sink);
 		super
 		(	// `deno_web/06_streams.js` uses hackish way to call methods of `WritableStream` subclasses.
 			// When this class is being used like this, the following callbacks are called:
@@ -84,7 +84,7 @@ export class SimpleWritableStream extends WritableStream<Uint8Array>
 	async write(chunk: Uint8Array)
 	{	const writer = this.getWriter();
 		try
-		{	const nWritten = await this.#callbackAccessor.useCallback(callbackWrite => callbackWrite(chunk));
+		{	const nWritten = await this.#callbackAccessor.useCallbacks(callbacks => callbacks.write!(chunk));
 			if (nWritten == undefined)
 			{	throw new Error('This writer is closed');
 			}
@@ -108,10 +108,10 @@ export class SimpleWritableStream extends WritableStream<Uint8Array>
 
 export class WriteCallbackAccessor extends CallbackAccessor<number>
 {	writeAll(chunk: Uint8Array)
-	{	return this.useCallback
-		(	callbackWrite =>
+	{	return this.useCallbacks
+		(	callbacks =>
 			{	while (chunk.byteLength > 0)
-				{	const resultOrPromise = callbackWrite(chunk);
+				{	const resultOrPromise = callbacks.write!(chunk);
 					if (typeof(resultOrPromise) == 'number')
 					{	if (resultOrPromise == 0)
 						{	throw new Error('write() returned 0 during writeAll()');
@@ -126,7 +126,7 @@ export class WriteCallbackAccessor extends CallbackAccessor<number>
 								}
 								chunk = chunk.subarray(nWritten);
 								while (chunk.byteLength > 0)
-								{	nWritten = await callbackWrite(chunk);
+								{	nWritten = await callbacks.write!(chunk);
 									chunk = chunk.subarray(nWritten);
 								}
 							}
@@ -157,9 +157,9 @@ export class Writer extends ReaderOrWriter<WriteCallbackAccessor>
 
 	/**	@internal
 	 **/
-	async useLowLevelCallback<T>(callback: (callbackWrite: CallbackWrite) => T | PromiseLike<T>)
+	async useLowLevelCallbacks<T>(callbacks: (callbacks: Callbacks) => T | PromiseLike<T>)
 	{	this.#desiredSize = 0;
-		const result = await this.getCallbackAccessor().useCallback(callback);
+		const result = await this.getCallbackAccessor().useCallbacks(callbacks);
 		this.#desiredSize = DEFAULT_AUTO_ALLOCATE_SIZE; // if i don't reach this line of code, the `desiredSize` must remain `0`
 		return result;
 	}

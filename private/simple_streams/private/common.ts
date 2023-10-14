@@ -6,31 +6,37 @@ export const DEFAULT_AUTO_ALLOCATE_SIZE = 32*1024;
 type Any = any;
 
 type CallbackStartOrCloseOrFlush = () => void | PromiseLike<void>;
-type CallbackReadOrWriteOrTransform<Result> = (view: Uint8Array) => Result | PromiseLike<Result>;
+type CallbackReadOrWrite<Result> = (view: Uint8Array) => Result | PromiseLike<Result>;
 type CallbackCancelOrAbort = (reason: Any) => void | PromiseLike<void>;
+
+export type Callbacks =
+{	start?: CallbackStartOrCloseOrFlush;
+	read?: CallbackReadOrWrite<number|null>;
+	write?: CallbackReadOrWrite<number>;
+	close?: CallbackStartOrCloseOrFlush;
+	cancel?: CallbackCancelOrAbort;
+	abort?: CallbackCancelOrAbort;
+};
 
 export class CallbackAccessor<Result>
 {	closed: Promise<void>;
 	error: Any;
 	ready: Promise<void>;
+	#callbacks: Callbacks|undefined;
 	#cancelCurOp: ((value?: undefined) => void) | undefined;
 	#reportClosed: VoidFunction|undefined;
 	#reportClosedWithError: ((error: Any) => void) | undefined;
 
-	constructor
-	(	callbackStart: CallbackStartOrCloseOrFlush|undefined,
-		private callbackReadOrWrite: CallbackReadOrWriteOrTransform<Result> | undefined,
-		private callbackClose: CallbackStartOrCloseOrFlush|undefined,
-		private callbackCancelOrAbort: CallbackCancelOrAbort|undefined,
-	)
-	{	this.closed = new Promise<void>
+	constructor(callbacks: Callbacks)
+	{	this.#callbacks = callbacks;
+		this.closed = new Promise<void>
 		(	(y, n) =>
 			{	this.#reportClosed = y;
 				this.#reportClosedWithError = n;
 			}
 		);
 		this.closed.then(undefined, () => {});
-		const startPromise = callbackStart?.(); // can throw before returning promise, and this should break the constructor, because this is the behavior of `ReadableStream`
+		const startPromise = callbacks.start?.(); // can throw before returning promise, and this should break the constructor, because this is the behavior of `ReadableStream`
 		if (startPromise)
 		{	this.ready = new Promise<void>
 			(	y =>
@@ -50,14 +56,14 @@ export class CallbackAccessor<Result>
 		}
 	}
 
-	useCallback<T>(useCallback: (callbackReadOrWrite: (view: Uint8Array) => Result | PromiseLike<Result>) => T | PromiseLike<T>)
-	{	if (this.callbackReadOrWrite)
+	useCallbacks<T>(useCallbacks: (callbacks: Callbacks) => T | PromiseLike<T>)
+	{	if (this.#callbacks)
 		{	const promise = this.ready.then
 			(	() =>
-				{	const {callbackReadOrWrite} = this;
-					if (callbackReadOrWrite)
+				{	const callbacks = this.#callbacks;
+					if (callbacks)
 					{	try
-						{	const resultOrPromise = useCallback(callbackReadOrWrite);
+						{	const resultOrPromise = useCallbacks(callbacks);
 							if (typeof(resultOrPromise)=='object' && resultOrPromise!=null && 'then' in resultOrPromise)
 							{	return new Promise<T | undefined>
 								(	(y, n) =>
@@ -95,14 +101,12 @@ export class CallbackAccessor<Result>
 	}
 
 	async close(isCancelOrAbort=false, reason?: Any)
-	{	const {callbackClose, callbackCancelOrAbort} = this;
+	{	const callbacks = this.#callbacks;
 		let cancelCurOp = this.#cancelCurOp;
 		const reportClosed = this.#reportClosed;
 		const reportClosedWithError = this.#reportClosedWithError;
 
-		this.callbackClose = undefined; // don't call `close` anymore
-		this.callbackReadOrWrite = undefined; // don't call `read` anymore
-		this.callbackCancelOrAbort = undefined; // don't call `cancel` anymore
+		this.#callbacks = undefined; // don't call callbacks anymore
 		this.#cancelCurOp = undefined;
 		this.#reportClosed = undefined;
 		this.#reportClosedWithError = undefined;
@@ -112,9 +116,9 @@ export class CallbackAccessor<Result>
 		}
 		else
 		{	if (!isCancelOrAbort)
-			{	if (callbackClose)
+			{	if (callbacks?.close)
 				{	try
-					{	await callbackClose();
+					{	await callbacks.close();
 					}
 					catch (e)
 					{	this.error = e;
@@ -124,7 +128,7 @@ export class CallbackAccessor<Result>
 			}
 			else
 			{	try
-				{	const promise = callbackCancelOrAbort?.(reason);
+				{	const promise = callbacks?.cancel ? callbacks.cancel(reason) : callbacks?.abort?.(reason);
 					cancelCurOp?.();
 					cancelCurOp = undefined;
 					reportClosed?.();
