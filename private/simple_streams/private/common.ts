@@ -53,16 +53,22 @@ export class CallbackAccessor<Result>
 	useCallback<T>(useCallback: (callbackReadOrWrite: (view: Uint8Array) => Result | PromiseLike<Result>) => T | PromiseLike<T>)
 	{	if (this.callbackReadOrWrite)
 		{	const promise = this.ready.then
-			(	async () =>
+			(	() =>
 				{	const {callbackReadOrWrite} = this;
 					if (callbackReadOrWrite)
 					{	try
 						{	const resultOrPromise = useCallback(callbackReadOrWrite);
 							if (typeof(resultOrPromise)=='object' && resultOrPromise!=null && 'then' in resultOrPromise)
-							{	return await new Promise<T | undefined>
+							{	return new Promise<T | undefined>
 								(	(y, n) =>
 									{	this.#cancelCurOp = y;
-										resultOrPromise.then(y, n);
+										resultOrPromise.then
+										(	y,
+											e =>
+											{	this.error = e;
+												return this.close().then(() => n(e), () => n(e));
+											}
+										);
 									}
 								);
 							}
@@ -72,8 +78,7 @@ export class CallbackAccessor<Result>
 						}
 						catch (e)
 						{	this.error = e;
-							await this.close();
-							throw e;
+							return this.close().then(() => Promise.reject(e), () => Promise.reject(e));
 						}
 					}
 					else if (this.error != undefined)
