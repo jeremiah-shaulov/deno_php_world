@@ -6,13 +6,14 @@ type Any = any;
 type CallbackStart = () => void | PromiseLike<void>;
 type CallbackWrite = (chunk: Uint8Array) => number | PromiseLike<number>;
 type CallbackClose = () => void | PromiseLike<void>;
-type CallbackAbort = (reason: Any) => void | PromiseLike<void>;
+type CallbackAbortOrCatch = (reason: Any) => void | PromiseLike<void>;
 
 export type Sink =
 {	start?: CallbackStart;
 	write: CallbackWrite;
 	close?: CallbackClose;
-	abort?: CallbackAbort;
+	abort?: CallbackAbortOrCatch;
+	catch?: CallbackAbortOrCatch;
 };
 
 export class SimpleWritableStream extends WritableStream<Uint8Array>
@@ -21,7 +22,7 @@ export class SimpleWritableStream extends WritableStream<Uint8Array>
 	#writerRequests = new Array<(writer: WritableStreamDefaultWriter<Uint8Array>) => void>;
 
 	constructor(sink: Sink)
-	{	const callbackAccessor = new WriteCallbackAccessor(sink);
+	{	const callbackAccessor = new WriteCallbackAccessor(sink, true);
 		super
 		(	// `deno_web/06_streams.js` uses hackish way to call methods of `WritableStream` subclasses.
 			// When this class is being used like this, the following callbacks are called:
@@ -106,7 +107,7 @@ export class SimpleWritableStream extends WritableStream<Uint8Array>
 	}
 }
 
-export class WriteCallbackAccessor extends CallbackAccessor<number>
+export class WriteCallbackAccessor extends CallbackAccessor
 {	writeAll(chunk: Uint8Array)
 	{	return this.useCallbacks
 		(	callbacks =>

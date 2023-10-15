@@ -69,7 +69,8 @@ export class SimpleTransformStream extends TransformStream<Uint8Array, Uint8Arra
 						currentViewResolve = undefined;
 						currentViewReject = undefined;
 					},
-				}
+				},
+				true
 			),
 
 			// onRelease()

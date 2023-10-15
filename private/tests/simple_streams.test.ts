@@ -515,6 +515,8 @@ Deno.test
 
 				const rs = a==0 ? new ReadableStream(read_to_pull(read, c==0 ? 3 : Number.MAX_SAFE_INTEGER)) : new SimpleReadableStream({read});
 				const r = rs.getReader({mode: 'byob'});
+				let closedWith: any;
+				r.closed.then(() => {closedWith = true}, error => {closedWith = {error}});
 				let b = new Uint8Array(BUFFER_SIZE);
 				for (let i2=1; i2<=3; i2++)
 				{	b = (await r.read(new Uint8Array(b.buffer, 0, b.buffer.byteLength))).value!;
@@ -523,8 +525,10 @@ Deno.test
 					{	assertEquals(b[j], i2);
 					}
 				}
+				assertEquals(closedWith, undefined);
 				if (c == 0)
 				{	const {value, done} = await r.read(new Uint8Array(b.buffer, 0, b.buffer.byteLength));
+					assertEquals(closedWith, true);
 					assertEquals(done, true);
 					assertEquals(value instanceof Uint8Array, true);
 
@@ -542,6 +546,7 @@ Deno.test
 					catch (e)
 					{	error = e;
 					}
+					assertEquals(closedWith?.error?.message, 'hello all');
 					assertEquals(error?.message, 'hello all');
 
 					r.releaseLock();
@@ -972,7 +977,7 @@ Deno.test
 Deno.test
 (	'Reader: Big data',
 	async () =>
-	{	for (let a=0; a<2; a++) // ReadableStream or SimpleReadableStream
+	{	for (let a=0; a<3; a++) // ReadableStream, new SimpleReadableStream, SimpleReadableStream.from()
 		{	const SEND_N_BYTES = 10_000_000;
 			const CHUNK_SIZE = 1000;
 			const N_IN_PARALLEL = 10;
@@ -993,19 +998,18 @@ Deno.test
 			);
 			let nBytes = 0;
 			const all = new Set<ArrayBuffer>;
-			let {heapUsed} = Deno.memoryUsage();
+			const startTime = Date.now();
 			await Promise.all
 			(	new Array(N_IN_PARALLEL).fill(0).map
 				(	async () =>
 					{	const fh = await Deno.connect({port: sender.addr.transport=='tcp' ? sender.addr.port : 0});
-						const rs = a==0 ? fh.readable : new SimpleReadableStream(fh);
+						const rs = a==0 ? fh.readable : a==1 ? SimpleReadableStream.from(fh.readable) : new SimpleReadableStream(fh);
 
 						const reader = rs.getReader({mode: 'byob'});
 						let i = 0;
 						let buffer = new Uint8Array(32*1024);
 						while (true)
 						{	const {value, done} = await reader.read(buffer);
-							heapUsed = Math.max(heapUsed, Deno.memoryUsage().heapUsed);
 							if (value)
 							{	for (let j=0; j<value.byteLength; j++)
 								{	if (value[j] != (i++ & 0xFF))
@@ -1023,6 +1027,7 @@ Deno.test
 					}
 				)
 			);
+			console.log((a==0 ? 'ReadableStream: time ' : a==1 ? 'SimpleReadableStream.from(ReadableStream): time ' : 'new SimpleReadableStream(Deno.Readable): ') + (Date.now() - startTime)/1000 + 'sec');
 			assertEquals(nBytes, SEND_N_BYTES*N_IN_PARALLEL);
 			if (a >= 1)
 			{	assertEquals(all.size, N_IN_PARALLEL);
@@ -1034,7 +1039,7 @@ Deno.test
 Deno.test
 (	'Reader: Big data pipeThrough',
 	async () =>
-	{	for (let a=1; a<2; a++) // ReadableStream or SimpleReadableStream
+	{	for (let a=0; a<3; a++) // ReadableStream, new SimpleReadableStream, SimpleReadableStream.from()
 		{	const SEND_N_BYTES = 10_000_000;
 			const CHUNK_SIZE = 1000;
 			const N_IN_PARALLEL = 10;
@@ -1056,7 +1061,7 @@ Deno.test
 			let nBytes = 0;
 			let nIters = 0;
 			const all = new Set<ArrayBuffer>;
-			let {heapUsed} = Deno.memoryUsage();
+			const startTime = Date.now();
 			await Promise.all
 			(	new Array(N_IN_PARALLEL).fill(0).map
 				(	async () =>
@@ -1079,7 +1084,6 @@ Deno.test
 							while (true)
 							{	nIters++;
 								const {value, done} = await reader.read();
-								heapUsed = Math.max(heapUsed, Deno.memoryUsage().heapUsed);
 								if (value)
 								{	for (let j=0; j<value.byteLength; j++)
 									{	if (value[j] != (~i++ & 0xFF))
@@ -1095,7 +1099,7 @@ Deno.test
 							}
 						}
 						else
-						{	const rs = new SimpleReadableStream(fh).pipeThrough
+						{	const rs = (a==1 ? SimpleReadableStream.from(fh.readable) : new SimpleReadableStream(fh)).pipeThrough
 							(	new SimpleTransformStream
 								(	{	async transform(chunk, writer)
 										{	for (let i=0; i<chunk.length; i++)
@@ -1114,7 +1118,6 @@ Deno.test
 							while (true)
 							{	nIters++;
 								const {value, done} = await reader.read(buffer);
-								heapUsed = Math.max(heapUsed, Deno.memoryUsage().heapUsed);
 								if (value)
 								{	for (let j=0; j<value.byteLength; j++)
 									{	if (value[j] != (~i++ & 0xFF))
@@ -1128,16 +1131,49 @@ Deno.test
 								{	break;
 								}
 							}
-							fh.close(); // TODO: remove
 						}
 					}
 				)
 			);
+			console.log((a==0 ? 'ReadableStream: time ' : a==1 ? 'SimpleReadableStream.from(ReadableStream): time ' : 'new SimpleReadableStream(Deno.Readable): ') + (Date.now() - startTime)/1000 + 'sec');
 			assertEquals(nBytes, SEND_N_BYTES*N_IN_PARALLEL);
 			if (a >= 1)
 			{	assertEquals(all.size, N_IN_PARALLEL);
 			}
 			await sender.stop();
+		}
+	}
+);
+
+Deno.test
+(	'Reader: uint8Array()',
+	async () =>
+	{	for (let a=0; a<2; a++) // autoAllocateChunkSize: default, explicit
+		{	for (const SEND_N_BYTES of [0, 10, 10_000_000])
+			{	const CHUNK_SIZE = 1000;
+				using sender = createTcpServer
+				(	async conn =>
+					{	const writer = conn.writable.getWriter();
+						const buffer = new Uint8Array(CHUNK_SIZE);
+						let i = 0;
+						while (i < SEND_N_BYTES)
+						{	let j = 0;
+							while (j<buffer.length && i<SEND_N_BYTES)
+							{	buffer[j++] = i++ & 0xFF;
+							}
+							await writer.write(buffer.subarray(0, j));
+						}
+						await writer.close();
+					}
+				);
+				const fh = await Deno.connect({port: sender.addr.transport=='tcp' ? sender.addr.port : 0});
+				const value = await new SimpleReadableStream(a==0 ? fh : {read: v => fh.read(v), close: () => fh.close(), autoAllocateChunkSize: 100}).uint8Array();
+				for (let i=0; i<value.byteLength; i++)
+				{	if (value[i] != (i & 0xFF))
+					{	throw new Error(`Invalid value at ${i}`);
+					}
+				}
+			}
 		}
 	}
 );

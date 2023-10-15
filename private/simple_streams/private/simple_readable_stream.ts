@@ -4,9 +4,9 @@ import {Writer} from './simple_writable_stream.ts';
 // deno-lint-ignore no-explicit-any
 type Any = any;
 
-type CallbackStart = () => void | PromiseLike<void>;
+type CallbackStartOrClose = () => void | PromiseLike<void>;
 type CallbackRead = (view: Uint8Array) => number | null | PromiseLike<number|null>;
-type CallbackCancel = (reason: Any) => void | PromiseLike<void>;
+type CallbackCancelOrCatch = (reason: Any) => void | PromiseLike<void>;
 
 export type Source =
 {	// Properties:
@@ -20,9 +20,33 @@ export type Source =
 	 **/
 	autoAllocateMin?: number;
 
-	start?: CallbackStart;
+	/**	This callback is called immediately during `SimpleReadableStream` object creation.
+		When it's promise resolves, i start to call `read()` to pull data as response to `reader.read()`.
+		Only one call is active at each moment, and next calls wait for previous calls to complete.
+		At the end one of `close()`, `cancel(reason)` or `catch(error)` is called.
+		`close()` is called if `read()` returned EOF (`0` or `null`).
+		`cancel()` if caller called `stream.cancel(reason)` or `reader.cancel(reason)`.
+		`error()` if `read()` thrown exception or returned a rejected promise.
+	 **/
+	start?: CallbackStartOrClose;
+
+	/**	This method is called to pull data from input source to a Uint8Array object provied to it.
+		The object provided is never empty.
+		The function is expected to load available data to the view, and to return number of bytes loaded.
+		On EOF it's expected to return `0` or `null`.
+	 **/
 	read: CallbackRead;
-	cancel?: CallbackCancel;
+
+	/**	This method is called when {@link Source.read} returns `0` or `null` that indicate EOF.
+		If you use `Deno.Reader & Deno.Closer` as source, that source will be closed when read to the end without error.
+	 **/
+	close?: CallbackStartOrClose;
+
+	/**	Is called as response to `stream.cancel()` or `reader.cancel()`.
+	 **/
+	cancel?: CallbackCancelOrCatch;
+
+	catch?: CallbackCancelOrCatch;
 };
 
 /**	This class extends `ReadableStream<Uint8Array>`, and can be used as it's substitutor.
@@ -189,8 +213,8 @@ export class SimpleReadableStream extends ReadableStream<Uint8Array>
 	{	super();
 		const autoAllocateChunkSizeU = source.autoAllocateChunkSize;
 		const autoAllocateMinU = source.autoAllocateMin;
-		const autoAllocateChunkSize = autoAllocateChunkSizeU==undefined || autoAllocateChunkSizeU<0 ? DEFAULT_AUTO_ALLOCATE_SIZE : autoAllocateChunkSizeU;
-		const autoAllocateMin = autoAllocateMinU==undefined || autoAllocateMinU<0 ? autoAllocateChunkSize >> 3 : Math.min(autoAllocateMinU, autoAllocateChunkSize);
+		const autoAllocateChunkSize = autoAllocateChunkSizeU && autoAllocateChunkSizeU>0 ? autoAllocateChunkSizeU : DEFAULT_AUTO_ALLOCATE_SIZE;
+		const autoAllocateMin = Math.min(autoAllocateChunkSize, autoAllocateMinU && autoAllocateMinU>0 ? autoAllocateMinU : Math.max(256, autoAllocateChunkSize >> 3));
 		this.#autoAllocateChunkSize = autoAllocateChunkSize;
 		this.#autoAllocateMin = autoAllocateMin;
 		this.#callbackAccessor = new ReadCallbackAccessor(autoAllocateChunkSize, autoAllocateMin, source);
@@ -307,8 +331,11 @@ export class SimpleReadableStream extends ReadableStream<Uint8Array>
 						}
 					}
 				);
-				if (!options?.preventClose)
-				{	await writer.close();
+				if (options?.preventClose)
+				{	await this.#callbackAccessor.close();
+				}
+				else
+				{	await Promise.all([this.#callbackAccessor.close(), writer.close()]);
 				}
 			}
 			catch (e)
@@ -346,7 +373,10 @@ export class SimpleReadableStream extends ReadableStream<Uint8Array>
 	}
 
 	async read(view: Uint8Array)
-	{	const reader = this.getReader({mode: 'byob'});
+	{	if (view.byteLength == 0)
+		{	return 0;
+		}
+		const reader = this.getReader({mode: 'byob'});
 		try
 		{	const view2 = await this.#callbackAccessor.read(view);
 			return !view2 ? null : view2.byteLength;
@@ -359,36 +389,52 @@ export class SimpleReadableStream extends ReadableStream<Uint8Array>
 	async uint8Array()
 	{	const reader = this.getReader({mode: 'byob'});
 		try
-		{	const chunks = new Array<Uint8Array>;
-			let totalLen = 0;
-			let chunkSize = this.#autoAllocateChunkSize || DEFAULT_AUTO_ALLOCATE_SIZE;
-			const autoAllocateMin = this.#autoAllocateMin;
-			while (true)
-			{	let chunk = new Uint8Array(chunkSize);
-				while (chunk.byteLength >= autoAllocateMin)
-				{	const {value, done} = await reader.read(chunk);
-					if (done)
-					{	if (chunks.length == 0)
-						{	return new Uint8Array(0);
+		{	const result = await this.#callbackAccessor.useCallbacks
+			(	async callbacks =>
+				{	const chunks = new Array<Uint8Array>;
+					let totalLen = 0;
+					let chunkSize = this.#autoAllocateChunkSize || DEFAULT_AUTO_ALLOCATE_SIZE;
+					const autoAllocateMin = this.#autoAllocateMin;
+					while (true)
+					{	let chunk = new Uint8Array(chunkSize);
+						while (chunk.byteLength >= autoAllocateMin)
+						{	const nRead = await callbacks.read!(chunk);
+							if (!nRead)
+							{	await this.#callbackAccessor.close();
+								const {byteOffset} = chunk;
+								if (byteOffset > 0)
+								{	chunk = new Uint8Array(chunk.buffer, 0, byteOffset);
+									totalLen += byteOffset;
+									if (chunks.length == 0)
+									{	return chunk;
+									}
+									chunks.push(chunk);
+								}
+								if (chunks.length == 0)
+								{	return new Uint8Array;
+								}
+								if (chunks.length == 1)
+								{	return chunks[0];
+								}
+								const result = new Uint8Array(totalLen);
+								let pos = 0;
+								for (const chunk of chunks)
+								{	result.set(chunk, pos);
+									pos += chunk.byteLength;
+								}
+								return result;
+							}
+							chunk = chunk.subarray(nRead);
 						}
-						if (chunks.length == 1)
-						{	return chunks[0];
-						}
-						const result = new Uint8Array(totalLen);
-						let pos = 0;
-						for (const chunk of chunks)
-						{	result.set(chunk, pos);
-							pos += chunk.byteLength;
-						}
-						return result;
+						const {byteOffset} = chunk;
+						chunk = new Uint8Array(chunk.buffer, 0, byteOffset);
+						totalLen += byteOffset;
+						chunks.push(chunk);
+						chunkSize *= 2;
 					}
-					chunk = chunk.subarray(value.byteLength);
 				}
-				const chunkLen = chunk.byteOffset;
-				chunks.push(new Uint8Array(chunk.buffer, 0, chunkLen));
-				totalLen += chunkLen;
-				chunkSize *= 2;
-			}
+			);
+			return result ?? new Uint8Array;
 		}
 		finally
 		{	reader.releaseLock();
@@ -396,7 +442,7 @@ export class SimpleReadableStream extends ReadableStream<Uint8Array>
 	}
 }
 
-class ReadCallbackAccessor extends CallbackAccessor<number|null>
+class ReadCallbackAccessor extends CallbackAccessor
 {	#autoAllocateBuffer: Uint8Array|undefined;
 
 	constructor
@@ -404,11 +450,14 @@ class ReadCallbackAccessor extends CallbackAccessor<number|null>
 		private autoAllocateMin: number,
 		callbacks: Callbacks,
 	)
-	{	super(callbacks);
+	{	super(callbacks, false);
 	}
 
 	read(view?: Uint8Array)
-	{	return this.useCallbacks
+	{	if (view?.byteLength === 0)
+		{	throw new Error('Empty BYOB buffer passed to read()');
+		}
+		return this.useCallbacks
 		(	async callbacks =>
 			{	let isUserSuppliedBuffer = true;
 				if (!view)
@@ -439,7 +488,7 @@ class ReadCallbackAccessor extends CallbackAccessor<number|null>
 export class Reader extends ReaderOrWriter<ReadCallbackAccessor>
 {	async read<V extends ArrayBufferView>(view?: V): Promise<ReadableStreamBYOBReadResult<V>>
 	{	if (view && !(view instanceof Uint8Array))
-		{	throw new Error('Only Uint8Array is supported'); // i always return `Uint8Array`, and it must be `V`
+		{	throw new Error('Only Uint8Array is supported'); // i always return `Uint8Array`, and it must be also `V`
 		}
 		const view2 = await this.getCallbackAccessor().read(view);
 		return {
@@ -697,7 +746,7 @@ async function pipeTo
 			{	// Write if there's something already read in the buffer
 				writePromise = callbackWriteInverting(buffer.subarray(writePos, readPos));
 			}
-			// Await for the most fast promise
+			// Await for the fastest promise
 			let size =
 			(	typeof(readPromise)=='number' || readPromise===null ? // If result is ready (not promise)
 					readPromise :

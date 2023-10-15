@@ -7,18 +7,19 @@ type Any = any;
 
 type CallbackStartOrCloseOrFlush = () => void | PromiseLike<void>;
 type CallbackReadOrWrite<Result> = (view: Uint8Array) => Result | PromiseLike<Result>;
-type CallbackCancelOrAbort = (reason: Any) => void | PromiseLike<void>;
+type CallbackCancelOrAbortOrCatch = (reason: Any) => void | PromiseLike<void>;
 
 export type Callbacks =
 {	start?: CallbackStartOrCloseOrFlush;
 	read?: CallbackReadOrWrite<number|null>;
 	write?: CallbackReadOrWrite<number>;
 	close?: CallbackStartOrCloseOrFlush;
-	cancel?: CallbackCancelOrAbort;
-	abort?: CallbackCancelOrAbort;
+	cancel?: CallbackCancelOrAbortOrCatch;
+	abort?: CallbackCancelOrAbortOrCatch;
+	catch?: CallbackCancelOrAbortOrCatch;
 };
 
-export class CallbackAccessor<Result>
+export class CallbackAccessor
 {	closed: Promise<void>;
 	error: Any;
 	ready: Promise<void>;
@@ -27,7 +28,7 @@ export class CallbackAccessor<Result>
 	#reportClosed: VoidFunction|undefined;
 	#reportClosedWithError: ((error: Any) => void) | undefined;
 
-	constructor(callbacks: Callbacks)
+	constructor(callbacks: Callbacks, private useAbortNotCancel: boolean)
 	{	this.#callbacks = callbacks;
 		this.closed = new Promise<void>
 		(	(y, n) =>
@@ -111,24 +112,24 @@ export class CallbackAccessor<Result>
 		this.#reportClosed = undefined;
 		this.#reportClosedWithError = undefined;
 
-		if (this.error != undefined)
-		{	reportClosedWithError?.(this.error);
-		}
-		else
+		if (this.error == undefined)
 		{	if (!isCancelOrAbort)
 			{	if (callbacks?.close)
 				{	try
 					{	await callbacks.close();
+						reportClosed?.();
 					}
 					catch (e)
 					{	this.error = e;
 					}
 				}
-				reportClosed?.();
+				else
+				{	reportClosed?.();
+				}
 			}
 			else
 			{	try
-				{	const promise = callbacks?.cancel ? callbacks.cancel(reason) : callbacks?.abort?.(reason);
+				{	const promise = this.useAbortNotCancel ? callbacks?.abort?.(reason) : callbacks?.cancel?.(reason);
 					cancelCurOp?.();
 					cancelCurOp = undefined;
 					reportClosed?.();
@@ -139,14 +140,26 @@ export class CallbackAccessor<Result>
 				catch (e)
 				{	this.error = e;
 					cancelCurOp?.();
-					throw e;
 				}
 			}
+		}
+
+		if (this.error != undefined)
+		{	if (callbacks?.catch)
+			{	try
+				{	await callbacks.catch(this.error);
+				}
+				catch (e)
+				{	console.error(e);
+				}
+			}
+			reportClosedWithError?.(this.error);
+			throw this.error;
 		}
 	}
 }
 
-export class ReaderOrWriter<SomeCallbackAccessor extends CallbackAccessor<unknown>>
+export class ReaderOrWriter<SomeCallbackAccessor extends CallbackAccessor>
 {	constructor(protected callbackAccessor: SomeCallbackAccessor|undefined, private onRelease: VoidFunction)
 	{
 	}
