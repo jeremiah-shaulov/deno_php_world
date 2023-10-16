@@ -18,6 +18,7 @@ const EMPTY_CHUNK = new Uint8Array;
 export class SimpleTransformStream extends TransformStream<Uint8Array, Uint8Array>
 {	readable: SimpleReadableStream;
 	writable: SimpleWritableStream;
+	overrideAutoAllocateChunkSize: number|undefined;
 
 	constructor(transformer: Transformer)
 	{	super();

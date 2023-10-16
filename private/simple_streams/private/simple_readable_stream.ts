@@ -49,6 +49,18 @@ export type Source =
 	catch?: CallbackCancelOrCatch;
 };
 
+type Transform<T> =
+{	writable: WritableStream<Uint8Array>;
+	readable: ReadableStream<T>;
+
+	/**	If this value is set to a positive integer, `SimpleReadableStream.pipeThrough()` will use buffer of this size during piping.
+		Practically this affects maximum chunk size in `transform(chunk, writer)` callback.
+		If that callback returns `0` indicating that it wants more bytes, it will be called again with a longer chunk, till the chunk size reaches `overrideAutoAllocateChunkSize`.
+		Then, if it still returns `0`, an error is thrown.
+	 **/
+	overrideAutoAllocateChunkSize?: number;
+};
+
 /**	This class extends `ReadableStream<Uint8Array>`, and can be used as it's substitutor.
 	However it removes as much of `ReadableStream` complexity as possible.
 
@@ -293,18 +305,35 @@ export class SimpleReadableStream extends ReadableStream<Uint8Array>
 		];
 	}
 
-	async pipeTo(dest: WritableStream<Uint8Array>, options?: PipeOptions)
+	pipeTo(dest: WritableStream<Uint8Array>, options?: PipeOptions)
+	{	return this.#pipeTo(dest, options);
+	}
+
+	pipeThrough<T>
+	(	transform: Transform<T>,
+		options?: PipeOptions
+	)
+	{	if (this.#locked)
+		{	throw new TypeError('ReadableStream is locked.');
+		}
+		this.#pipeTo(transform.writable, options, transform.overrideAutoAllocateChunkSize).then(undefined, () => {});
+		return transform.readable;
+	}
+
+	async #pipeTo(dest: WritableStream<Uint8Array>, options?: PipeOptions, overrideAutoAllocateChunkSize?: number)
 	{	const reader = this.getReader({mode: 'byob'});
 		try
 		{	const writer = dest.getWriter();
 			try
-			{	await this.#callbackAccessor.useCallbacks
+			{	const autoAllocateChunkSize = overrideAutoAllocateChunkSize && overrideAutoAllocateChunkSize>0 ? overrideAutoAllocateChunkSize : this.#autoAllocateChunkSize;
+				const autoAllocateMin = overrideAutoAllocateChunkSize && overrideAutoAllocateChunkSize>0 ? Math.min(overrideAutoAllocateChunkSize, Math.max(256, overrideAutoAllocateChunkSize >> 3)) : this.#autoAllocateMin;
+				await this.#callbackAccessor.useCallbacks
 				(	async callbacksForRead =>
 					{	if ('useLowLevelCallbacks' in writer)
 						{	await (writer as Writer).useLowLevelCallbacks
 							(	callbacksForWrite => pipeTo
-								(	this.#autoAllocateChunkSize || DEFAULT_AUTO_ALLOCATE_SIZE,
-									this.#autoAllocateMin,
+								(	autoAllocateChunkSize || DEFAULT_AUTO_ALLOCATE_SIZE,
+									autoAllocateMin,
 									options?.signal,
 									callbacksForRead,
 									view =>
@@ -319,8 +348,8 @@ export class SimpleReadableStream extends ReadableStream<Uint8Array>
 						}
 						else
 						{	await pipeTo
-							(	this.#autoAllocateChunkSize || DEFAULT_AUTO_ALLOCATE_SIZE,
-								this.#autoAllocateMin,
+							(	autoAllocateChunkSize || DEFAULT_AUTO_ALLOCATE_SIZE,
+								autoAllocateMin,
 								options?.signal,
 								callbacksForRead,
 								async view =>
@@ -359,20 +388,6 @@ export class SimpleReadableStream extends ReadableStream<Uint8Array>
 		finally
 		{	reader.releaseLock();
 		}
-	}
-
-	pipeThrough<T>
-	(	transform:
-		{	writable: WritableStream<Uint8Array>;
-			readable: ReadableStream<T>;
-		},
-		options?: PipeOptions
-	)
-	{	if (this.#locked)
-		{	throw new TypeError('ReadableStream is locked.');
-		}
-		this.pipeTo(transform.writable, options).then(undefined, () => {});
-		return transform.readable;
 	}
 
 	async read(view: Uint8Array)
