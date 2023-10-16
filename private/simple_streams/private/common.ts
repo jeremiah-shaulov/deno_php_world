@@ -6,23 +6,22 @@ export const DEFAULT_AUTO_ALLOCATE_SIZE = 32*1024;
 type Any = any;
 
 type CallbackStartOrCloseOrFlush = () => void | PromiseLike<void>;
-type CallbackReadOrWrite<Result> = (view: Uint8Array) => Result | PromiseLike<Result>;
+type CallbackRead = (view: Uint8Array) => number | null | PromiseLike<number|null>;
+type CallbackWrite = (chunk: Uint8Array, canRedo: boolean) => number | PromiseLike<number>;
 type CallbackCancelOrAbortOrCatch = (reason: Any) => void | PromiseLike<void>;
 
 export type Callbacks =
 {	start?: CallbackStartOrCloseOrFlush;
-	read?: CallbackReadOrWrite<number|null>;
-	write?: CallbackReadOrWrite<number>;
+	read?: CallbackRead;
+	write?: CallbackWrite;
 	close?: CallbackStartOrCloseOrFlush;
 	cancel?: CallbackCancelOrAbortOrCatch;
 	abort?: CallbackCancelOrAbortOrCatch;
 	catch?: CallbackCancelOrAbortOrCatch;
 };
 
-export class PipeError extends Error
-{	constructor(cause: unknown, public bufferedData: Uint8Array)
-	{	super(typeof(cause)=='object' && cause!=null && 'message' in cause ? cause.message+'' : cause+'', {cause});
-	}
+export class PipeThroughTerminatedError extends Error
+{
 }
 
 export class CallbackAccessor

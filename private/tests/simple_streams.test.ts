@@ -941,7 +941,7 @@ Deno.test
 								return n;
 							};
 
-						const rs = a==0 ? new ReadableStream(read_to_pull(read, 3*1024)) : new SimpleReadableStream({read});
+						const rs: ReadableStream<Uint8Array> = a==0 ? new ReadableStream(read_to_pull(read, 3*1024)) : new SimpleReadableStream({read});
 						const ws = a2==0 ? new WritableStream(write_to_write(write)) : new SimpleWritableStream({write});
 						assertEquals(rs.locked, false);
 						assertEquals(ws.locked, false);
@@ -950,7 +950,7 @@ Deno.test
 						if (p == 1)
 						{	useRs = rs.pipeThrough<Uint8Array>
 							(	new SimpleTransformStream
-								(	{	async transform(chunk, writer)
+								(	{	async transform(writer, chunk)
 										{	for (let i=0; i<chunk.length; i++)
 											{	chunk[i] = ~chunk[i];
 											}
@@ -1101,7 +1101,7 @@ Deno.test
 						else
 						{	const rs = (a==1 ? SimpleReadableStream.from(fh.readable) : new SimpleReadableStream(fh)).pipeThrough
 							(	new SimpleTransformStream
-								(	{	async transform(chunk, writer)
+								(	{	async transform(writer, chunk)
 										{	for (let i=0; i<chunk.length; i++)
 											{	chunk[i] = ~chunk[i] & 0xFF;
 											}

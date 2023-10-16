@@ -4,7 +4,7 @@ import {DEFAULT_AUTO_ALLOCATE_SIZE, Callbacks, CallbackAccessor, ReaderOrWriter}
 type Any = any;
 
 type CallbackStart = () => void | PromiseLike<void>;
-type CallbackWrite = (chunk: Uint8Array) => number | PromiseLike<number>;
+type CallbackWrite = (chunk: Uint8Array, canRedo: boolean) => number | PromiseLike<number>;
 type CallbackClose = () => void | PromiseLike<void>;
 type CallbackAbortOrCatch = (reason: Any) => void | PromiseLike<void>;
 
@@ -85,7 +85,7 @@ export class SimpleWritableStream extends WritableStream<Uint8Array>
 	async write(chunk: Uint8Array)
 	{	const writer = this.getWriter();
 		try
-		{	const nWritten = await this.#callbackAccessor.useCallbacks(callbacks => callbacks.write!(chunk));
+		{	const nWritten = await this.#callbackAccessor.useCallbacks(callbacks => callbacks.write!(chunk, false));
 			if (nWritten == undefined)
 			{	throw new Error('This writer is closed');
 			}
@@ -112,7 +112,7 @@ export class WriteCallbackAccessor extends CallbackAccessor
 	{	return this.useCallbacks
 		(	callbacks =>
 			{	while (chunk.byteLength > 0)
-				{	const resultOrPromise = callbacks.write!(chunk);
+				{	const resultOrPromise = callbacks.write!(chunk, false);
 					if (typeof(resultOrPromise) == 'number')
 					{	if (resultOrPromise == 0)
 						{	throw new Error('write() returned 0 during writeAll()');
@@ -127,7 +127,7 @@ export class WriteCallbackAccessor extends CallbackAccessor
 								}
 								chunk = chunk.subarray(nWritten);
 								while (chunk.byteLength > 0)
-								{	nWritten = await callbacks.write!(chunk);
+								{	nWritten = await callbacks.write!(chunk, false);
 									chunk = chunk.subarray(nWritten);
 								}
 							}

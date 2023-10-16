@@ -1,3 +1,4 @@
+import {PipeThroughTerminatedError} from './common.ts';
 import {SimpleReadableStream} from './simple_readable_stream.ts';
 import {SimpleWritableStream, Writer, WriteCallbackAccessor} from './simple_writable_stream.ts';
 
@@ -5,7 +6,7 @@ import {SimpleWritableStream, Writer, WriteCallbackAccessor} from './simple_writ
 type Any = any;
 
 type CallbackStartOrFlush = (writer: Writer) => void | PromiseLike<void>;
-type CallbackTransform = (chunk: Uint8Array, writer: Writer) => number | PromiseLike<number>;
+type CallbackTransform = (writer: Writer, chunk: Uint8Array, canRedo: boolean) => number | PromiseLike<number>;
 
 export type Transformer =
 {	start?: CallbackStartOrFlush;
@@ -16,9 +17,9 @@ export type Transformer =
 const EMPTY_CHUNK = new Uint8Array;
 
 export class SimpleTransformStream extends TransformStream<Uint8Array, Uint8Array>
-{	readable: SimpleReadableStream;
-	writable: SimpleWritableStream;
-	overrideAutoAllocateChunkSize: number|undefined;
+{	readonly readable: SimpleReadableStream;
+	readonly writable: SimpleWritableStream;
+	readonly overrideAutoAllocateChunkSize: number|undefined;
 
 	constructor(transformer: Transformer)
 	{	super();
@@ -50,17 +51,16 @@ export class SimpleTransformStream extends TransformStream<Uint8Array, Uint8Arra
 						}
 					},
 
-					close: () =>
+					close()
 					{	// `transform()` called `writer.close()`
 						isEof = true;
 						currentChunk = EMPTY_CHUNK;
 						currentViewResolve?.(null);
 						currentViewResolve = undefined;
 						currentViewReject = undefined;
-						this.writable.abort(new Error('This transformer is terminated'));
 					},
 
-					abort: reason =>
+					abort(reason)
 					{	// `transform()` called `writer.abort()`
 						isError = true;
 						error = reason;
@@ -69,7 +69,6 @@ export class SimpleTransformStream extends TransformStream<Uint8Array, Uint8Arra
 						currentViewReject?.(error);
 						currentViewResolve = undefined;
 						currentViewReject = undefined;
-						this.writable.abort(reason);
 					},
 				},
 				true
@@ -93,14 +92,9 @@ export class SimpleTransformStream extends TransformStream<Uint8Array, Uint8Arra
 		this.writable = new SimpleWritableStream
 		(	{	start: !start ? undefined : () => start(writer),
 
-				write(chunk)
-				{	if (!transform)
-					{	return writer.useLowLevelCallbacks(callbacks => callbacks.write!(chunk)).then(n => n==undefined ? Promise.reject('This writer is closed') : n);
-					}
-					else
-					{	return transform(chunk, writer);
-					}
-				},
+				write: transform ?
+					((chunk, canRedo) => !isEof ? transform(writer, chunk, canRedo) : Promise.reject(error ?? new PipeThroughTerminatedError('This transformer is terminated'))) :
+					((chunk, canRedo) => writer.useLowLevelCallbacks(callbacks => callbacks.write!(chunk, canRedo)).then(n => n==undefined ? Promise.reject('This writer is closed') : n)),
 
 				async close()
 				{	// Input stream ended

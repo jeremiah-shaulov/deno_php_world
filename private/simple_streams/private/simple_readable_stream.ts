@@ -1,4 +1,4 @@
-import {DEFAULT_AUTO_ALLOCATE_SIZE, Callbacks, CallbackAccessor, ReaderOrWriter, PipeError} from './common.ts';
+import {DEFAULT_AUTO_ALLOCATE_SIZE, Callbacks, CallbackAccessor, ReaderOrWriter} from './common.ts';
 import {Writer} from './simple_writable_stream.ts';
 
 // deno-lint-ignore no-explicit-any
@@ -49,16 +49,16 @@ export type Source =
 	catch?: CallbackCancelOrCatch;
 };
 
-type Transform<T> =
-{	writable: WritableStream<Uint8Array>;
-	readable: ReadableStream<T>;
+type Transform<W extends WritableStream<Uint8Array>, R extends ReadableStream<unknown>> =
+{	readonly writable: W;
+	readonly readable: R;
 
 	/**	If this value is set to a positive integer, `SimpleReadableStream.pipeThrough()` will use buffer of this size during piping.
 		Practically this affects maximum chunk size in `transform(chunk, writer)` callback.
 		If that callback returns `0` indicating that it wants more bytes, it will be called again with a longer chunk, till the chunk size reaches `overrideAutoAllocateChunkSize`.
 		Then, if it still returns `0`, an error is thrown.
 	 **/
-	overrideAutoAllocateChunkSize?: number;
+	readonly overrideAutoAllocateChunkSize?: number;
 };
 
 /**	This class extends `ReadableStream<Uint8Array>`, and can be used as it's substitutor.
@@ -220,6 +220,7 @@ export class SimpleReadableStream extends ReadableStream<Uint8Array>
 	#callbackAccessor: ReadCallbackAccessor;
 	#locked = false;
 	#readerRequests = new Array<(reader: ReadableStreamDefaultReader<Uint8Array> | ReadableStreamBYOBReader) => void>;
+	#bufferedData: Uint8Array|undefined;
 
 	constructor(source: Source)
 	{	super();
@@ -305,12 +306,14 @@ export class SimpleReadableStream extends ReadableStream<Uint8Array>
 		];
 	}
 
+	/**	If destination closes or enters error state, an exception is thrown, and then `pipeTo()` can be called again to continue piping to another destination (including previously buffered data).
+	 **/
 	pipeTo(dest: WritableStream<Uint8Array>, options?: PipeOptions)
 	{	return this.#pipeTo(dest, options);
 	}
 
-	pipeThrough<T>
-	(	transform: Transform<T>,
+	pipeThrough<T, W extends WritableStream<Uint8Array>, R extends ReadableStream<T>>
+	(	transform: Transform<W, R>,
 		options?: PipeOptions
 	)
 	{	if (this.#locked)
@@ -327,17 +330,20 @@ export class SimpleReadableStream extends ReadableStream<Uint8Array>
 			try
 			{	const autoAllocateChunkSize = overrideAutoAllocateChunkSize && overrideAutoAllocateChunkSize>0 ? overrideAutoAllocateChunkSize : this.#autoAllocateChunkSize;
 				const autoAllocateMin = overrideAutoAllocateChunkSize && overrideAutoAllocateChunkSize>0 ? Math.min(overrideAutoAllocateChunkSize, Math.max(256, overrideAutoAllocateChunkSize >> 3)) : this.#autoAllocateMin;
-				await this.#callbackAccessor.useCallbacks
-				(	async callbacksForRead =>
+				const bufferedData = this.#bufferedData;
+				this.#bufferedData = undefined;
+				const result = await this.#callbackAccessor.useCallbacks
+				(	callbacksForRead =>
 					{	if ('useLowLevelCallbacks' in writer)
-						{	await (writer as Writer).useLowLevelCallbacks
+						{	return (writer as Writer).useLowLevelCallbacks
 							(	callbacksForWrite => pipeTo
-								(	autoAllocateChunkSize || DEFAULT_AUTO_ALLOCATE_SIZE,
+								(	autoAllocateChunkSize,
 									autoAllocateMin,
+									bufferedData,
 									options?.signal,
 									callbacksForRead,
-									view =>
-									{	const resultOrPromise = callbacksForWrite.write!(view);
+									(chunk, canRedo) =>
+									{	const resultOrPromise = callbacksForWrite.write!(chunk, canRedo);
 										if (typeof(resultOrPromise) != 'object')
 										{	return -resultOrPromise - 1;
 										}
@@ -347,19 +353,24 @@ export class SimpleReadableStream extends ReadableStream<Uint8Array>
 							);
 						}
 						else
-						{	await pipeTo
-							(	autoAllocateChunkSize || DEFAULT_AUTO_ALLOCATE_SIZE,
+						{	return pipeTo
+							(	autoAllocateChunkSize,
 								autoAllocateMin,
+								bufferedData,
 								options?.signal,
 								callbacksForRead,
-								async view =>
-								{	await writer.write(view);
-									return -view.byteLength - 1;
+								async chunk =>
+								{	await writer.write(chunk);
+									return -chunk.byteLength - 1;
 								}
 							);
 						}
 					}
 				);
+				if (result)
+				{	this.#bufferedData = result.bufferedData;
+					throw result.error;
+				}
 				if (options?.preventClose)
 				{	await this.#callbackAccessor.close();
 				}
@@ -720,13 +731,14 @@ function bufferSizeFor(dataSize: number)
 async function pipeTo
 (	autoAllocateChunkSize: number,
 	autoAllocateMin: number,
+	bufferedData: Uint8Array|undefined,
 	signal: AbortSignal|undefined,
 	callbacksForRead: Callbacks,
-	callbackWriteInverting: (view: Uint8Array) => number | PromiseLike<number>,
+	callbackWriteInverting: (chunk: Uint8Array, canRedo: boolean) => number | PromiseLike<number>,
 )
 {	const readTo = autoAllocateChunkSize - autoAllocateMin;
 	const halfBufferSize = autoAllocateChunkSize<2 ? autoAllocateChunkSize : autoAllocateChunkSize >> 1;
-	const buffer = new Uint8Array(autoAllocateChunkSize);
+	const buffer = bufferedData && bufferedData.buffer.byteLength>=autoAllocateChunkSize ? new Uint8Array(bufferedData.buffer) : new Uint8Array(autoAllocateChunkSize);
 	let readPos = 0; // read to `buffer[readPos ..]`
 	let writePos = 0; // write from `buffer[writePos .. readPos]`
 	let readPos2 = 0; // when `readPos > readTo` read to `buffer[readPos2 .. writePos]` over already read and written part of the buffer on the left of `writePos`
@@ -734,6 +746,16 @@ async function pipeTo
 	let readPromise: number | null | PromiseLike<number|null> | undefined; // pending read operation that reads to the buffer
 	let writePromise: number | PromiseLike<number> | undefined; // pending write operation that writes from the buffer
 	let isEof = false; // i'll not read (i.e. create `readPromise`) if EOF reached
+	if (bufferedData?.byteLength)
+	{	if (bufferedData.buffer != buffer.buffer)
+		{	buffer.set(bufferedData);
+			readPos = bufferedData.byteLength;
+		}
+		else
+		{	writePos = bufferedData.byteOffset;
+			readPos = bufferedData.byteOffset + bufferedData.byteLength;
+		}
+	}
 	try
 	{	while (true)
 		{	if (signal?.aborted)
@@ -762,7 +784,7 @@ async function pipeTo
 			}
 			if (writePromise===undefined && readPos>writePos)
 			{	// Write if there's something already read in the buffer
-				writePromise = callbackWriteInverting(buffer.subarray(writePos, readPos));
+				writePromise = callbackWriteInverting(buffer.subarray(writePos, readPos), !(readPos==autoAllocateChunkSize && writePos==0 || isEof && readPos==0));
 			}
 			// Await for the fastest promise
 			let size =
@@ -895,6 +917,6 @@ async function pipeTo
 			readPos += readPos2;
 		}
 		// Done
-		throw new PipeError(e, buffer.subarray(writePos, readPos));
+		return {error: e, bufferedData: buffer.subarray(writePos, readPos)};
 	}
 }
