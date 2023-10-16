@@ -1,4 +1,4 @@
-import {DEFAULT_AUTO_ALLOCATE_SIZE, Callbacks, CallbackAccessor, ReaderOrWriter} from './common.ts';
+import {DEFAULT_AUTO_ALLOCATE_SIZE, Callbacks, CallbackAccessor, ReaderOrWriter, PipeError} from './common.ts';
 import {Writer} from './simple_writable_stream.ts';
 
 // deno-lint-ignore no-explicit-any
@@ -368,7 +368,10 @@ export class SimpleReadableStream extends ReadableStream<Uint8Array>
 		},
 		options?: PipeOptions
 	)
-	{	this.pipeTo(transform.writable, options);
+	{	if (this.#locked)
+		{	throw new TypeError('ReadableStream is locked.');
+		}
+		this.pipeTo(transform.writable, options).then(undefined, () => {});
 		return transform.readable;
 	}
 
@@ -768,7 +771,7 @@ async function pipeTo
 					writePos = 0;
 				}
 			}
-			else if (size >= 0)
+			else if (size > 0)
 			{	// Read a chunk
 				readPromise = undefined;
 				if (!usingReadPos2)
@@ -836,19 +839,47 @@ async function pipeTo
 	}
 	catch (e)
 	{	// Await readPromise
-		try
-		{	await readPromise;
-		}
-		catch
-		{	// ok
+		if (readPromise)
+		{	try
+			{	const size = await readPromise;
+				if (size)
+				{	if (!usingReadPos2)
+					{	// Read from `readPos` to `readPos + size`
+						readPos += size;
+					}
+					else
+					{	// Read from `readPos2` to `readPos2 + size`
+						readPos2 += size;
+					}
+				}
+			}
+			catch
+			{	// ok
+			}
 		}
 		// Await writePromise
-		try
-		{	await writePromise;
+		if (writePromise)
+		{	try
+			{	await writePromise;
+			}
+			catch
+			{	// ok
+			}
 		}
-		catch
-		{	// ok
+		// Currently buffered data is not in sequence, so resort it
+		if (readPos2 > 0)
+		{	const holeSize = autoAllocateChunkSize - readPos;
+			if (holeSize >= readPos2)
+			{	buffer.copyWithin(readPos, 0, readPos2);
+			}
+			else
+			{	buffer.copyWithin(readPos-writePos, 0, readPos2);
+				buffer.copyWithin(0, writePos, readPos);
+				writePos = 0;
+			}
+			readPos += readPos2;
 		}
-		throw e;
+		// Done
+		throw new PipeError(e, buffer.subarray(writePos, readPos));
 	}
 }

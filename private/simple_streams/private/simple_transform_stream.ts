@@ -4,14 +4,13 @@ import {SimpleWritableStream, Writer, WriteCallbackAccessor} from './simple_writ
 // deno-lint-ignore no-explicit-any
 type Any = any;
 
-type CallbackStart = (writer: Writer) => void | PromiseLike<void>;
+type CallbackStartOrFlush = (writer: Writer) => void | PromiseLike<void>;
 type CallbackTransform = (chunk: Uint8Array, writer: Writer) => number | PromiseLike<number>;
-type CallbackFlush = (writer: Writer) => void | PromiseLike<void>;
 
 export type Transformer =
-{	start?: CallbackStart;
+{	start?: CallbackStartOrFlush;
 	transform?: CallbackTransform;
-	flush?: CallbackFlush;
+	flush?: CallbackStartOrFlush;
 };
 
 const EMPTY_CHUNK = new Uint8Array;
@@ -50,16 +49,17 @@ export class SimpleTransformStream extends TransformStream<Uint8Array, Uint8Arra
 						}
 					},
 
-					close()
+					close: () =>
 					{	// `transform()` called `writer.close()`
 						isEof = true;
 						currentChunk = EMPTY_CHUNK;
 						currentViewResolve?.(null);
 						currentViewResolve = undefined;
 						currentViewReject = undefined;
+						this.writable.abort(new Error('This transformer is terminated'));
 					},
 
-					abort(reason)
+					abort: reason =>
 					{	// `transform()` called `writer.abort()`
 						isError = true;
 						error = reason;
@@ -68,6 +68,7 @@ export class SimpleTransformStream extends TransformStream<Uint8Array, Uint8Arra
 						currentViewReject?.(error);
 						currentViewResolve = undefined;
 						currentViewReject = undefined;
+						this.writable.abort(reason);
 					},
 				},
 				true

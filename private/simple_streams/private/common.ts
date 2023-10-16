@@ -19,6 +19,12 @@ export type Callbacks =
 	catch?: CallbackCancelOrAbortOrCatch;
 };
 
+export class PipeError extends Error
+{	constructor(cause: unknown, public bufferedData: Uint8Array)
+	{	super(typeof(cause)=='object' && cause!=null && 'message' in cause ? cause.message+'' : cause+'', {cause});
+	}
+}
+
 export class CallbackAccessor
 {	closed: Promise<void>;
 	error: Any;
@@ -149,8 +155,8 @@ export class CallbackAccessor
 			{	try
 				{	await callbacks.catch(this.error);
 				}
-				catch (e)
-				{	console.error(e);
+				catch
+				{	// ok
 				}
 			}
 			reportClosedWithError?.(this.error);
