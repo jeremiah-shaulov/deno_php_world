@@ -1,6 +1,5 @@
-import {PipeThroughTerminatedError} from './common.ts';
 import {SimpleReadableStream} from './simple_readable_stream.ts';
-import {SimpleWritableStream, Writer, WriteCallbackAccessor} from './simple_writable_stream.ts';
+import {SimpleWritableStream, Writer, WriteCallbackAccessor, _closeEvenIfLocked} from './simple_writable_stream.ts';
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -51,16 +50,17 @@ export class SimpleTransformStream extends TransformStream<Uint8Array, Uint8Arra
 						}
 					},
 
-					close()
+					close: () =>
 					{	// `transform()` called `writer.close()`
 						isEof = true;
 						currentChunk = EMPTY_CHUNK;
 						currentViewResolve?.(null);
 						currentViewResolve = undefined;
 						currentViewReject = undefined;
+						this.writable[_closeEvenIfLocked]();
 					},
 
-					abort(reason)
+					abort: reason =>
 					{	// `transform()` called `writer.abort()`
 						isError = true;
 						error = reason;
@@ -69,6 +69,7 @@ export class SimpleTransformStream extends TransformStream<Uint8Array, Uint8Arra
 						currentViewReject?.(error);
 						currentViewResolve = undefined;
 						currentViewReject = undefined;
+						this.writable.abort(reason);
 					},
 				},
 				true
@@ -93,8 +94,8 @@ export class SimpleTransformStream extends TransformStream<Uint8Array, Uint8Arra
 		(	{	start: !start ? undefined : () => start(writer),
 
 				write: transform ?
-					((chunk, canRedo) => !isEof ? transform(writer, chunk, canRedo) : Promise.reject(error ?? new PipeThroughTerminatedError('This transformer is terminated'))) :
-					((chunk, canRedo) => writer.useLowLevelCallbacks(callbacks => callbacks.write!(chunk, canRedo)).then(n => n==undefined ? Promise.reject('This writer is closed') : n)),
+					(chunk, canRedo) => transform(writer, chunk, canRedo) :
+					(chunk, canRedo) => writer.useLowLevelCallbacks(callbacks => callbacks.write!(chunk, canRedo)).then(n => n==undefined ? Promise.reject('This writer is closed') : n),
 
 				async close()
 				{	// Input stream ended

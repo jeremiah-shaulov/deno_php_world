@@ -1084,7 +1084,7 @@ export class PhpInterpreter
 			// Mux stdout
 			if (stdout == 'piped')
 			{	this.stdout_mux = new ReaderMux(Promise.resolve(this.php_cli_proc.stdout), end_mark.slice());
-				this.stdout_mux.get_readable_stream().then(r => r.pipeTo(new SimpleWritableStream(Deno.stdout))); // Begin with piping to stdout. Then the output can be switched.
+				this.stdout_mux.get_readable_stream().then(r => r.pipeTo(new SimpleWritableStream(Deno.stdout), {preventClose: true})); // Begin with piping to stdout. Then the output can be switched.
 			}
 		}
 		else
@@ -1131,7 +1131,7 @@ export class PhpInterpreter
 			}
 			else if (stdout == 'piped')
 			{	this.stdout_mux = new ReaderMux(this.php_fpm_response.then(r => r.body), end_mark.slice());
-				this.stdout_mux.get_readable_stream().then(r => r.pipeTo(new SimpleWritableStream(Deno.stdout)));
+				this.stdout_mux.get_readable_stream().then(r => r.pipeTo(new SimpleWritableStream(Deno.stdout), {preventClose: true}));
 			}
 			// onresponse
 			if (this.settings.php_fpm.onresponse)
@@ -1644,7 +1644,7 @@ export class PhpInterpreter
 	}
 
 	drop_stdout_reader()
-	{	return this.schedule(() => this.do_get_stdout_readable_stream().then(r => {r.pipeTo(new SimpleWritableStream(Deno.stdout))}));
+	{	return this.schedule(() => this.do_get_stdout_readable_stream().then(r => {r.pipeTo(new SimpleWritableStream(Deno.stdout), {preventClose: true})}));
 	}
 
 	/**	If PHP-FPM interface was used, and `settings.php_fpm.keep_alive_timeout` was > 0, connections to PHP-FPM service will be reused.

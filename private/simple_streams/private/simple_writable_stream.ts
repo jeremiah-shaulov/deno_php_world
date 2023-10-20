@@ -8,6 +8,8 @@ type CallbackWrite = (chunk: Uint8Array, canRedo: boolean) => number | PromiseLi
 type CallbackClose = () => void | PromiseLike<void>;
 type CallbackAbortOrCatch = (reason: Any) => void | PromiseLike<void>;
 
+export const _closeEvenIfLocked = Symbol('_closeEvenIfLocked');
+
 export type Sink =
 {	start?: CallbackStart;
 	write: CallbackWrite;
@@ -46,11 +48,10 @@ export class SimpleWritableStream extends WritableStream<Uint8Array>
 	{	return this.#locked;
 	}
 
+	/**	Can be aborted even if locked.
+	 **/
 	abort(reason?: Any)
-	{	if (this.#locked)
-		{	throw new TypeError('WritableStream is locked.');
-		}
-		return this.#callbackAccessor.close(true, reason);
+	{	return this.#callbackAccessor.close(true, reason);
 	}
 
 	close()
@@ -58,6 +59,10 @@ export class SimpleWritableStream extends WritableStream<Uint8Array>
 		{	throw new TypeError('WritableStream is locked.');
 		}
 		return this.#callbackAccessor.close();
+	}
+
+	[_closeEvenIfLocked]()
+	{	return this.#callbackAccessor.close();
 	}
 
 	getWriter(): WritableStreamDefaultWriter<Uint8Array>

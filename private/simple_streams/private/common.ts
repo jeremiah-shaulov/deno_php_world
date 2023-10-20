@@ -20,10 +20,6 @@ export type Callbacks =
 	catch?: CallbackCancelOrAbortOrCatch;
 };
 
-export class PipeThroughTerminatedError extends Error
-{
-}
-
 export class CallbackAccessor
 {	closed: Promise<void>;
 	error: Any;
