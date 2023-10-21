@@ -4,7 +4,7 @@ import {create_proxy} from './proxy_object.ts';
 import {ReaderMux} from './reader_mux.ts';
 import {get_random_key, get_weak_random_bytes, writeAll} from './util.ts';
 import {fcgi, ResponseWithCookies} from './deps.ts';
-import {SimpleWritableStream} from './simple_streams/mod.ts';
+import {WrStream} from './simple_streams/mod.ts';
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -1084,7 +1084,7 @@ export class PhpInterpreter
 			// Mux stdout
 			if (stdout == 'piped')
 			{	this.stdout_mux = new ReaderMux(Promise.resolve(this.php_cli_proc.stdout), end_mark.slice());
-				this.stdout_mux.get_readable_stream().then(r => r.pipeTo(new SimpleWritableStream(Deno.stdout), {preventClose: true})); // Begin with piping to stdout. Then the output can be switched.
+				this.stdout_mux.get_readable_stream().then(r => r.pipeTo(new WrStream(Deno.stdout), {preventClose: true})); // Begin with piping to stdout. Then the output can be switched.
 			}
 		}
 		else
@@ -1131,7 +1131,7 @@ export class PhpInterpreter
 			}
 			else if (stdout == 'piped')
 			{	this.stdout_mux = new ReaderMux(this.php_fpm_response.then(r => r.body), end_mark.slice());
-				this.stdout_mux.get_readable_stream().then(r => r.pipeTo(new SimpleWritableStream(Deno.stdout), {preventClose: true}));
+				this.stdout_mux.get_readable_stream().then(r => r.pipeTo(new WrStream(Deno.stdout), {preventClose: true}));
 			}
 			// onresponse
 			if (this.settings.php_fpm.onresponse)
@@ -1422,7 +1422,7 @@ export class PhpInterpreter
 		{	try
 			{	// Read and discard
 				await response.body.pipeTo
-				(	new SimpleWritableStream
+				(	new WrStream
 					(	{	write(chunk: Uint8Array)
 							{	return chunk.length;
 							}
@@ -1644,7 +1644,7 @@ export class PhpInterpreter
 	}
 
 	drop_stdout_reader()
-	{	return this.schedule(() => this.do_get_stdout_readable_stream().then(r => {r.pipeTo(new SimpleWritableStream(Deno.stdout), {preventClose: true})}));
+	{	return this.schedule(() => this.do_get_stdout_readable_stream().then(r => {r.pipeTo(new WrStream(Deno.stdout), {preventClose: true})}));
 	}
 
 	/**	If PHP-FPM interface was used, and `settings.php_fpm.keep_alive_timeout` was > 0, connections to PHP-FPM service will be reused.

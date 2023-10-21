@@ -1,3 +1,3 @@
-export {SimpleReadableStream, type Source, Reader} from './private/simple_readable_stream.ts';
-export {SimpleWritableStream, type Sink, Writer} from './private/simple_writable_stream.ts';
-export {SimpleTransformStream, type Transformer} from './private/simple_transform_stream.ts';
+export {RdStream, type Source, Reader} from './private/rd_stream.ts';
+export {WrStream, type Sink, Writer} from './private/wr_stream.ts';
+export {TrStream, type Transformer} from './private/tr_stream.ts';

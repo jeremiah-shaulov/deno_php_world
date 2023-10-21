@@ -1,7 +1,6 @@
 import {with_docker, system} from './with_docker.ts';
 import {g, c, php, settings, PhpInterpreter, InterpreterExitError} from '../../mod.ts';
 import {assert, assertEquals, fcgi, path} from "../deps.ts";
-import {readAll} from "../util.ts";
 import {PhpSettings, DEBUG_PHP_BOOT} from '../php_interpreter.ts';
 import {start_proxy, PhpRequest} from '../start_proxy.ts';
 
@@ -1195,7 +1194,7 @@ async function test_stdout(php_cli_name: string|string[], php_fpm_listen: string
 			let stdout = await php.get_stdout_reader();
 			php.g.echo("*".repeat(256));
 			php.drop_stdout_reader();
-			let data = new TextDecoder().decode(await readAll(stdout));
+			let data = await stdout.text();
 			assertEquals(data, "*".repeat(256));
 
 			// sleep
@@ -1203,7 +1202,7 @@ async function test_stdout(php_cli_name: string|string[], php_fpm_listen: string
 			php.g.echo("*".repeat(256));
 			php.drop_stdout_reader();
 			await new Promise(y => setTimeout(y, 200));
-			data = new TextDecoder().decode(await readAll(stdout));
+			data = await stdout.text();
 			assertEquals(data, "*".repeat(256));
 
 			// exit + no sleep
@@ -1212,7 +1211,7 @@ async function test_stdout(php_cli_name: string|string[], php_fpm_listen: string
 			let error;
 			php.g.eval('exit;').catch((e: Any) => {error = e});
 			php.drop_stdout_reader();
-			data = new TextDecoder().decode(await readAll(stdout));
+			data = await stdout.text();
 			assertEquals(data, "*".repeat(256));
 			const ok = g.substr('ok', 0, 100);
 			await php.ready();
@@ -1223,7 +1222,7 @@ async function test_stdout(php_cli_name: string|string[], php_fpm_listen: string
 			stdout = await php.get_stdout_reader();
 			php.g.echo("*".repeat(256));
 			php.drop_stdout_reader();
-			data = new TextDecoder().decode(await readAll(stdout));
+			data = await stdout.text();
 			assertEquals(data, "*".repeat(256));
 			await g.phpversion();
 
@@ -1234,7 +1233,7 @@ async function test_stdout(php_cli_name: string|string[], php_fpm_listen: string
 			php.g.eval('exit;').catch((e: Any) => {error = e});
 			php.drop_stdout_reader();
 			await new Promise(y => setTimeout(y, 200));
-			data = new TextDecoder().decode(await readAll(stdout));
+			data = await stdout.text();
 			assertEquals(data, "*".repeat(256));
 
 			await g.exit();

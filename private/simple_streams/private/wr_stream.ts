@@ -18,7 +18,7 @@ export type Sink =
 	catch?: CallbackAbortOrCatch;
 };
 
-export class SimpleWritableStream extends WritableStream<Uint8Array>
+export class WrStream extends WritableStream<Uint8Array>
 {	#callbackAccessor: WriteCallbackAccessor;
 	#locked = false;
 	#writerRequests = new Array<(writer: WritableStreamDefaultWriter<Uint8Array>) => void>;

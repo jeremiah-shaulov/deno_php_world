@@ -1,5 +1,5 @@
 import {DEFAULT_AUTO_ALLOCATE_SIZE, Callbacks, CallbackAccessor, ReaderOrWriter} from './common.ts';
-import {Writer} from './simple_writable_stream.ts';
+import {Writer} from './wr_stream.ts';
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -20,7 +20,7 @@ export type Source =
 	 **/
 	autoAllocateMin?: number;
 
-	/**	This callback is called immediately during `SimpleReadableStream` object creation.
+	/**	This callback is called immediately during `RdStream` object creation.
 		When it's promise resolves, i start to call `read()` to pull data as response to `reader.read()`.
 		Only one call is active at each moment, and next calls wait for previous calls to complete.
 		At the end one of `close()`, `cancel(reason)` or `catch(error)` is called.
@@ -53,7 +53,7 @@ type Transform<W extends WritableStream<Uint8Array>, R extends ReadableStream<un
 {	readonly writable: W;
 	readonly readable: R;
 
-	/**	If this value is set to a positive integer, `SimpleReadableStream.pipeThrough()` will use buffer of this size during piping.
+	/**	If this value is set to a positive integer, `RdStream.pipeThrough()` will use buffer of this size during piping.
 		Practically this affects maximum chunk size in `transform(chunk, writer)` callback.
 		If that callback returns `0` indicating that it wants more bytes, it will be called again with a longer chunk, till the chunk size reaches `overrideAutoAllocateChunkSize`.
 		Then, if it still returns `0`, an error is thrown.
@@ -71,16 +71,16 @@ type Transform<W extends WritableStream<Uint8Array>, R extends ReadableStream<un
 	- It doesn't transfer buffers that you pass to `reader.read(buffer)`, so they remain usable after the call.
 	- It guarantees not to buffer data for future `read()` calls.
  **/
-export class SimpleReadableStream extends ReadableStream<Uint8Array>
-{	static from<R>(source: AsyncIterable<R> | Iterable<R | PromiseLike<R>>): ReadableStream<R> & SimpleReadableStream
-	{	if (source instanceof SimpleReadableStream)
+export class RdStream extends ReadableStream<Uint8Array>
+{	static from<R>(source: AsyncIterable<R> | Iterable<R | PromiseLike<R>>): ReadableStream<R> & RdStream
+	{	if (source instanceof RdStream)
 		{	return source as Any;
 		}
 		else if (source instanceof ReadableStream)
 		{	let reader: ReadableStreamBYOBReader|undefined;
 			let reader2: ReadableStreamDefaultReader<unknown>|undefined;
 			let buffer: Uint8Array|undefined;
-			return new SimpleReadableStream
+			return new RdStream
 			(	{	async read(view)
 					{	try
 						{	if (!reader && !reader2)
@@ -144,7 +144,7 @@ export class SimpleReadableStream extends ReadableStream<Uint8Array>
 		else if (Symbol.asyncIterator in source)
 		{	const it = source[Symbol.asyncIterator]();
 			let buffer: Uint8Array|undefined;
-			return new SimpleReadableStream
+			return new RdStream
 			(	{	async read(view)
 					{	if (!buffer)
 						{	const {value, done} = await it.next();
@@ -178,7 +178,7 @@ export class SimpleReadableStream extends ReadableStream<Uint8Array>
 		else if (Symbol.iterator in source)
 		{	const it = source[Symbol.iterator]();
 			let buffer: Uint8Array|undefined;
-			return new SimpleReadableStream
+			return new RdStream
 			(	{	async read(view)
 					{	if (!buffer)
 						{	const {value, done} = it.next();
@@ -287,17 +287,17 @@ export class SimpleReadableStream extends ReadableStream<Uint8Array>
 		In this case if you read and await from the first reader, and don't start reading from the second,
 		this will cause a deadlock situation.
 	 **/
-	tee(options?: {requireParallelRead?: boolean}): [SimpleReadableStream, SimpleReadableStream]
+	tee(options?: {requireParallelRead?: boolean}): [RdStream, RdStream]
 	{	const reader = this.getReader({mode: 'byob'});
 		const tee = options?.requireParallelRead ? new TeeRequireParallelRead(reader) : new TeeRegular(reader);
 
 		return [
-			new SimpleReadableStream
+			new RdStream
 			(	{	read: view => tee.read(view, -1),
 					cancel: reason => tee.cancel(reason, -1),
 				}
 			),
-			new SimpleReadableStream
+			new RdStream
 			(	{	read: view => tee.read(view, +1),
 					cancel: reason => tee.cancel(reason, +1),
 				}
@@ -468,6 +468,10 @@ export class SimpleReadableStream extends ReadableStream<Uint8Array>
 		{	reader.releaseLock();
 		}
 	}
+
+	async text(label?: string, options?: TextDecoderOptions)
+	{	return new TextDecoder(label, options).decode(await this.uint8Array());
+	}
 }
 
 class ReadCallbackAccessor extends CallbackAccessor
@@ -511,7 +515,7 @@ class ReadCallbackAccessor extends CallbackAccessor
 	}
 }
 
-/**	This class plays the same role in `SimpleReadableStream` as does `ReadableStreamBYOBReader` in `ReadableStream<Uint8Array>`.
+/**	This class plays the same role in `RdStream` as does `ReadableStreamBYOBReader` in `ReadableStream<Uint8Array>`.
  **/
 export class Reader extends ReaderOrWriter<ReadCallbackAccessor>
 {	async read<V extends ArrayBufferView>(view?: V): Promise<ReadableStreamBYOBReadResult<V>>
@@ -533,7 +537,7 @@ export class Reader extends ReaderOrWriter<ReadCallbackAccessor>
 class ReadableStreamIterator implements AsyncIterableIterator<Uint8Array>
 {	#reader: ReadableStreamDefaultReader<Uint8Array>;
 
-	constructor(stream: SimpleReadableStream, private preventCancel: boolean)
+	constructor(stream: RdStream, private preventCancel: boolean)
 	{	this.#reader = stream.getReader();
 	}
 
@@ -741,7 +745,7 @@ class Piper
 	}
 
 	async pipeTo
-	(	writerClosed: Promise<void>,
+	(	writerClosedPromise: Promise<void>,
 		callbacksForRead: Callbacks,
 		callbackWriteInverting: (chunk: Uint8Array, canRedo: boolean) => number | PromiseLike<number>,
 	)
@@ -749,9 +753,18 @@ class Piper
 		const readTo = autoAllocateChunkSize - autoAllocateMin;
 		const halfBufferSize = autoAllocateChunkSize<2 ? autoAllocateChunkSize : autoAllocateChunkSize >> 1;
 		let writePromise: number | PromiseLike<number> | undefined; // pending write operation that writes from the buffer
+		let writerClosed = false;
+		writerClosedPromise.then(() => {writerClosed = true});
 		try
 		{	while (true)
-			{	// Start (or continue) reading and/or writing
+			{	// writerClosed?
+				if (writerClosed)
+				{	if (writePromise)
+					{	writePos = readPos;
+					}
+					return false;
+				}
+				// Start (or continue) reading and/or writing
 				if (readPromise===undefined && !isEof)
 				{	if (readPos<=readTo || readPos2==0 && writePos>=1 && autoAllocateChunkSize-readPos>=writePos)
 					{	// Read if there's at least `autoAllocateMin` bytes free after the `readPos`, or if `readPos2 == 0` and space at `buffer[.. writePos]` is not larger than the space at `buffer[readPos ..]`
@@ -781,17 +794,10 @@ class Piper
 						readPromise :
 					typeof(writePromise)=='number' ? // If result is ready (not promise)
 						writePromise :
-						await (!readPromise ? writePromise : !writePromise ? Promise.race([writerClosed, readPromise]) : Promise.race([writerClosed, readPromise, writePromise]))
+						await (!readPromise ? writePromise : !writePromise ? readPromise : Promise.race([readPromise, writePromise]))
 				);
 				// Now we have either read or written something
-				if (size === undefined)
-				{	// writerClosed
-					if (writePromise)
-					{	writePos = readPos;
-					}
-					return false;
-				}
-				else if (!size)
+				if (!size)
 				{	// Read EOF
 					readPromise = undefined;
 					isEof = true;
@@ -840,12 +846,13 @@ class Piper
 					{	// They want a larger chunk
 						const justReadMoreDataOrEof = !!readPromise;
 						if (readPromise)
-						{	size = await Promise.race([writerClosed, readPromise]);
-							if (size === undefined)
-							{	// writerClosed
-								writePos = readPos;
+						{	// writerClosed?
+							if (writerClosed)
+							{	writePos = readPos;
 								return false;
 							}
+							// Read
+							size = await readPromise;
 							readPromise = undefined;
 							if (!size)
 							{	// Read EOF

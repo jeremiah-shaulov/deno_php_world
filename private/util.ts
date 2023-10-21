@@ -55,28 +55,6 @@ export async function writeAll(writer: Deno.Writer, buffer: Uint8Array)
 	}
 }
 
-/**	Read the whole stream from reader, till EOF, and return it as `Uint8Array` buffer.
- **/
-export async function readAll(reader: Deno.Reader)
-{	let buffer = new Uint8Array(READ_IF_HAVE_SIZE);
-	let pos = 0;
-	while (true)
-	{	const n_read = await reader.read(buffer.subarray(pos));
-		if (n_read == null)
-		{	return buffer.subarray(0, pos);
-		}
-		else
-		{	pos += n_read;
-			if (buffer.length-pos < READ_IF_HAVE_SIZE)
-			{	// realloc
-				const tmp = new Uint8Array(buffer.length * 2);
-				tmp.set(buffer);
-				buffer = tmp;
-			}
-		}
-	}
-}
-
 export async function* iterateReader(reader: Deno.Reader, options?: {bufSize?: number})
 {	const buffer = new Uint8Array(options?.bufSize ?? DEFAULT_BUFFER_SIZE);
 	while (true)

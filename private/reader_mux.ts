@@ -1,15 +1,15 @@
-import {SimpleReadableStream, SimpleTransformStream} from './simple_streams/mod.ts';
+import {RdStream, TrStream} from './simple_streams/mod.ts';
 
 export class ReaderMux
-{	#inner_stream_promise: Promise<SimpleReadableStream>;
+{	#inner_stream_promise: Promise<RdStream>;
 
 	constructor(private inner_stream_promise: Promise<ReadableStream<Uint8Array> | null>, private end_mark: Uint8Array)
-	{	this.#inner_stream_promise = this.inner_stream_promise.then(inner_stream => inner_stream ? SimpleReadableStream.from(inner_stream) : new SimpleReadableStream({read() {return 0}}));
+	{	this.#inner_stream_promise = this.inner_stream_promise.then(inner_stream => inner_stream ? RdStream.from(inner_stream) : new RdStream({read() {return 0}}));
 	}
 
-	async get_readable_stream(): Promise<SimpleReadableStream>
+	async get_readable_stream(): Promise<RdStream>
 	{	const inner_stream_promise = this.#inner_stream_promise;
-		let py: (value: SimpleReadableStream) => void;
+		let py: (value: RdStream) => void;
 		let pn: (error: Error) => void;
 		this.#inner_stream_promise = new Promise((y, n) => {py=y; pn=n});
 		const inner_stream = await inner_stream_promise;
@@ -34,7 +34,7 @@ export class ReaderMux
 	}
 }
 
-class ReadToMark extends SimpleTransformStream
+class ReadToMark extends TrStream
 {	constructor(public end_mark: Uint8Array)
 	{	super
 		(	{	async transform(writer, chunk, canRedo)

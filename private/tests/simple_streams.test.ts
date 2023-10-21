@@ -1,8 +1,11 @@
 // To run:
 // rm -rf .vscode/coverage/profile && deno test --fail-fast --allow-all --coverage=.vscode/coverage/profile private/tests/simple_streams.test.ts && deno coverage --unstable .vscode/coverage/profile --lcov > .vscode/coverage/lcov.info
 
-import {SimpleReadableStream, SimpleTransformStream, SimpleWritableStream} from '../simple_streams/mod.ts';
+import {RdStream, TrStream, WrStream} from '../simple_streams/mod.ts';
 import {assertEquals} from "../deps.ts";
+
+// deno-lint-ignore no-explicit-any
+type Any = any;
 
 function read_to_pull(read: (view: Uint8Array) => number | null | Promise<number|null>, limitItems=Number.MAX_SAFE_INTEGER): UnderlyingByteSource
 {	let i = 0;
@@ -117,7 +120,7 @@ Deno.test
 (	'Reader: Callbacks',
 	async () =>
 	{	for (let c=0; c<3; c++) // cancel doesn't throw, cancel throws before awaiting, cancel throws after awaiting
-		{	for (let a=0; a<2; a++) // ReadableStream or SimpleReadableStream
+		{	for (let a=0; a<2; a++) // ReadableStream or RdStream
 			{	let i = 0;
 				const log = new Array<string>;
 
@@ -150,7 +153,7 @@ Deno.test
 					log.push('</cancel>');
 				}
 
-				const rs = a==0 ? new ReadableStream({start, ...read_to_pull(read), cancel}) : new SimpleReadableStream({start, read, cancel});
+				const rs = a==0 ? new ReadableStream({start, ...read_to_pull(read), cancel}) : new RdStream({start, read, cancel});
 
 				assertEquals(log, ['<start>']);
 
@@ -206,7 +209,7 @@ Deno.test
 Deno.test
 (	'Reader: Start throws async',
 	async () =>
-	{	for (let a=0; a<2; a++) // ReadableStream or SimpleReadableStream
+	{	for (let a=0; a<2; a++) // ReadableStream or RdStream
 		{	let i = 0;
 			const log = new Array<string>;
 
@@ -226,7 +229,7 @@ Deno.test
 				return 1;
 			}
 
-			const rs = a==0 ? new ReadableStream({start, ...read_to_pull(read)}) : new SimpleReadableStream({start, read});
+			const rs = a==0 ? new ReadableStream({start, ...read_to_pull(read)}) : new RdStream({start, read});
 
 			assertEquals(log, ['<start>']);
 
@@ -251,7 +254,7 @@ Deno.test
 Deno.test
 (	'Reader: Start throws sync',
 	() =>
-	{	for (let a=0; a<2; a++) // ReadableStream or SimpleReadableStream
+	{	for (let a=0; a<2; a++) // ReadableStream or RdStream
 		{	// deno-lint-ignore no-inner-declarations
 			function start()
 			{	throw new Error('Start failed');
@@ -265,7 +268,7 @@ Deno.test
 
 			let error;
 			try
-			{	a==0 ? new ReadableStream({start, ...read_to_pull(read)}) : new SimpleReadableStream({start, read});
+			{	a==0 ? new ReadableStream({start, ...read_to_pull(read)}) : new RdStream({start, read});
 			}
 			catch (e)
 			{	error = e;
@@ -278,7 +281,7 @@ Deno.test
 Deno.test
 (	'Reader: Cancel start',
 	async () =>
-	{	for (let a=0; a<2; a++) // ReadableStream or SimpleReadableStream
+	{	for (let a=0; a<2; a++) // ReadableStream or RdStream
 		{	let i = 0;
 			const log = new Array<string>;
 			let promiseStart: Promise<void> | undefined;
@@ -300,7 +303,7 @@ Deno.test
 				return 1;
 			}
 
-			const rs = a==0 ? new ReadableStream({start, ...read_to_pull(read)}) : new SimpleReadableStream({start, read});
+			const rs = a==0 ? new ReadableStream({start, ...read_to_pull(read)}) : new RdStream({start, read});
 
 			assertEquals(log, ['<start>']);
 
@@ -332,7 +335,7 @@ Deno.test
 	async () =>
 	{	const BUFFER_SIZE = 13;
 		for (let s=0; s<2; s++) // read async, read sync
-		{	for (let a=0; a<2; a++) // ReadableStream or SimpleReadableStream
+		{	for (let a=0; a<2; a++) // ReadableStream or RdStream
 			{	let i = 1;
 				const all = new Set<ArrayBufferLike>;
 
@@ -357,7 +360,7 @@ Deno.test
 						return Math.min(i++, BUFFER_SIZE);
 					};
 
-				const rs = a==0 ? new ReadableStream(read_to_pull(read)) : new SimpleReadableStream({read});
+				const rs = a==0 ? new ReadableStream(read_to_pull(read)) : new RdStream({read});
 				const r = rs.getReader({mode: 'byob'});
 				let b = new Uint8Array(BUFFER_SIZE);
 				for (let i2=1; i2<100; i2++)
@@ -381,7 +384,7 @@ Deno.test
 	{	const BUFFER_SIZE = 13;
 		const BUFFER_SIZE_2 = 17;
 		for (let s=0; s<2; s++) // read async, read sync
-		{	for (let a=0; a<2; a++) // ReadableStream or SimpleReadableStream
+		{	for (let a=0; a<2; a++) // ReadableStream or RdStream
 			{	let i = 1;
 				const all = new Set<ArrayBufferLike>;
 
@@ -406,7 +409,7 @@ Deno.test
 						return Math.min(i++, view.buffer.byteLength);
 					};
 
-				const rs = a==0 ? new ReadableStream(read_to_pull(read)) : new SimpleReadableStream({read});
+				const rs = a==0 ? new ReadableStream(read_to_pull(read)) : new RdStream({read});
 				const r = rs.getReader({mode: 'byob'});
 				let b = new Uint8Array(BUFFER_SIZE);
 				let b2 = new Uint8Array(BUFFER_SIZE_2);
@@ -439,7 +442,7 @@ Deno.test
 Deno.test
 (	'Reader: No byob',
 	async () =>
-	{	for (let a=0; a<2; a++) // ReadableStream or SimpleReadableStream
+	{	for (let a=0; a<2; a++) // ReadableStream or RdStream
 		{	for (const BUFFER_SIZE of a==0 ? [13] : [13, 3000, 10_000])
 			{	const autoAllocateMin = BUFFER_SIZE >> 3;
 				let i = 1;
@@ -455,7 +458,7 @@ Deno.test
 					return Math.min(i++, autoAllocateMin);
 				}
 
-				const rs = a==0 ? new ReadableStream(read_to_pull(read)) : new SimpleReadableStream({autoAllocateChunkSize: BUFFER_SIZE, autoAllocateMin, read});
+				const rs = a==0 ? new ReadableStream(read_to_pull(read)) : new RdStream({autoAllocateChunkSize: BUFFER_SIZE, autoAllocateMin, read});
 				const r = rs.getReader();
 				for (let i2=1; i2<100; i2++)
 				{	const res = r.read();
@@ -489,7 +492,7 @@ Deno.test
 	async () =>
 	{	const BUFFER_SIZE = 13;
 		for (let c=0; c<2; c++) // close or error
-		{	for (let a=0; a<2; a++) // ReadableStream or SimpleReadableStream
+		{	for (let a=0; a<2; a++) // ReadableStream or RdStream
 			{	let i = 1;
 				const all = new Set<ArrayBufferLike>;
 
@@ -513,9 +516,9 @@ Deno.test
 					return Math.min(i++, BUFFER_SIZE);
 				}
 
-				const rs = a==0 ? new ReadableStream(read_to_pull(read, c==0 ? 3 : Number.MAX_SAFE_INTEGER)) : new SimpleReadableStream({read});
+				const rs = a==0 ? new ReadableStream(read_to_pull(read, c==0 ? 3 : Number.MAX_SAFE_INTEGER)) : new RdStream({read});
 				const r = rs.getReader({mode: 'byob'});
-				let closedWith: any;
+				let closedWith: Any;
 				r.closed.then(() => {closedWith = true}, error => {closedWith = {error}});
 				let b = new Uint8Array(BUFFER_SIZE);
 				for (let i2=1; i2<=3; i2++)
@@ -572,7 +575,7 @@ Deno.test
 (	'Reader: Release',
 	async () =>
 	{	const BUFFER_SIZE = 13;
-		for (let a=0; a<2; a++) // ReadableStream or SimpleReadableStream
+		for (let a=0; a<2; a++) // ReadableStream or RdStream
 		{	let i = 1;
 			const all = new Set<ArrayBufferLike>;
 
@@ -588,7 +591,7 @@ Deno.test
 				return Math.min(i++, BUFFER_SIZE);
 			}
 
-			const rs = a==0 ? new ReadableStream(read_to_pull(read)) : new SimpleReadableStream({read});
+			const rs = a==0 ? new ReadableStream(read_to_pull(read)) : new RdStream({read});
 			let b = new Uint8Array(BUFFER_SIZE);
 			let r = rs.getReader({mode: 'byob'});
 			let promise = r.read(new Uint8Array(b.buffer, 0, b.buffer.byteLength));
@@ -625,7 +628,7 @@ Deno.test
 (	'Reader: Invalid usage',
 	async () =>
 	{	const BUFFER_SIZE = 13;
-		for (let a=0; a<2; a++) // ReadableStream or SimpleReadableStream
+		for (let a=0; a<2; a++) // ReadableStream or RdStream
 		{	let i = 1;
 			const all = new Set<ArrayBufferLike>;
 
@@ -641,7 +644,7 @@ Deno.test
 				return Math.min(i++, BUFFER_SIZE);
 			}
 
-			const rs = a==0 ? new ReadableStream(read_to_pull(read)) : new SimpleReadableStream({read});
+			const rs = a==0 ? new ReadableStream(read_to_pull(read)) : new RdStream({read});
 			let b = new Uint8Array(BUFFER_SIZE);
 			let r = rs.getReader({mode: 'byob'});
 			try
@@ -681,7 +684,7 @@ Deno.test
 	async () =>
 	{	const BUFFER_SIZE = 13;
 		for (let c=0; c<4; c++) // 0: no cancel, 1: cancel first, 2: cancel second, 3: cancel both
-		{	for (let a=0; a<3; a++) // 0: ReadableStream, 1: SimpleReadableStream, 2: SimpleReadableStream with requireParallelRead
+		{	for (let a=0; a<3; a++) // 0: ReadableStream, 1: RdStream, 2: RdStream with requireParallelRead
 			{	let i = 1;
 				const all = new Set<ArrayBufferLike>;
 				const iAllocated = new Set<ArrayBufferLike>;
@@ -710,10 +713,10 @@ Deno.test
 					log.push('cancel end');
 				}
 
-				const rs = a==0 ? new ReadableStream({...read_to_pull(read, 100), cancel}) : new SimpleReadableStream({read, cancel});
+				const rs = a==0 ? new ReadableStream({...read_to_pull(read, 100), cancel}) : new RdStream({read, cancel});
 
 				await Promise.all
-				(	(rs instanceof SimpleReadableStream && a==2 ? rs.tee({requireParallelRead: true}) : rs.tee()).map
+				(	(rs instanceof RdStream && a==2 ? rs.tee({requireParallelRead: true}) : rs.tee()).map
 					(	async (rs, nRs) =>
 						{	const r = rs.getReader({mode: 'byob'});
 
@@ -794,7 +797,7 @@ Deno.test
 	async () =>
 	{	const BUFFER_SIZE = 13;
 		for (let c=0; c<4; c++) // 0: no cancel, 1: cancel first, 2: cancel second, 3: cancel both
-		{	for (let a=0; a<2; a++) // ReadableStream or SimpleReadableStream
+		{	for (let a=0; a<2; a++) // ReadableStream or RdStream
 			{	let i = 1;
 				const all = new Set<ArrayBufferLike>;
 
@@ -811,7 +814,7 @@ Deno.test
 					return Math.min(i++, BUFFER_SIZE);
 				}
 
-				const rs = a==0 ? new ReadableStream(read_to_pull(read, 100)) : new SimpleReadableStream({read});
+				const rs = a==0 ? new ReadableStream(read_to_pull(read, 100)) : new RdStream({read});
 				const [rs1, rs2] = rs.tee();
 
 				// rs1
@@ -907,8 +910,8 @@ Deno.test
 		}
 		for (let s=0; s<2; s++) // async write, sync write
 		{	for (let p=0; p<2; p++) // without pipeThrough, with pipeThrough
-			{	for (let a=0; a<2; a++) // ReadableStream or SimpleReadableStream
-				{	for (let a2=0; a2<2; a2++) // WritableStream or SimpleWritableStream
+			{	for (let a=0; a<2; a++) // ReadableStream or RdStream
+				{	for (let a2=0; a2<2; a2++) // WritableStream or WrStream
 					{	const dest = new Uint8Array(src.byteLength);
 						let srcPos = 0;
 						let destPos = 0;
@@ -941,15 +944,15 @@ Deno.test
 								return n;
 							};
 
-						const rs: ReadableStream<Uint8Array> = a==0 ? new ReadableStream(read_to_pull(read, 3*1024)) : new SimpleReadableStream({read});
-						const ws = a2==0 ? new WritableStream(write_to_write(write)) : new SimpleWritableStream({write});
+						const rs: ReadableStream<Uint8Array> = a==0 ? new ReadableStream(read_to_pull(read, 3*1024)) : new RdStream({read});
+						const ws = a2==0 ? new WritableStream(write_to_write(write)) : new WrStream({write});
 						assertEquals(rs.locked, false);
 						assertEquals(ws.locked, false);
 
 						let useRs = rs;
 						if (p == 1)
 						{	useRs = rs.pipeThrough<Uint8Array>
-							(	new SimpleTransformStream
+							(	new TrStream
 								(	{	async transform(writer, chunk)
 										{	for (let i=0; i<chunk.length; i++)
 											{	chunk[i] = ~chunk[i];
@@ -977,7 +980,7 @@ Deno.test
 Deno.test
 (	'Reader: Big data',
 	async () =>
-	{	for (let a=0; a<3; a++) // ReadableStream, new SimpleReadableStream, SimpleReadableStream.from()
+	{	for (let a=0; a<3; a++) // ReadableStream, new RdStream, RdStream.from()
 		{	const SEND_N_BYTES = 10_000_000;
 			const CHUNK_SIZE = 1000;
 			const N_IN_PARALLEL = 10;
@@ -1003,7 +1006,7 @@ Deno.test
 			(	new Array(N_IN_PARALLEL).fill(0).map
 				(	async () =>
 					{	const fh = await Deno.connect({port: sender.addr.transport=='tcp' ? sender.addr.port : 0});
-						const rs = a==0 ? fh.readable : a==1 ? SimpleReadableStream.from(fh.readable) : new SimpleReadableStream(fh);
+						const rs = a==0 ? fh.readable : a==1 ? RdStream.from(fh.readable) : new RdStream(fh);
 
 						const reader = rs.getReader({mode: 'byob'});
 						let i = 0;
@@ -1027,7 +1030,7 @@ Deno.test
 					}
 				)
 			);
-			console.log((a==0 ? 'ReadableStream: time ' : a==1 ? 'SimpleReadableStream.from(ReadableStream): time ' : 'new SimpleReadableStream(Deno.Readable): ') + (Date.now() - startTime)/1000 + 'sec');
+			console.log((a==0 ? 'ReadableStream: time ' : a==1 ? 'RdStream.from(ReadableStream): time ' : 'new RdStream(Deno.Readable): ') + (Date.now() - startTime)/1000 + 'sec');
 			assertEquals(nBytes, SEND_N_BYTES*N_IN_PARALLEL);
 			if (a >= 1)
 			{	assertEquals(all.size, N_IN_PARALLEL);
@@ -1039,7 +1042,7 @@ Deno.test
 Deno.test
 (	'Reader: Big data pipeThrough',
 	async () =>
-	{	for (let a=0; a<3; a++) // ReadableStream, new SimpleReadableStream, SimpleReadableStream.from()
+	{	for (let a=0; a<3; a++) // ReadableStream, new RdStream, RdStream.from()
 		{	const SEND_N_BYTES = 10_000_000;
 			const CHUNK_SIZE = 1000;
 			const N_IN_PARALLEL = 10;
@@ -1099,8 +1102,8 @@ Deno.test
 							}
 						}
 						else
-						{	const rs = (a==1 ? SimpleReadableStream.from(fh.readable) : new SimpleReadableStream(fh)).pipeThrough
-							(	new SimpleTransformStream
+						{	const rs = (a==1 ? RdStream.from(fh.readable) : new RdStream(fh)).pipeThrough
+							(	new TrStream
 								(	{	async transform(writer, chunk)
 										{	for (let i=0; i<chunk.length; i++)
 											{	chunk[i] = ~chunk[i] & 0xFF;
@@ -1135,13 +1138,75 @@ Deno.test
 					}
 				)
 			);
-			console.log((a==0 ? 'ReadableStream: time ' : a==1 ? 'SimpleReadableStream.from(ReadableStream): time ' : 'new SimpleReadableStream(Deno.Readable): ') + (Date.now() - startTime)/1000 + 'sec');
+			console.log((a==0 ? 'ReadableStream: time ' : a==1 ? 'RdStream.from(ReadableStream): time ' : 'new RdStream(Deno.Readable): ') + (Date.now() - startTime)/1000 + 'sec');
 			assertEquals(nBytes, SEND_N_BYTES*N_IN_PARALLEL);
 			if (a >= 1)
 			{	assertEquals(all.size, N_IN_PARALLEL);
 			}
 			await sender.stop();
 		}
+	}
+);
+
+Deno.test
+(	'Transform: close writer',
+	async () =>
+	{	const PART_SIZE = 100_000;
+		const N_PARTS = 4;
+		const CHUNK_SIZE = 1000;
+		using sender = createTcpServer
+		(	async conn =>
+			{	const writer = conn.writable.getWriter();
+				const buffer = new Uint8Array(CHUNK_SIZE);
+				let i = 0;
+				const i_end = PART_SIZE*N_PARTS;
+				while (i < i_end)
+				{	let j = 0;
+					while (j<buffer.length && i<i_end)
+					{	buffer[j++] = i++ & 0xFF;
+					}
+					await writer.write(buffer.subarray(0, j));
+				}
+				await writer.close();
+			}
+		);
+		const fh = await Deno.connect({port: sender.addr.transport=='tcp' ? sender.addr.port : 0});
+		const rs = new RdStream(fh);
+		const parts = new Array<Uint8Array>;
+		while (true)
+		{	let i2 = 0;
+			(await rs.getReaderWhenReady()).releaseLock();
+			const part = await rs.pipeThrough
+			(	new TrStream
+				(	{	async transform(writer, chunk)
+						{	let i = 0;
+							for (; i<chunk.length && i2<PART_SIZE; i++, i2++)
+							{	chunk[i] = ~chunk[i] & 0xFF;
+							}
+							await writer.write(chunk.subarray(0, i));
+							if (i2 >= PART_SIZE)
+							{	await writer.close();
+							}
+							return i;
+						}
+					}
+				)
+			).uint8Array();
+			if (part.byteLength == 0)
+			{	break;
+			}
+			parts.push(part);
+		}
+		assertEquals(parts.length, N_PARTS);
+		let i = 0;
+		for (const part of parts)
+		{	for (let j=0; j<part.byteLength; j++)
+			{	if (part[j] != (~i++ & 0xFF))
+				{	throw new Error(`Invalid value at ${i-1}`);
+				}
+			}
+		}
+		await sender.stop();
 	}
 );
 
@@ -1167,7 +1232,7 @@ Deno.test
 					}
 				);
 				const fh = await Deno.connect({port: sender.addr.transport=='tcp' ? sender.addr.port : 0});
-				const value = await new SimpleReadableStream(a==0 ? fh : {read: v => fh.read(v), close: () => fh.close(), autoAllocateChunkSize: 100}).uint8Array();
+				const value = await new RdStream(a==0 ? fh : {read: v => fh.read(v), close: () => fh.close(), autoAllocateChunkSize: 100}).uint8Array();
 				for (let i=0; i<value.byteLength; i++)
 				{	if (value[i] != (i & 0xFF))
 					{	throw new Error(`Invalid value at ${i}`);
@@ -1184,7 +1249,7 @@ Deno.test
 	{	const BUFFER_SIZE = 13;
 		let i = 1;
 		const all = new Set<ArrayBufferLike>;
-		const rs = new SimpleReadableStream
+		const rs = new RdStream
 		(	{	autoAllocateMin: BUFFER_SIZE,
 
 				async read(view)
@@ -1221,7 +1286,7 @@ Deno.test
 (	'Reader: From iterator',
 	async () =>
 	{	for (let s=0; s<5; s++) // sync iter of value, sync iter of promise, async iter, ReadableStream, ReadableStream bytes
-		{	for (let a=0; a<2; a++) // ReadableStream or SimpleReadableStream
+		{	for (let a=0; a<2; a++) // ReadableStream or RdStream
 			{	let i = 1;
 				const src =
 					s == 0 ?
@@ -1256,7 +1321,7 @@ Deno.test
 								}
 							}
 						);
-				const rs = (a==0 ? ReadableStream : SimpleReadableStream).from(src);
+				const rs = (a==0 ? ReadableStream : RdStream).from(src);
 				let i2 = 1;
 				for await (const item of rs)
 				{	assertEquals(item, new Uint8Array([i2, i2]));
@@ -1271,7 +1336,7 @@ Deno.test
 Deno.test
 (	'Writer',
 	async () =>
-	{	for (let a=0; a<2; a++) // WritableStream or SimpleWritableStream
+	{	for (let a=0; a<2; a++) // WritableStream or WrStream
 		{	let src = new Uint8Array(3*1024);
 			for (let i=0; i<src.byteLength; i++)
 			{	src[i] = Math.floor(Math.random() * 255);
@@ -1290,7 +1355,7 @@ Deno.test
 				return i;
 			}
 
-			const ws = a==0 ? new WritableStream(write_to_write(write)) : new SimpleWritableStream({write});
+			const ws = a==0 ? new WritableStream(write_to_write(write)) : new WrStream({write});
 			assertEquals(ws.locked, false);
 			const w = ws.getWriter();
 			while (src.byteLength > 0)

@@ -1,5 +1,5 @@
-import {SimpleReadableStream} from './simple_readable_stream.ts';
-import {SimpleWritableStream, Writer, WriteCallbackAccessor, _closeEvenIfLocked} from './simple_writable_stream.ts';
+import {RdStream} from './rd_stream.ts';
+import {WrStream, Writer, WriteCallbackAccessor, _closeEvenIfLocked} from './wr_stream.ts';
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -15,9 +15,9 @@ export type Transformer =
 
 const EMPTY_CHUNK = new Uint8Array;
 
-export class SimpleTransformStream extends TransformStream<Uint8Array, Uint8Array>
-{	readonly readable: SimpleReadableStream;
-	readonly writable: SimpleWritableStream;
+export class TrStream extends TransformStream<Uint8Array, Uint8Array>
+{	readonly readable: RdStream;
+	readonly writable: WrStream;
 	readonly overrideAutoAllocateChunkSize: number|undefined;
 
 	constructor(transformer: Transformer)
@@ -90,7 +90,7 @@ export class SimpleTransformStream extends TransformStream<Uint8Array, Uint8Arra
 
 		// User (typically `pipeThrough()`) will write to here the original stream.
 		// Data written to here is passed to `transform()` that is expected to call `writer.write()`.
-		this.writable = new SimpleWritableStream
+		this.writable = new WrStream
 		(	{	start: !start ? undefined : () => start(writer),
 
 				write: transform ?
@@ -114,7 +114,7 @@ export class SimpleTransformStream extends TransformStream<Uint8Array, Uint8Arra
 		);
 
 		// Consumer will read from here the transformed stream
-		this.readable = new SimpleReadableStream
+		this.readable = new RdStream
 		(	{	read(view)
 				{	if (isEof)
 					{	if (isError)
