@@ -3,19 +3,26 @@ import {DEFAULT_AUTO_ALLOCATE_SIZE, Callbacks, CallbackAccessor, ReaderOrWriter}
 // deno-lint-ignore no-explicit-any
 type Any = any;
 
-type CallbackStart = () => void | PromiseLike<void>;
-type CallbackWrite = (chunk: Uint8Array, canRedo: boolean) => number | PromiseLike<number>;
-type CallbackClose = () => void | PromiseLike<void>;
-type CallbackAbortOrCatch = (reason: Any) => void | PromiseLike<void>;
-
 export const _closeEvenIfLocked = Symbol('_closeEvenIfLocked');
 
 export type Sink =
-{	start?: CallbackStart;
-	write: CallbackWrite;
-	close?: CallbackClose;
-	abort?: CallbackAbortOrCatch;
-	catch?: CallbackAbortOrCatch;
+{	/**	This callback is called immediately during `WrStream` object creation.
+		When it's promise resolves, i start to call `write()` as response to `writer.write()`.
+		Only one call is active at each moment, and next calls wait for previous calls to complete.
+
+		At the end one of `close()`, `abort(reason)` or `catch(error)` is called.
+		- `close()` if caller called `writer.close()` to terminate the stream.
+		- `abort()` if caller called `wrStream.abort(reason)` or `writer.abort(reason)`.
+		- `catch()` if `write()` thrown exception or returned a rejected promise.
+	 **/
+	start?(): void | PromiseLike<void>;
+
+	/**	WrStream calls this callback to ask it to write a chunk of data to the destination that it's managing.
+	 **/
+	write(chunk: Uint8Array, canRedo: boolean): number | PromiseLike<number>;
+	close?(): void | PromiseLike<void>;
+	abort?(reason: Any): void | PromiseLike<void>;
+	catch?(reason: Any): void | PromiseLike<void>;
 };
 
 export class WrStream extends WritableStream<Uint8Array>
@@ -48,23 +55,6 @@ export class WrStream extends WritableStream<Uint8Array>
 	{	return this.#locked;
 	}
 
-	/**	Can be aborted even if locked.
-	 **/
-	abort(reason?: Any)
-	{	return this.#callbackAccessor.close(true, reason);
-	}
-
-	close()
-	{	if (this.#locked)
-		{	throw new TypeError('WritableStream is locked.');
-		}
-		return this.#callbackAccessor.close();
-	}
-
-	[_closeEvenIfLocked]()
-	{	return this.#callbackAccessor.close();
-	}
-
 	getWriter(): WritableStreamDefaultWriter<Uint8Array>
 	{	if (this.#locked)
 		{	throw new TypeError('WritableStream is locked.');
@@ -85,6 +75,23 @@ export class WrStream extends WritableStream<Uint8Array>
 		{	return Promise.resolve(this.getWriter());
 		}
 		return new Promise<WritableStreamDefaultWriter<Uint8Array>>(y => {this.#writerRequests.push(y)});
+	}
+
+	/**	Can be aborted even if locked.
+	 **/
+	abort(reason?: Any)
+	{	return this.#callbackAccessor.close(true, reason);
+	}
+
+	close()
+	{	if (this.#locked)
+		{	throw new TypeError('WritableStream is locked.');
+		}
+		return this.#callbackAccessor.close();
+	}
+
+	[_closeEvenIfLocked]()
+	{	return this.#callbackAccessor.close();
 	}
 
 	async write(chunk: Uint8Array)

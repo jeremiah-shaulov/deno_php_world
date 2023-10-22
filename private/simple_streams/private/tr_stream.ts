@@ -4,13 +4,10 @@ import {WrStream, Writer, WriteCallbackAccessor, _closeEvenIfLocked} from './wr_
 // deno-lint-ignore no-explicit-any
 type Any = any;
 
-type CallbackStartOrFlush = (writer: Writer) => void | PromiseLike<void>;
-type CallbackTransform = (writer: Writer, chunk: Uint8Array, canRedo: boolean) => number | PromiseLike<number>;
-
 export type Transformer =
-{	start?: CallbackStartOrFlush;
-	transform?: CallbackTransform;
-	flush?: CallbackStartOrFlush;
+{	start?(writer: Writer): void | PromiseLike<void>;
+	transform?(writer: Writer, chunk: Uint8Array, canRedo: boolean): number | PromiseLike<number>;
+	flush?(writer: Writer): void | PromiseLike<void>;
 };
 
 const EMPTY_CHUNK = new Uint8Array;
@@ -95,7 +92,7 @@ export class TrStream extends TransformStream<Uint8Array, Uint8Array>
 
 				write: transform ?
 					(chunk, canRedo) => transform(writer, chunk, canRedo) :
-					(chunk, canRedo) => writer.useLowLevelCallbacks(callbacks => callbacks.write!(chunk, canRedo)).then(n => n==undefined ? Promise.reject('This writer is closed') : n),
+					(chunk, canRedo) => writer.useLowLevelCallbacks(callbacks => callbacks.write!(chunk, canRedo)).then(n => n==undefined ? Promise.reject(new Error('This writer is closed')) : n),
 
 				async close()
 				{	// Input stream ended

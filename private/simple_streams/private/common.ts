@@ -5,19 +5,14 @@ export const DEFAULT_AUTO_ALLOCATE_SIZE = 32*1024;
 // deno-lint-ignore no-explicit-any
 type Any = any;
 
-type CallbackStartOrCloseOrFlush = () => void | PromiseLike<void>;
-type CallbackRead = (view: Uint8Array) => number | null | PromiseLike<number|null>;
-type CallbackWrite = (chunk: Uint8Array, canRedo: boolean) => number | PromiseLike<number>;
-type CallbackCancelOrAbortOrCatch = (reason: Any) => void | PromiseLike<void>;
-
 export type Callbacks =
-{	start?: CallbackStartOrCloseOrFlush;
-	read?: CallbackRead;
-	write?: CallbackWrite;
-	close?: CallbackStartOrCloseOrFlush;
-	cancel?: CallbackCancelOrAbortOrCatch;
-	abort?: CallbackCancelOrAbortOrCatch;
-	catch?: CallbackCancelOrAbortOrCatch;
+{	start?(): void | PromiseLike<void>;
+	read?(view: Uint8Array): number | null | PromiseLike<number|null>;
+	write?(chunk: Uint8Array, canRedo: boolean): number | PromiseLike<number>;
+	close?(): void | PromiseLike<void>;
+	cancel?(reason: Any): void | PromiseLike<void>;
+	abort?(reason: Any): void | PromiseLike<void>;
+	catch?(reason: Any): void | PromiseLike<void>;
 };
 
 export class CallbackAccessor

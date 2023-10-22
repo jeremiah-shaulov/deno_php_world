@@ -4,10 +4,6 @@ import {Writer} from './wr_stream.ts';
 // deno-lint-ignore no-explicit-any
 type Any = any;
 
-type CallbackStartOrClose = () => void | PromiseLike<void>;
-type CallbackRead = (view: Uint8Array) => number | null | PromiseLike<number|null>;
-type CallbackCancelOrCatch = (reason: Any) => void | PromiseLike<void>;
-
 export type Source =
 {	// Properties:
 
@@ -16,37 +12,41 @@ export type Source =
 	autoAllocateChunkSize?: number;
 
 	/**	When auto-allocating (reading in non-byob mode) will not call `read()` with buffers smaller than this.
-		First i'll allocate `autoAllocateChunkSize` bytes, and if `read()` callback fills in only a small part of them (so there're >= `autoAllocateMin` unused bytes in the buffer), i'll reuse that part of the buffer in next `read()` calls.
+		First i'll allocate `autoAllocateChunkSize` bytes, and if `read()` callback fills in only a small part of them
+		(so there're >= `autoAllocateMin` unused bytes in the buffer), i'll reuse that part of the buffer in next `read()` calls.
 	 **/
 	autoAllocateMin?: number;
 
 	/**	This callback is called immediately during `RdStream` object creation.
 		When it's promise resolves, i start to call `read()` to pull data as response to `reader.read()`.
 		Only one call is active at each moment, and next calls wait for previous calls to complete.
+
 		At the end one of `close()`, `cancel(reason)` or `catch(error)` is called.
-		`close()` is called if `read()` returned EOF (`0` or `null`).
-		`cancel()` if caller called `stream.cancel(reason)` or `reader.cancel(reason)`.
-		`error()` if `read()` thrown exception or returned a rejected promise.
+		- `close()` is called if `read()` returned EOF (`0` or `null`).
+		- `cancel()` if caller called `rdStream.cancel(reason)` or `reader.cancel(reason)`.
+		- `catch()` if `read()` thrown exception or returned a rejected promise.
 	 **/
-	start?: CallbackStartOrClose;
+	start?(): void | PromiseLike<void>;
 
 	/**	This method is called to pull data from input source to a Uint8Array object provied to it.
 		The object provided is never empty.
 		The function is expected to load available data to the view, and to return number of bytes loaded.
 		On EOF it's expected to return `0` or `null`.
 	 **/
-	read: CallbackRead;
+	read(view: Uint8Array): number | null | PromiseLike<number|null>;
 
 	/**	This method is called when {@link Source.read} returns `0` or `null` that indicate EOF.
 		If you use `Deno.Reader & Deno.Closer` as source, that source will be closed when read to the end without error.
 	 **/
-	close?: CallbackStartOrClose;
+	close?(): void | PromiseLike<void>;
 
-	/**	Is called as response to `stream.cancel()` or `reader.cancel()`.
+	/**	Is called as response to `rdStream.cancel()` or `reader.cancel()`.
 	 **/
-	cancel?: CallbackCancelOrCatch;
+	cancel?(reason: Any): void | PromiseLike<void>;
 
-	catch?: CallbackCancelOrCatch;
+	/**	Is called when `read()` or `start()` thrown exception or returned a rejected promise.
+	 **/
+	catch?(reason: Any): void | PromiseLike<void>;
 };
 
 type Transform<W extends WritableStream<Uint8Array>, R extends ReadableStream<unknown>> =
@@ -54,8 +54,8 @@ type Transform<W extends WritableStream<Uint8Array>, R extends ReadableStream<un
 	readonly readable: R;
 
 	/**	If this value is set to a positive integer, `RdStream.pipeThrough()` will use buffer of this size during piping.
-		Practically this affects maximum chunk size in `transform(chunk, writer)` callback.
-		If that callback returns `0` indicating that it wants more bytes, it will be called again with a longer chunk, till the chunk size reaches `overrideAutoAllocateChunkSize`.
+		Practically this affects maximum chunk size in `transform(writer, chunk)` callback.
+		If that callback returns `0` indicating that it wants more bytes, it will be called again with a larger chunk, till the chunk size reaches `overrideAutoAllocateChunkSize`.
 		Then, if it still returns `0`, an error is thrown.
 	 **/
 	readonly overrideAutoAllocateChunkSize?: number;
@@ -72,71 +72,106 @@ type Transform<W extends WritableStream<Uint8Array>, R extends ReadableStream<un
 	- It guarantees not to buffer data for future `read()` calls.
  **/
 export class RdStream extends ReadableStream<Uint8Array>
-{	static from<R>(source: AsyncIterable<R> | Iterable<R | PromiseLike<R>>): ReadableStream<R> & RdStream
+{	// static:
+
+	/**	Converts iterable of `Uint8Array` to `RdStream`.
+		`ReadableStream<Uint8Array>` is also iterable of `Uint8Array`, so it can be converted,
+		and the resulting `RdStream` will be wrapper on the provided readable stream.
+		This can be useful to use `RdStream` functionality that doesn't exist on `ReadableStream`.
+		Also `RdStream.pipeTo()` implementation is more efficient than in `ReadableStream` (at least in Deno `1.37.2`),
+		so can work faster and/or consume less memory, despite the fact that the data will be eventually read from the same uderlying stream object.
+
+		If you have data source that implements both `ReadableStream<Uint8Array>` and `Deno.Reader`, it will be more efficient to create wrapper from `Deno.Reader`
+		by calling `RdStream` constructor.
+
+		```ts
+		// Create from `Deno.Reader`. This is preferred.
+		const file1 = await Deno.open('/etc/passwd');
+		const rdStream1 = new RdStream(file1); // `file1` is `Deno.Reader`
+		console.log(await rdStream1.text());
+
+		// Create from `ReadableStream<Uint8Array>`.
+		const file2 = await Deno.open('/etc/passwd');
+		const rdStream2 = RdStream.from(file2.readable); // `file2.readable` is `ReadableStream<Uint8Array>`
+		console.log(await rdStream2.text());
+		```
+	 **/
+	static from<R>(source: AsyncIterable<R> | Iterable<R | PromiseLike<R>>): ReadableStream<R> & RdStream
 	{	if (source instanceof RdStream)
 		{	return source as Any;
 		}
 		else if (source instanceof ReadableStream)
-		{	let reader: ReadableStreamBYOBReader|undefined;
-			let reader2: ReadableStreamDefaultReader<unknown>|undefined;
-			let buffer: Uint8Array|undefined;
+		{	let readerInUse: ReadableStreamBYOBReader | ReadableStreamDefaultReader<unknown> | undefined;
+			let innerRead: ((view: Uint8Array) => Promise<number>) | undefined;
 			return new RdStream
-			(	{	async read(view)
-					{	try
-						{	if (!reader && !reader2)
-							{	try
-								{	reader = source.getReader({mode: 'byob'});
-									buffer = new Uint8Array(DEFAULT_AUTO_ALLOCATE_SIZE);
-								}
-								catch
-								{	reader2 = source.getReader();
-								}
-							}
-							if (reader)
-							{	const {value, done} = await reader.read(buffer!.subarray(0, Math.min(view.byteLength, buffer!.byteLength)));
-								if (done)
-								{	reader.releaseLock();
-								}
-								if (value)
-								{	view.set(value);
-									buffer = new Uint8Array(value.buffer);
-									return value.byteLength || (done ? null : 0);
-								}
-								return done ? null : 0;
-							}
-							else
-							{	if (!buffer)
-								{	const {value, done} = await reader2!.read();
-									if (done)
-									{	reader2!.releaseLock();
-										return null;
+			(	{	read(view)
+					{	if (!innerRead)
+						{	try
+							{	// Try BYOB
+								const reader = source.getReader({mode: 'byob'});
+								readerInUse = reader;
+								let buffer = new Uint8Array(DEFAULT_AUTO_ALLOCATE_SIZE);
+								innerRead = async view =>
+								{	try
+									{	const {value, done} = await reader.read(buffer.subarray(0, Math.min(view.byteLength, buffer.byteLength)));
+										if (done)
+										{	reader.releaseLock();
+										}
+										if (value)
+										{	view.set(value);
+											buffer = new Uint8Array(value.buffer);
+											return value.byteLength;
+										}
+										return 0;
 									}
-									if (!(value instanceof Uint8Array))
-									{	throw new Error('Must be async iterator of Uint8Array');
+									catch (e)
+									{	reader.releaseLock();
+										throw e;
 									}
-									buffer = value;
-								}
-								const haveLen = buffer.byteLength;
-								const askedLen = view.byteLength;
-								if (haveLen <= askedLen)
-								{	view.set(buffer);
-									buffer = undefined;
-									return haveLen;
-								}
-								else
-								{	view.set(buffer.subarray(0, askedLen));
-									buffer = buffer.subarray(askedLen);
-									return askedLen;
-								}
+								};
+							}
+							catch
+							{	// BYOB failed, so use default
+								const reader = source.getReader();
+								readerInUse = reader;
+								let buffer: Uint8Array|undefined;
+								innerRead = async view =>
+								{	try
+									{	if (!buffer)
+										{	const {value, done} = await reader.read();
+											if (done)
+											{	reader.releaseLock();
+												return 0;
+											}
+											if (!(value instanceof Uint8Array))
+											{	throw new Error('Must be async iterator of Uint8Array');
+											}
+											buffer = value;
+										}
+										const haveLen = buffer.byteLength;
+										const askedLen = view.byteLength;
+										if (haveLen <= askedLen)
+										{	view.set(buffer);
+											buffer = undefined;
+											return haveLen;
+										}
+										else
+										{	view.set(buffer.subarray(0, askedLen));
+											buffer = buffer.subarray(askedLen);
+											return askedLen;
+										}
+									}
+									catch (e)
+									{	reader.releaseLock();
+										throw e;
+									}
+								};
 							}
 						}
-						catch (e)
-						{	(reader ?? reader2)?.releaseLock();
-							throw e;
-						}
+						return innerRead(view);
 					},
 					cancel(reason)
-					{	(reader ?? source).cancel(reason);
+					{	return (readerInUse ?? source).cancel(reason);
 					}
 				}
 			) as Any;
@@ -215,12 +250,25 @@ export class RdStream extends ReadableStream<Uint8Array>
 		}
 	}
 
+	// properties:
+
 	#autoAllocateChunkSize: number;
 	#autoAllocateMin: number;
 	#callbackAccessor: ReadCallbackAccessor;
 	#locked = false;
 	#readerRequests = new Array<(reader: ReadableStreamDefaultReader<Uint8Array> | ReadableStreamBYOBReader) => void>;
 	#curPiper: Piper|undefined;
+
+	/**	When somebody wants to start reading this stream, he calls `rdStream.getReader()`, and after this call the stream becomes locked.
+		Further calls to `rdStream.getReader()` will throw error till the reader is released (`reader.releaseLock()`).
+
+		Other operations that read the stream (like `rdStream.pipeTo()`) also lock it (internally they get a reader, and later release it).
+	 **/
+	get locked()
+	{	return this.#locked;
+	}
+
+	// constructor:
 
 	constructor(source: Source)
 	{	super();
@@ -233,16 +281,13 @@ export class RdStream extends ReadableStream<Uint8Array>
 		this.#callbackAccessor = new ReadCallbackAccessor(autoAllocateChunkSize, autoAllocateMin, source);
 	}
 
-	get locked()
-	{	return this.#locked;
-	}
+	// methods:
 
-	/**	Can be canceled even if locked.
+	/**	Returns object that allows to read data from the stream.
+		The stream becomes locked till this reader is released by calling `reader.releaseLock()`.
+
+		If the stream is already locked, this method throws error.
 	 **/
-	cancel(reason?: Any)
-	{	return this.#callbackAccessor.close(true, reason);
-	}
-
 	getReader(options?: {mode?: undefined}): ReadableStreamDefaultReader<Uint8Array>;
 	getReader(options: {mode: 'byob'}): ReadableStreamBYOBReader;
 	getReader(_options?: {mode?: 'byob'}): ReadableStreamDefaultReader<Uint8Array> | ReadableStreamBYOBReader
@@ -262,6 +307,15 @@ export class RdStream extends ReadableStream<Uint8Array>
 		);
 	}
 
+	/**	Like `rdStream.getReader()`, but waits for the stream to become unlocked before returning the reader (and so locking it again).
+
+		If you actually don't need the reader, but just want to catch the moment when the stream unlocks, you can do:
+
+		```ts
+		(await rdStream.getReaderWhenReady()).releaseLock();
+		// here you can immediately (without awaiting any promises) call `pipeTo()`, or something else
+		```
+	 **/
 	getReaderWhenReady(options?: {mode?: undefined}): Promise<ReadableStreamDefaultReader<Uint8Array>>;
 	getReaderWhenReady(options: {mode: 'byob'}): Promise<ReadableStreamBYOBReader>;
 	getReaderWhenReady(_options?: {mode?: 'byob'}): Promise<ReadableStreamDefaultReader<Uint8Array> | ReadableStreamBYOBReader>
@@ -271,20 +325,35 @@ export class RdStream extends ReadableStream<Uint8Array>
 		return new Promise<ReadableStreamDefaultReader<Uint8Array> | ReadableStreamBYOBReader>(y => {this.#readerRequests.push(y)});
 	}
 
+	/**	Tells to discard further data in the stream.
+		This leads to calling `source.cancel(reason)` that must implement the actual behavior.
+
+		In contrast to `ReadableStream.cancel()`, this method works even if the stream is locked, cancelling current read operation.
+	 **/
+	cancel(reason?: Any)
+	{	return this.#callbackAccessor.close(true, reason);
+	}
+
+	/**	Allows you to iterate this stream yielding `Uint8Array` data chunks.
+	 **/
 	[Symbol.asyncIterator](options?: {preventCancel?: boolean})
 	{	return new ReadableStreamIterator(this, options?.preventCancel===true);
 	}
 
+	/**	Allows you to iterate this stream yielding `Uint8Array` data chunks.
+	 **/
 	values(options?: {preventCancel?: boolean})
 	{	return new ReadableStreamIterator(this, options?.preventCancel===true);
 	}
 
-	/**	If one reader reads faster than another, or one of the readers doesn't read at all,
+	/**	Splits the stream to 2, so the rest of the data can be read from both of the resulting streams.
+
+		If you'll read from one stream faster than from another, or will not read at all from one of them,
 		the default behavior is to buffer the data.
 
-		If `requireParallelRead` is set, will not buffer. Parent reader will suspend after each item,
-		till it's read by both of the streams.
-		In this case if you read and await from the first reader, and don't start reading from the second,
+		If `requireParallelRead` option is set, the buffering will be disabled,
+		and parent stream will suspend after each item, till it's read by both of the child streams.
+		In this case if you read and await from the first stream, without previously starting reading from the second,
 		this will cause a deadlock situation.
 	 **/
 	tee(options?: {requireParallelRead?: boolean}): [RdStream, RdStream]
@@ -305,12 +374,22 @@ export class RdStream extends ReadableStream<Uint8Array>
 		];
 	}
 
-	/**	If destination closes or enters error state, an exception is thrown, and then `pipeTo()` can be called again to continue piping to another destination (including previously buffered data).
+	/**	Pipe data from this stream to `dest` writable stream (that can be built-in `WritableStream<Uint8Array>` or `WrStream`).
+
+		If the data is piped to EOF without error, the source readable stream is closed as usual (`close()` callback is called on `Source`),
+		and the writable stream will be closed unless `preventClose` option is set.
+
+		If destination closes or enters error state, then `pipeTo()` throws exception.
+		But then `pipeTo()` can be called again to continue piping the rest of the stream to another destination (including previously buffered data).
 	 **/
 	pipeTo(dest: WritableStream<Uint8Array>, options?: PipeOptions)
 	{	return this.#pipeTo(dest, options);
 	}
 
+	/**	Uses `rdStream.pipeTo()` to pipe the data to transformer's writable stream, and returns transformer's readable stream.
+
+		The transformer can be an instance of built-in `TransformStream<Uint8Array, unknown>`, `TrStream`, or any other `writable/readable` pair.
+	 **/
 	pipeThrough<T, W extends WritableStream<Uint8Array>, R extends ReadableStream<T>>
 	(	transform: Transform<W, R>,
 		options?: PipeOptions
@@ -400,6 +479,10 @@ export class RdStream extends ReadableStream<Uint8Array>
 		}
 	}
 
+	/**	Ex-`Deno.Reader` implementation for this object.
+		It gets a reader (locks the stream), reads, and then releases the reader (unlocks the stream).
+		It returns number of bytes loaded to the `view`, or `null` on EOF.
+	 **/
 	async read(view: Uint8Array)
 	{	if (view.byteLength == 0)
 		{	return 0;
@@ -414,6 +497,8 @@ export class RdStream extends ReadableStream<Uint8Array>
 		}
 	}
 
+	/**	Reads the whole stream to memory.
+	 **/
 	async uint8Array()
 	{	const reader = this.getReader({mode: 'byob'});
 		try
@@ -469,6 +554,8 @@ export class RdStream extends ReadableStream<Uint8Array>
 		}
 	}
 
+	/**	Reads the whole stream to memory, and converts it to string, just as `TextDecoder.decode()` does.
+	 **/
 	async text(label?: string, options?: TextDecoderOptions)
 	{	return new TextDecoder(label, options).decode(await this.uint8Array());
 	}

@@ -1,5 +1,4 @@
 const DEFAULT_BUFFER_SIZE = 16*1024;
-const READ_IF_HAVE_SIZE = 1*1024;
 
 export async function exists(path: string|URL)
 {	try
