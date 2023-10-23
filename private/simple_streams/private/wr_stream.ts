@@ -5,6 +5,14 @@ type Any = any;
 
 export const _closeEvenIfLocked = Symbol('_closeEvenIfLocked');
 
+type SinkInternal =
+{	start?(): void | PromiseLike<void>;
+	write(chunk: Uint8Array, canRedo: boolean): number | PromiseLike<number>;
+	close?(): void | PromiseLike<void>;
+	abort?(reason: Any): void | PromiseLike<void>;
+	catch?(reason: Any): void | PromiseLike<void>;
+};
+
 export type Sink =
 {	/**	This callback is called immediately during `WrStream` object creation.
 		When it's promise resolves, i start to call `write()` as response to `writer.write()`.
@@ -19,18 +27,30 @@ export type Sink =
 
 	/**	WrStream calls this callback to ask it to write a chunk of data to the destination that it's managing.
 	 **/
-	write(chunk: Uint8Array, canRedo: boolean): number | PromiseLike<number>;
+	write(chunk: Uint8Array): number | PromiseLike<number>;
+
+	/**	This method is called as response to `writer.close()`.
+		After that, no more callbacks are called.
+	 **/
 	close?(): void | PromiseLike<void>;
+
+	/**	This method is called as response to `wrStream.abort(reason)` or `writer.abort(reason)`.
+		After that, no more callbacks are called.
+	 **/
 	abort?(reason: Any): void | PromiseLike<void>;
+
+	/**	This method is called when {@link Sink.write} thrown exception or returned a rejected promise.
+		After that, no more callbacks are called.
+	 **/
 	catch?(reason: Any): void | PromiseLike<void>;
 };
 
-export class WrStream extends WritableStream<Uint8Array>
+export class WrStreamInternal extends WritableStream<Uint8Array>
 {	#callbackAccessor: WriteCallbackAccessor;
 	#locked = false;
 	#writerRequests = new Array<(writer: WritableStreamDefaultWriter<Uint8Array>) => void>;
 
-	constructor(sink: Sink)
+	constructor(sink: SinkInternal)
 	{	const callbackAccessor = new WriteCallbackAccessor(sink, true);
 		super
 		(	// `deno_web/06_streams.js` uses hackish way to call methods of `WritableStream` subclasses.
@@ -51,10 +71,20 @@ export class WrStream extends WritableStream<Uint8Array>
 		this.#callbackAccessor = callbackAccessor;
 	}
 
+	/**	When somebody wants to start writing to this stream, he calls `wrStream.getWriter()`, and after that call the stream becomes locked.
+		Future calls to `wrStream.getWriter()` will throw error till the writer is released (`writer.releaseLock()`).
+
+		Other operations that write to the stream (like `wrStream.writeAll()`) also lock it (internally they get writer, and release it later).
+	 **/
 	get locked()
 	{	return this.#locked;
 	}
 
+	/**	Returns object that allows to write data to the stream.
+		The stream becomes locked till this writer is released by calling `writer.releaseLock()`.
+
+		If the stream is already locked, this method throws error.
+	 **/
 	getWriter(): WritableStreamDefaultWriter<Uint8Array>
 	{	if (this.#locked)
 		{	throw new TypeError('WritableStream is locked.');
@@ -70,6 +100,15 @@ export class WrStream extends WritableStream<Uint8Array>
 		);
 	}
 
+	/**	Like `wrStream.getWriter()`, but waits for the stream to become unlocked before returning the writer (and so locking it again).
+
+		If you actually don't need the writer, but just want to catch the moment when the stream unlocks, you can do:
+
+		```ts
+		(await wrStream.getWriterWhenReady()).releaseLock();
+		// here you can immediately (without awaiting any promises) call `writeAll()`, or something else
+		```
+	 **/
 	getWriterWhenReady()
 	{	if (!this.#locked)
 		{	return Promise.resolve(this.getWriter());
@@ -77,7 +116,13 @@ export class WrStream extends WritableStream<Uint8Array>
 		return new Promise<WritableStreamDefaultWriter<Uint8Array>>(y => {this.#writerRequests.push(y)});
 	}
 
-	/**	Can be aborted even if locked.
+	/**	Interrupt current writing operation (reject the promise that `writer.write()` returned, if any),
+		and set the stream to error state.
+		This leads to calling `sink.abort(reason)`, even if current `sink.write()` didn't finish.
+		`sink.abort()` is expected to interrupt or complete all the current operations,
+		and finalize the sink, as no more callbacks will be called.
+
+		In contrast to `WritableStream.abort()`, this method works even if the stream is locked.
 	 **/
 	abort(reason?: Any)
 	{	return this.#callbackAccessor.close(true, reason);
@@ -116,6 +161,12 @@ export class WrStream extends WritableStream<Uint8Array>
 		finally
 		{	writer.releaseLock();
 		}
+	}
+}
+
+export class WrStream extends WrStreamInternal
+{	constructor(sink: Sink)
+	{	super(sink);
 	}
 }
 

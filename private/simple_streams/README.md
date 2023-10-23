@@ -1,6 +1,6 @@
 This library is reimplementation of built-in [ReadableStream](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream),
 [WritableStream](https://developer.mozilla.org/en-US/docs/Web/API/WritableStream) and
-[TransformStream](https://developer.mozilla.org/en-US/docs/Web/API/TransformStream) that specializes on byte streams, that likes to reuse buffers,
+[TransformStream](https://developer.mozilla.org/en-US/docs/Web/API/TransformStream) classes that specializes on byte streams, that likes to reuse buffers,
 doesn't like to [transfer](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/ArrayBuffer/transfer) buffers,
 and has simplified API.
 
@@ -27,15 +27,17 @@ interface Source
 
 		Implementations should not retain a reference to `p`.
 	 **/
-	read(p: Uint8Array): Promise<number|null> | number | null;
+	read(p: Uint8Array): Promise<number|null>;
 }
 ```
-Maybe this resembles something familiar to you. Anyway if you implement this interface, you can create a readable stream from it.
+Maybe this resembles something familiar to you (spoiler: ex-`Deno.Reader`). Anyway if you implement this interface, you can create a readable stream from it.
 
 ```ts
 const rdStream = new RdStream
 (	{	async read(p)
 		{	// ...
+			// Load data to `p`
+			// ...
 			return p.byteLength; // or less
 		}
 	}
@@ -48,6 +50,8 @@ And the same with writable streams:
 const wrStream = new WrStream
 (	{	async write(p)
 		{	// ...
+			// Write `p` somewhere
+			// ...
 			return p.byteLength; // or less
 		}
 	}
@@ -58,7 +62,54 @@ const wrStream = new WrStream
 
 This class extends [ReadableStream](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream).
 
-#### Constructor:
+An instance can be created from `Source` definition (object that has `read()` method):
+
+```ts
+const rdStream = new RdStream
+(	{	async read(p)
+		{	// ...
+			// Load data to `p`
+			// ...
+			return p.byteLength; // or less
+		}
+	}
+);
+```
+
+For example `Deno.stdin` implements `read()`:
+
+```ts
+const rdStream = new RdStream(Deno.stdin);
+```
+
+Or it can be created as wrapper on existing `ReadableStream` object:
+
+```ts
+const rdStream = RdStream.from(Deno.stdin.readable);
+```
+
+Wrapping can be useful to benefit from `RdStream` features that `ReadableStream` doesn't have, like `text()` function:
+
+```ts
+const file = await Deno.open('/etc/passwd');
+const rdStream = new RdStream(file); // `file` is `Deno.Reader`
+console.log(await rdStream.text());
+```
+
+In many cases calling `pipeTo()` on `RdStream` that wraps `ReadableStream` is faster and/or consumes less memory, than calling `pipeTo()`
+directly on `ReadableStream` (at least in Deno `1.37.2`), because `RdStream` uses efficient algorithms.
+
+Creating `RdStream` from `read()` implementors (like `new RdStream(Deno.stdin)`) is preferrable (works faster) than creating from another streams (like `RdStream.from(Deno.stdin.readable)`).
+However note that `Deno.stdin` also implements `close()`, so the file descriptor will be closed after reading to the end.
+To prevent this, use:
+
+```ts
+const rdStream = new RdStream({read: p => Deno.stdin.read(p)});
+```
+
+`RdStream.from` also allows to create `RdStream` instances from iterable objects that yield `Uint8Array` items.
+
+### Constructor:
 
 ```ts
 constructor(source: Source);
@@ -93,15 +144,18 @@ type Source =
 	read(view: Uint8Array): number | null | PromiseLike<number|null>;
 
 	/**	This method is called when {@link Source.read} returns `0` or `null` that indicate EOF.
+		After that, no more callbacks are called.
 		If you use `Deno.Reader & Deno.Closer` as source, that source will be closed when read to the end without error.
 	 **/
 	close?(): void | PromiseLike<void>;
 
 	/**	Is called as response to `rdStream.cancel()` or `reader.cancel()`.
+		After that, no more callbacks are called.
 	 **/
 	cancel?(reason: Any): void | PromiseLike<void>;
 
 	/**	Is called when `read()` or `start()` thrown exception or returned a rejected promise.
+		After that, no more callbacks are called.
 	 **/
 	catch?(reason: Any): void | PromiseLike<void>;
 };
@@ -110,7 +164,7 @@ type Source =
 In the Source `read()` is mandatory method. To indicate EOF it can return `0` or `null`.
 It can return result asynchronously (`Promise` object) or synchronously (number or null result).
 
-#### Properties:
+### Properties:
 
 - **locked**
 
@@ -118,12 +172,12 @@ It can return result asynchronously (`Promise` object) or synchronously (number 
 readonly locked: boolean;
 ```
 
-When somebody wants to start reading this stream, he calls `rdStream.getReader()`, and after this call the stream becomes locked.
-Further calls to `rdStream.getReader()` will throw error till the reader is released (`reader.releaseLock()`).
+When somebody wants to start reading this stream, he calls `rdStream.getReader()`, and after that call the stream becomes locked.
+Future calls to `rdStream.getReader()` will throw error till the reader is released (`reader.releaseLock()`).
 
-Other operations that read the stream (like `rdStream.pipeTo()`) also lock it (internally they get a reader, and later release it).
+Other operations that read the stream (like `rdStream.pipeTo()`) also lock it (internally they get reader, and release it later).
 
-#### Methods:
+### Methods:
 
 - **getReader**
 
@@ -156,10 +210,13 @@ If you actually don't need the reader, but just want to catch the moment when th
 ```ts
 cancel(reason?: any): Promise<void>;
 ```
-Tells to discard further data in the stream.
-This leads to calling `source.cancel(reason)` that must implement the actual behavior.
+Interrupt current reading operation (reject the promise that `reader.read()` returned, if any),
+and tell to discard further data in the stream.
+This leads to calling `source.cancel(reason)`, even if current `source.read()` didn't finish.
+`source.cancel()` must implement the actual behavior on how to discard further data,
+and finalize the source, as no more callbacks will be called.
 
-In contrast to `ReadableStream.cancel()`, this method works even if the stream is locked, cancelling current read operation.
+In contrast to `ReadableStream.cancel()`, this method works even if the stream is locked.
 
 - **[Symbol.asyncIterator], values**
 
@@ -229,6 +286,7 @@ type Transform<W extends WritableStream<Uint8Array>, R extends ReadableStream<un
 	readonly readable: R;
 
 	/**	If this value is set to a positive integer, `rdStream.pipeThrough()` will use buffer of this size during piping.
+		(By default it uses `autoAllocateChunkSize` that is set on parent `rdStream`).
 		Practically this affects maximum chunk size in `transform(writer, chunk)` callback.
 		If that callback returns `0` indicating that it wants more bytes, it will be called again with a larger chunk, till the chunk size reaches `overrideAutoAllocateChunkSize`.
 		Then, if it still returns `0`, an error is thrown.
@@ -248,6 +306,7 @@ read(view: Uint8Array): Promise<number | null>;
 Ex-`Deno.Reader` implementation for this object.
 It gets a reader (locks the stream), reads, and then releases the reader (unlocks the stream).
 It returns number of bytes loaded to the `view`, or `null` on EOF.
+It returns `0` only if `view.byteLength == 0`.
 
 - **uint8Array**
 
@@ -263,7 +322,7 @@ text(label?: string, options?: TextDecoderOptions): Promise<string>;
 ```
 Reads the whole stream to memory, and converts it to string, just as `TextDecoder.decode()` does.
 
-#### Static methods:
+### Static methods:
 
 - **from**
 
@@ -272,12 +331,9 @@ static from<R>(source: AsyncIterable<R> | Iterable<R | PromiseLike<R>>): Readabl
 ```
 Converts iterable of `Uint8Array` to `RdStream`.
 `ReadableStream<Uint8Array>` is also iterable of `Uint8Array`, so it can be converted,
-and the resulting `RdStream` will be wrapper on the provided readable stream.
-This can be useful to use `RdStream` functionality that doesn't exist on `ReadableStream`.
-Also `RdStream.pipeTo()` implementation is more efficient than in `ReadableStream` (at least in Deno `1.37.2`),
-so can work faster and/or consume less memory, despite the fact that the data will be eventually read from the same uderlying stream object.
+and resulting `RdStream` will be wrapper on another readable stream.
 
-If you have data source that implements both `ReadableStream<Uint8Array>` and `Deno.Reader`, it will be more efficient to create wrapper from `Deno.Reader`
+If you have data source that implements both `ReadableStream<Uint8Array>` and `Deno.Reader`, it's more efficient to create wrapper from `Deno.Reader`
 by calling `RdStream` constructor.
 
 ```ts
@@ -296,7 +352,7 @@ console.log(await rdStream2.text());
 
 This class extends [WritableStream](https://developer.mozilla.org/en-US/docs/Web/API/WritableStream).
 
-#### Constructor:
+### Constructor:
 
 ```ts
 constructor(sink: Sink);
@@ -313,9 +369,23 @@ type Sink =
 	 **/
 	start?(): void | PromiseLike<void>;
 
-	write(chunk: Uint8Array, canRedo: boolean): number | PromiseLike<number>;
+	/**	WrStream calls this callback to ask it to write a chunk of data to the destination that it's managing.
+	 **/
+	write(chunk: Uint8Array): number | PromiseLike<number>;
+
+	/**	This method is called as response to `writer.close()`.
+		After that, no more callbacks are called.
+	 **/
 	close?(): void | PromiseLike<void>;
+
+	/**	This method is called as response to `wrStream.abort(reason)` or `writer.abort(reason)`.
+		After that, no more callbacks are called.
+	 **/
 	abort?(reason: Any): void | PromiseLike<void>;
+
+	/**	This method is called when {@link Sink.write} thrown exception or returned a rejected promise.
+		After that, no more callbacks are called.
+	 **/
 	catch?(reason: Any): void | PromiseLike<void>;
 };
 ```
@@ -323,7 +393,7 @@ type Sink =
 In the Sink `write()` is mandatory method.
 It can return result asynchronously (`Promise` object) or synchronously (number result).
 
-#### Properties:
+### Properties:
 
 - **locked**
 
@@ -331,7 +401,37 @@ It can return result asynchronously (`Promise` object) or synchronously (number 
 readonly locked: boolean;
 ```
 
-When somebody wants to start writing to this stream, he calls `wrStream.getReader()`, and after this call the stream becomes locked.
-Further calls to `wrStream.getReader()` will throw error till the writer is released (`writer.releaseLock()`).
+When somebody wants to start writing to this stream, he calls `wrStream.getWriter()`, and after that call the stream becomes locked.
+Future calls to `wrStream.getWriter()` will throw error till the writer is released (`writer.releaseLock()`).
 
-#### Methods:
+Other operations that write to the stream (like `wrStream.writeAll()`) also lock it (internally they get writer, and release it later).
+
+### Methods:
+
+- **getWriter**
+
+```ts
+getWriter(): WritableStreamDefaultWriter<Uint8Array>;
+```
+Returns object that allows to write data to the stream.
+The stream becomes locked till this writer is released by calling `writer.releaseLock()`.
+
+If the stream is already locked, this method throws error.
+
+- **getWriterWhenReady**
+
+Like `wrStream.getWriter()`, but waits for the stream to become unlocked before returning the writer (and so locking it again).
+
+If you actually don't need the writer, but just want to catch the moment when the stream unlocks, you can do:
+
+```ts
+(await wrStream.getWriterWhenReady()).releaseLock();
+// here you can immediately (without awaiting any promises) call `writeAll()`, or something else
+```
+
+- **abort**
+
+```ts
+abort(reason?: Any): Promise<void>;
+```
+

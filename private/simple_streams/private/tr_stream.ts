@@ -1,5 +1,5 @@
 import {RdStream} from './rd_stream.ts';
-import {WrStream, Writer, WriteCallbackAccessor, _closeEvenIfLocked} from './wr_stream.ts';
+import {WrStreamInternal, WrStream, Writer, WriteCallbackAccessor, _closeEvenIfLocked} from './wr_stream.ts';
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -87,7 +87,7 @@ export class TrStream extends TransformStream<Uint8Array, Uint8Array>
 
 		// User (typically `pipeThrough()`) will write to here the original stream.
 		// Data written to here is passed to `transform()` that is expected to call `writer.write()`.
-		this.writable = new WrStream
+		this.writable = new WrStreamInternal
 		(	{	start: !start ? undefined : () => start(writer),
 
 				write: transform ?

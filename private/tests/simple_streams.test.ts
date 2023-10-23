@@ -65,55 +65,39 @@ function write_to_write(write: (chunk: Uint8Array) => number | Promise<number>)
 }
 
 function createTcpServer(handler: (conn: Deno.Conn) => Promise<void>, maxConns=10)
-{	const listener = Deno.listen({transport: 'tcp', hostname: 'localhost', port: 0});
-	const {addr} = listener;
-	let aborted = false;
-	const promise = accept();
-	return {
-		addr,
-
-		async stop()
-		{	if (!aborted)
-			{	aborted = true;
-				listener.close();
-			}
-			await promise;
-		},
-
-		[Symbol.dispose]()
-		{	if (!aborted)
-			{	aborted = true;
-				listener.close();
-			}
-		}
-	};
+{	// Open TCP listener on random port
+	const listener = Deno.listen({transport: 'tcp', hostname: 'localhost', port: 0});
+	// Figure out the port
+	const port = listener.addr.transport=='tcp' ? listener.addr.port : 0;
+	// Accept connections
 	async function accept()
 	{	const promises = new Array<Promise<void>>;
-		while (!aborted)
-		{	try
-			{	const conn = await listener.accept();
-				const promise = handler(conn).catch(e => console.log(e));
-				promises.push(promise);
-				promise.finally
-				(	() =>
-					{	const i = promises.indexOf(promise);
-						if (i != -1)
-						{	promises.splice(i, i);
-						}
+		for await (const conn of listener)
+		{	const promise = handler(conn).catch(e => console.log(e));
+			promises.push(promise);
+			promise.finally
+			(	() =>
+				{	const i = promises.indexOf(promise);
+					if (i != -1)
+					{	promises.splice(i, i);
 					}
-				);
-			}
-			catch (e)
-			{	if (!aborted)
-				{	console.log(e);
 				}
-			}
+			);
 			if (promises.length >= maxConns)
 			{	await promises.shift();
 			}
 		}
 		await Promise.all(promises);
 	}
+	accept();
+	// Return the server
+	return {
+		port,
+
+		[Symbol.dispose]()
+		{	listener.close();
+		}
+	};
 }
 
 Deno.test
@@ -1005,7 +989,7 @@ Deno.test
 			await Promise.all
 			(	new Array(N_IN_PARALLEL).fill(0).map
 				(	async () =>
-					{	const fh = await Deno.connect({port: sender.addr.transport=='tcp' ? sender.addr.port : 0});
+					{	const fh = await Deno.connect({port: sender.port});
 						const rs = a==0 ? fh.readable : a==1 ? RdStream.from(fh.readable) : new RdStream(fh);
 
 						const reader = rs.getReader({mode: 'byob'});
@@ -1030,7 +1014,7 @@ Deno.test
 					}
 				)
 			);
-			console.log((a==0 ? 'ReadableStream: time ' : a==1 ? 'RdStream.from(ReadableStream): time ' : 'new RdStream(Deno.Readable): ') + (Date.now() - startTime)/1000 + 'sec');
+			console.log((a==0 ? 'ReadableStream: time ' : a==1 ? 'RdStream.from(ReadableStream): time ' : 'new RdStream(Deno.Reader): ') + (Date.now() - startTime)/1000 + 'sec');
 			assertEquals(nBytes, SEND_N_BYTES*N_IN_PARALLEL);
 			if (a >= 1)
 			{	assertEquals(all.size, N_IN_PARALLEL);
@@ -1068,7 +1052,7 @@ Deno.test
 			await Promise.all
 			(	new Array(N_IN_PARALLEL).fill(0).map
 				(	async () =>
-					{	const fh = await Deno.connect({port: sender.addr.transport=='tcp' ? sender.addr.port : 0});
+					{	const fh = await Deno.connect({port: sender.port});
 						if (a == 0)
 						{	const rs = fh.readable.pipeThrough
 							(	new TransformStream
@@ -1138,12 +1122,11 @@ Deno.test
 					}
 				)
 			);
-			console.log((a==0 ? 'ReadableStream: time ' : a==1 ? 'RdStream.from(ReadableStream): time ' : 'new RdStream(Deno.Readable): ') + (Date.now() - startTime)/1000 + 'sec');
+			console.log((a==0 ? 'ReadableStream: time ' : a==1 ? 'RdStream.from(ReadableStream): time ' : 'new RdStream(Deno.Reader): ') + (Date.now() - startTime)/1000 + 'sec');
 			assertEquals(nBytes, SEND_N_BYTES*N_IN_PARALLEL);
 			if (a >= 1)
 			{	assertEquals(all.size, N_IN_PARALLEL);
 			}
-			await sender.stop();
 		}
 	}
 );
@@ -1170,7 +1153,7 @@ Deno.test
 				await writer.close();
 			}
 		);
-		const fh = await Deno.connect({port: sender.addr.transport=='tcp' ? sender.addr.port : 0});
+		const fh = await Deno.connect({port: sender.port});
 		const rs = new RdStream(fh);
 		const parts = new Array<Uint8Array>;
 		while (true)
@@ -1206,7 +1189,6 @@ Deno.test
 				}
 			}
 		}
-		await sender.stop();
 	}
 );
 
@@ -1231,7 +1213,7 @@ Deno.test
 						await writer.close();
 					}
 				);
-				const fh = await Deno.connect({port: sender.addr.transport=='tcp' ? sender.addr.port : 0});
+				const fh = await Deno.connect({port: sender.port});
 				const value = await new RdStream(a==0 ? fh : {read: v => fh.read(v), close: () => fh.close(), autoAllocateChunkSize: 100}).uint8Array();
 				for (let i=0; i<value.byteLength; i++)
 				{	if (value[i] != (i & 0xFF))

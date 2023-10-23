@@ -36,15 +36,18 @@ export type Source =
 	read(view: Uint8Array): number | null | PromiseLike<number|null>;
 
 	/**	This method is called when {@link Source.read} returns `0` or `null` that indicate EOF.
+		After that, no more callbacks are called.
 		If you use `Deno.Reader & Deno.Closer` as source, that source will be closed when read to the end without error.
 	 **/
 	close?(): void | PromiseLike<void>;
 
 	/**	Is called as response to `rdStream.cancel()` or `reader.cancel()`.
+		After that, no more callbacks are called.
 	 **/
 	cancel?(reason: Any): void | PromiseLike<void>;
 
 	/**	Is called when `read()` or `start()` thrown exception or returned a rejected promise.
+		After that, no more callbacks are called.
 	 **/
 	catch?(reason: Any): void | PromiseLike<void>;
 };
@@ -54,6 +57,7 @@ type Transform<W extends WritableStream<Uint8Array>, R extends ReadableStream<un
 	readonly readable: R;
 
 	/**	If this value is set to a positive integer, `RdStream.pipeThrough()` will use buffer of this size during piping.
+		(By default it uses `autoAllocateChunkSize` that is set on parent `rdStream`).
 		Practically this affects maximum chunk size in `transform(writer, chunk)` callback.
 		If that callback returns `0` indicating that it wants more bytes, it will be called again with a larger chunk, till the chunk size reaches `overrideAutoAllocateChunkSize`.
 		Then, if it still returns `0`, an error is thrown.
@@ -259,10 +263,10 @@ export class RdStream extends ReadableStream<Uint8Array>
 	#readerRequests = new Array<(reader: ReadableStreamDefaultReader<Uint8Array> | ReadableStreamBYOBReader) => void>;
 	#curPiper: Piper|undefined;
 
-	/**	When somebody wants to start reading this stream, he calls `rdStream.getReader()`, and after this call the stream becomes locked.
-		Further calls to `rdStream.getReader()` will throw error till the reader is released (`reader.releaseLock()`).
+	/**	When somebody wants to start reading this stream, he calls `rdStream.getReader()`, and after that call the stream becomes locked.
+		Future calls to `rdStream.getReader()` will throw error till the reader is released (`reader.releaseLock()`).
 
-		Other operations that read the stream (like `rdStream.pipeTo()`) also lock it (internally they get a reader, and later release it).
+		Other operations that read the stream (like `rdStream.pipeTo()`) also lock it (internally they get reader, and release it later).
 	 **/
 	get locked()
 	{	return this.#locked;
@@ -325,10 +329,13 @@ export class RdStream extends ReadableStream<Uint8Array>
 		return new Promise<ReadableStreamDefaultReader<Uint8Array> | ReadableStreamBYOBReader>(y => {this.#readerRequests.push(y)});
 	}
 
-	/**	Tells to discard further data in the stream.
-		This leads to calling `source.cancel(reason)` that must implement the actual behavior.
+	/**	Interrupt current reading operation (reject the promise that `reader.read()` returned, if any),
+		and tell to discard further data in the stream.
+		This leads to calling `source.cancel(reason)`, even if current `source.read()` didn't finish.
+		`source.cancel()` must implement the actual behavior on how to discard further data,
+		and finalize the source, as no more callbacks will be called.
 
-		In contrast to `ReadableStream.cancel()`, this method works even if the stream is locked, cancelling current read operation.
+		In contrast to `ReadableStream.cancel()`, this method works even if the stream is locked.
 	 **/
 	cancel(reason?: Any)
 	{	return this.#callbackAccessor.close(true, reason);
@@ -482,6 +489,7 @@ export class RdStream extends ReadableStream<Uint8Array>
 	/**	Ex-`Deno.Reader` implementation for this object.
 		It gets a reader (locks the stream), reads, and then releases the reader (unlocks the stream).
 		It returns number of bytes loaded to the `view`, or `null` on EOF.
+		It returns `0` only if `view.byteLength == 0`.
 	 **/
 	async read(view: Uint8Array)
 	{	if (view.byteLength == 0)
