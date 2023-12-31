@@ -4,6 +4,7 @@ import {DEFAULT_AUTO_ALLOCATE_SIZE, Callbacks, CallbackAccessor, ReaderOrWriter}
 type Any = any;
 
 export const _closeEvenIfLocked = Symbol('_closeEvenIfLocked');
+export const _useLowLevelCallbacks = Symbol('_useLowLevelCallbacks');
 
 type SinkInternal =
 {	start?(): void | PromiseLike<void>;
@@ -14,7 +15,9 @@ type SinkInternal =
 };
 
 export type Sink =
-{	/**	This callback is called immediately during `WrStream` object creation.
+{	// properties:
+
+	/**	This callback is called immediately during `WrStream` object creation.
 		When it's promise resolves, i start to call `write()` as response to `writer.write()`.
 		Only one call is active at each moment, and next calls wait for previous calls to complete.
 
@@ -128,6 +131,8 @@ export class WrStreamInternal extends WritableStream<Uint8Array>
 	{	return this.#callbackAccessor.close(true, reason);
 	}
 
+	/**	Calls `sink.close()`. After that no more callbacks will be called.
+	 **/
 	close()
 	{	if (this.#locked)
 		{	throw new TypeError('WritableStream is locked.');
@@ -139,22 +144,21 @@ export class WrStreamInternal extends WritableStream<Uint8Array>
 	{	return this.#callbackAccessor.close();
 	}
 
-	async write(chunk: Uint8Array)
-	{	const writer = this.getWriter();
+	/**	Waits for the stream to be unlocked, gets writer (locks the stream),
+		writes the chunk, and then releases the writer (unlocks the stream).
+		This is the same as doing:
+		```ts
+		const writer = await wrStream.getWriterWhenReady();
 		try
-		{	const nWritten = await this.#callbackAccessor.useCallbacks(callbacks => callbacks.write!(chunk, false));
-			if (nWritten == undefined)
-			{	throw new Error('This writer is closed');
-			}
-			return nWritten;
+		{	await writer.write(chunk);
 		}
 		finally
 		{	writer.releaseLock();
 		}
-	}
-
-	async writeAll(chunk: Uint8Array)
-	{	const writer = this.getWriter();
+		```
+	 **/
+	async writeAtom(chunk: Uint8Array)
+	{	const writer = await this.getWriterWhenReady();
 		try
 		{	await this.#callbackAccessor.writeAll(chunk);
 		}
@@ -213,15 +217,16 @@ export class Writer extends ReaderOrWriter<WriteCallbackAccessor>
 	{	return this.callbackAccessor?.ready ?? Promise.resolve();
 	}
 
+	/**	Writes the chunk by calling `sink.write()`
+		till the whole chunk is written (if `sink.write()` returns `0`, throws error).
+	 **/
 	async write(chunk: Uint8Array)
 	{	this.#desiredSize = 0;
 		await this.getCallbackAccessor().writeAll(chunk);
 		this.#desiredSize = DEFAULT_AUTO_ALLOCATE_SIZE; // if i don't reach this line of code, the `desiredSize` must remain `0`
 	}
 
-	/**	@internal
-	 **/
-	async useLowLevelCallbacks<T>(callbacks: (callbacks: Callbacks) => T | PromiseLike<T>)
+	async [_useLowLevelCallbacks]<T>(callbacks: (callbacks: Callbacks) => T | PromiseLike<T>)
 	{	this.#desiredSize = 0;
 		const result = await this.getCallbackAccessor().useCallbacks(callbacks);
 		this.#desiredSize = DEFAULT_AUTO_ALLOCATE_SIZE; // if i don't reach this line of code, the `desiredSize` must remain `0`

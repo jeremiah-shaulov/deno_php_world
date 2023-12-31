@@ -1,11 +1,27 @@
 import {RdStream} from './rd_stream.ts';
-import {WrStreamInternal, WrStream, Writer, WriteCallbackAccessor, _closeEvenIfLocked} from './wr_stream.ts';
+import {WrStreamInternal, WrStream, Writer, WriteCallbackAccessor, _closeEvenIfLocked, _useLowLevelCallbacks} from './wr_stream.ts';
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
 
 export type Transformer =
-{	start?(writer: Writer): void | PromiseLike<void>;
+{	overrideAutoAllocateChunkSize?: number;
+
+	/**	This callback is called immediately during `TrStream` object creation.
+		When it's promise resolves, i start to call `transform()` to transform data chunks.
+		Only one call is active at each moment, and next calls wait for previous calls to complete.
+
+		When the whole input stream is converted without an error, `flush()` is called, as the last action.
+		If `start()` or `transform()` throw error, this error is propagated to the output stream,
+		and no more callbacks are called.
+	 **/
+	start?(writer: Writer): void | PromiseLike<void>;
+
+	/**	During stream transformation this callback gets called for chunks (peaces) of incoming data.
+		This callback is expected to transform the data as needed, and to write the result to a `writer`
+		provided to it.
+		Each input chunk can be of any non-zero size.
+	 **/
 	transform?(writer: Writer, chunk: Uint8Array, canRedo: boolean): number | PromiseLike<number>;
 	flush?(writer: Writer): void | PromiseLike<void>;
 };
@@ -13,12 +29,25 @@ export type Transformer =
 const EMPTY_CHUNK = new Uint8Array;
 
 export class TrStream extends TransformStream<Uint8Array, Uint8Array>
-{	readonly readable: RdStream;
+{	// properties:
+
+	/**	Input for the original stream.
+		All the bytes written here will be transformed by this object, and will be available for reading from `TrStream.readable`.
+	 **/
 	readonly writable: WrStream;
+
+	/**	Outputs the transformed stream.
+	 **/
+	readonly readable: RdStream;
+
+	/**	This value is copied from `Transformer.overrideAutoAllocateChunkSize` passed to the constructor.
+		This property exists to inform capable users (like `RdStream.pipeThrough()`) about how many bytes to buffer. See `RdStream.pipeThrough`.
+	 **/
 	readonly overrideAutoAllocateChunkSize: number|undefined;
 
 	constructor(transformer: Transformer)
 	{	super();
+		this.overrideAutoAllocateChunkSize = transformer.overrideAutoAllocateChunkSize;
 
 		const {start, transform, flush} = transformer;
 		let currentChunk = EMPTY_CHUNK;
@@ -29,7 +58,7 @@ export class TrStream extends TransformStream<Uint8Array, Uint8Array>
 		let isError = false;
 		let error: Any;
 
-		// Callbacks will write to this writer data that is about to be read by `this.readable`
+		// Callbacks (`start()`, `transform()` and `flush()`) will write to this writer data that is about to be read by `this.readable`
 		const writer = new Writer
 		(	new WriteCallbackAccessor
 			(	{	write(chunk)
@@ -92,7 +121,7 @@ export class TrStream extends TransformStream<Uint8Array, Uint8Array>
 
 				write: transform ?
 					(chunk, canRedo) => transform(writer, chunk, canRedo) :
-					(chunk, canRedo) => writer.useLowLevelCallbacks(callbacks => callbacks.write!(chunk, canRedo)).then(n => n==undefined ? Promise.reject(new Error('This writer is closed')) : n),
+					(chunk, canRedo) => writer[_useLowLevelCallbacks](callbacks => callbacks.write!(chunk, canRedo)).then(n => n==undefined ? Promise.reject(new Error('This writer is closed')) : n),
 
 				async close()
 				{	// Input stream ended

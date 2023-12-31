@@ -1,11 +1,11 @@
 import {DEFAULT_AUTO_ALLOCATE_SIZE, Callbacks, CallbackAccessor, ReaderOrWriter} from './common.ts';
-import {Writer} from './wr_stream.ts';
+import {Writer, _useLowLevelCallbacks} from './wr_stream.ts';
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
 
 export type Source =
-{	// Properties:
+{	// properties:
 
 	/**	If undefined or non-positive number, will use predefined default value (like 32 KiB) when allocating buffers.
 	 **/
@@ -32,21 +32,22 @@ export type Source =
 		The object provided is never empty.
 		The function is expected to load available data to the view, and to return number of bytes loaded.
 		On EOF it's expected to return `0` or `null`.
+		This callback is called as response to user request for data, and it's never called before such request.
 	 **/
 	read(view: Uint8Array): number | null | PromiseLike<number|null>;
 
 	/**	This method is called when {@link Source.read} returns `0` or `null` that indicate EOF.
-		After that, no more callbacks are called.
+		After that, no more callbacks are called (except `catch()`).
 		If you use `Deno.Reader & Deno.Closer` as source, that source will be closed when read to the end without error.
 	 **/
 	close?(): void | PromiseLike<void>;
 
 	/**	Is called as response to `rdStream.cancel()` or `reader.cancel()`.
-		After that, no more callbacks are called.
+		After that, no more callbacks are called (except `catch()`).
 	 **/
 	cancel?(reason: Any): void | PromiseLike<void>;
 
-	/**	Is called when `read()` or `start()` thrown exception or returned a rejected promise.
+	/**	Is called when `start()`, `read()`, `close()` or `cancel()` thrown exception or returned a rejected promise.
 		After that, no more callbacks are called.
 	 **/
 	catch?(reason: Any): void | PromiseLike<void>;
@@ -426,8 +427,8 @@ export class RdStream extends ReadableStream<Uint8Array>
 				}
 				const isEof = await this.#callbackAccessor.useCallbacks
 				(	callbacksForRead =>
-					{	if ('useLowLevelCallbacks' in writer)
-						{	return (writer as Writer).useLowLevelCallbacks
+					{	if (writer instanceof Writer)
+						{	return writer[_useLowLevelCallbacks]
 							(	callbacksForWrite => curPiper.pipeTo
 								(	writer.closed,
 									callbacksForRead,
@@ -480,25 +481,6 @@ export class RdStream extends ReadableStream<Uint8Array>
 			finally
 			{	writer.releaseLock();
 			}
-		}
-		finally
-		{	reader.releaseLock();
-		}
-	}
-
-	/**	Ex-`Deno.Reader` implementation for this object.
-		It gets a reader (locks the stream), reads, and then releases the reader (unlocks the stream).
-		It returns number of bytes loaded to the `view`, or `null` on EOF.
-		It returns `0` only if `view.byteLength == 0`.
-	 **/
-	async read(view: Uint8Array)
-	{	if (view.byteLength == 0)
-		{	return 0;
-		}
-		const reader = this.getReader({mode: 'byob'});
-		try
-		{	const view2 = await this.#callbackAccessor.read(view);
-			return !view2 ? null : view2.byteLength;
 		}
 		finally
 		{	reader.releaseLock();
