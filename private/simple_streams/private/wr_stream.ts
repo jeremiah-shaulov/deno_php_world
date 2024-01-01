@@ -6,14 +6,6 @@ type Any = any;
 export const _closeEvenIfLocked = Symbol('_closeEvenIfLocked');
 export const _useLowLevelCallbacks = Symbol('_useLowLevelCallbacks');
 
-type SinkInternal =
-{	start?(): void | PromiseLike<void>;
-	write(chunk: Uint8Array, canRedo: boolean): number | PromiseLike<number>;
-	close?(): void | PromiseLike<void>;
-	abort?(reason: Any): void | PromiseLike<void>;
-	catch?(reason: Any): void | PromiseLike<void>;
-};
-
 export type Sink =
 {	// properties:
 
@@ -29,8 +21,16 @@ export type Sink =
 	start?(): void | PromiseLike<void>;
 
 	/**	WrStream calls this callback to ask it to write a chunk of data to the destination that it's managing.
+		The callback can process the writing completely or partially, and it must return number of bytes processed
+		(how many bytes from the beginning of the chunk are written).
+		If it processed only a part, the rest of the chunk, and probably additional bytes,
+		will be passed to the next call to `write()`.
+		If `canReturnZero` is true, it's allowed to process 0 bytes, and the callback will be called again
+		with a larger chunk, or the caller will discover that this was the last chunk, and next time will call
+		`write()` with the same chunk and `!canReturnZero`.
+		If `canReturnZero` is false, and the callback returns 0, this situation is considered to be an error.
 	 **/
-	write(chunk: Uint8Array): number | PromiseLike<number>;
+	write(chunk: Uint8Array, canReturnZero: boolean): number | PromiseLike<number>;
 
 	/**	This method is called as response to `writer.close()`.
 		After that, no more callbacks are called.
@@ -48,12 +48,12 @@ export type Sink =
 	catch?(reason: Any): void | PromiseLike<void>;
 };
 
-export class WrStreamInternal extends WritableStream<Uint8Array>
+export class WrStream extends WritableStream<Uint8Array>
 {	#callbackAccessor: WriteCallbackAccessor;
 	#locked = false;
 	#writerRequests = new Array<(writer: WritableStreamDefaultWriter<Uint8Array>) => void>;
 
-	constructor(sink: SinkInternal)
+	constructor(sink: Sink)
 	{	const callbackAccessor = new WriteCallbackAccessor(sink, true);
 		super
 		(	// `deno_web/06_streams.js` uses hackish way to call methods of `WritableStream` subclasses.
@@ -166,11 +166,12 @@ export class WrStreamInternal extends WritableStream<Uint8Array>
 		{	writer.releaseLock();
 		}
 	}
-}
 
-export class WrStream extends WrStreamInternal
-{	constructor(sink: Sink)
-	{	super(sink);
+	/**	Puts the chunk to queue to be written when possible.
+		If write failed, you'll get exception when you close the stream by calling `close()`.
+	 **/
+	enqueue(chunk: Uint8Array)
+	{	this.writeAtom(chunk).catch(() => {});
 	}
 }
 
@@ -195,6 +196,9 @@ export class WriteCallbackAccessor extends CallbackAccessor
 								chunk = chunk.subarray(nWritten);
 								while (chunk.byteLength > 0)
 								{	nWritten = await callbacks.write!(chunk, false);
+									if (nWritten == 0)
+									{	throw new Error('write() returned 0 during writeAll()');
+									}
 									chunk = chunk.subarray(nWritten);
 								}
 							}

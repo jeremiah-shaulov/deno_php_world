@@ -1,11 +1,11 @@
 import {RdStream} from './rd_stream.ts';
-import {WrStreamInternal, WrStream, Writer, WriteCallbackAccessor, _closeEvenIfLocked, _useLowLevelCallbacks} from './wr_stream.ts';
+import {WrStream, Writer, WriteCallbackAccessor, _closeEvenIfLocked} from './wr_stream.ts';
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
 
 export type Transformer =
-{	overrideAutoAllocateChunkSize?: number;
+{	// properties:
 
 	/**	This callback is called immediately during `TrStream` object creation.
 		When it's promise resolves, i start to call `transform()` to transform data chunks.
@@ -22,7 +22,8 @@ export type Transformer =
 		provided to it.
 		Each input chunk can be of any non-zero size.
 	 **/
-	transform?(writer: Writer, chunk: Uint8Array, canRedo: boolean): number | PromiseLike<number>;
+	transform(writer: Writer, chunk: Uint8Array, canReturnZero: boolean): number | PromiseLike<number>;
+
 	flush?(writer: Writer): void | PromiseLike<void>;
 };
 
@@ -40,14 +41,8 @@ export class TrStream extends TransformStream<Uint8Array, Uint8Array>
 	 **/
 	readonly readable: RdStream;
 
-	/**	This value is copied from `Transformer.overrideAutoAllocateChunkSize` passed to the constructor.
-		This property exists to inform capable users (like `RdStream.pipeThrough()`) about how many bytes to buffer. See `RdStream.pipeThrough`.
-	 **/
-	readonly overrideAutoAllocateChunkSize: number|undefined;
-
 	constructor(transformer: Transformer)
 	{	super();
-		this.overrideAutoAllocateChunkSize = transformer.overrideAutoAllocateChunkSize;
 
 		const {start, transform, flush} = transformer;
 		let currentChunk = EMPTY_CHUNK;
@@ -116,12 +111,12 @@ export class TrStream extends TransformStream<Uint8Array, Uint8Array>
 
 		// User (typically `pipeThrough()`) will write to here the original stream.
 		// Data written to here is passed to `transform()` that is expected to call `writer.write()`.
-		this.writable = new WrStreamInternal
+		this.writable = new WrStream
 		(	{	start: !start ? undefined : () => start(writer),
 
-				write: transform ?
-					(chunk, canRedo) => transform(writer, chunk, canRedo) :
-					(chunk, canRedo) => writer[_useLowLevelCallbacks](callbacks => callbacks.write!(chunk, canRedo)).then(n => n==undefined ? Promise.reject(new Error('This writer is closed')) : n),
+				write(chunk, canReturnZero)
+				{	return transform(writer, chunk, canReturnZero);
+				},
 
 				async close()
 				{	// Input stream ended

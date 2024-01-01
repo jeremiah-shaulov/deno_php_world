@@ -1193,6 +1193,58 @@ Deno.test
 );
 
 Deno.test
+(	'Transform: grow buffer',
+	async () =>
+	{	const GEN_CHUNK_SIZE = 273;
+		const CONSUME_CHUNK_SIZE = 1000;
+		const DATA = new TextEncoder().encode('Hello'.repeat(CONSUME_CHUNK_SIZE));
+		for (let a=0; a<2; a++) // ReadableStream or RdStream
+		{	using sender = createTcpServer
+			(	async conn =>
+				{	const ws = new WrStream(conn);
+					let data = DATA;
+					while (data.byteLength)
+					{	await ws.writeAtom(data.subarray(0, GEN_CHUNK_SIZE));
+						data = data.subarray(GEN_CHUNK_SIZE);
+						await new Promise(y => setTimeout(y, 2));
+					}
+					await ws.close();
+				}
+			);
+			const fh = await Deno.connect({port: sender.port});
+			const rs: ReadableStream<Uint8Array> = a==0 ?
+				fh.readable :
+				new RdStream
+				(	{	autoAllocateChunkSize: CONSUME_CHUNK_SIZE,
+						read: p => fh.read(p),
+						close: () => fh.close(),
+					}
+				);
+			const observedSizes = new Array<number>;
+			const transformed = await RdStream.from
+			(	rs.pipeThrough
+				(	new TrStream
+					(	{	async transform(writer, chunk, canReturnZero)
+							{	observedSizes.push(chunk.buffer.byteLength);
+								if (canReturnZero)
+								{	return 0;
+								}
+								assertEquals(chunk.byteLength, DATA.byteLength);
+								await writer.write(chunk);
+								return chunk.byteLength;
+							}
+						}
+					)
+				)
+			).uint8Array();
+			assertEquals(transformed, DATA);
+			assertEquals(observedSizes[0], CONSUME_CHUNK_SIZE);
+			assertEquals(observedSizes.includes(CONSUME_CHUNK_SIZE*2), true);
+		}
+	}
+);
+
+Deno.test
 (	'Reader: uint8Array()',
 	async () =>
 	{	for (let a=0; a<2; a++) // autoAllocateChunkSize: default, explicit

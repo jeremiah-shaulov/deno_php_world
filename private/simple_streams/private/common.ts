@@ -8,7 +8,7 @@ type Any = any;
 export type Callbacks =
 {	start?(): void | PromiseLike<void>;
 	read?(view: Uint8Array): number | null | PromiseLike<number|null>;
-	write?(chunk: Uint8Array, canRedo: boolean): number | PromiseLike<number>;
+	write?(chunk: Uint8Array, canReturnZero: boolean): number | PromiseLike<number>;
 	close?(): void | PromiseLike<void>;
 	cancel?(reason: Any): void | PromiseLike<void>;
 	abort?(reason: Any): void | PromiseLike<void>;

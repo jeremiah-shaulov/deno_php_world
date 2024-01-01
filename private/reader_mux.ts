@@ -37,7 +37,7 @@ export class ReaderMux
 class ReadToMark extends TrStream
 {	constructor(public end_mark: Uint8Array)
 	{	super
-		(	{	async transform(writer, chunk, canRedo)
+		(	{	async transform(writer, chunk, canReturnZero)
 				{	let i = 0;
 L:					for (const i_end=chunk.byteLength-end_mark.byteLength; i<=i_end; i++)
 					{	for (let j=0, j_end=end_mark.byteLength, k=i; j<j_end; j++, k++)
@@ -52,7 +52,7 @@ L:					for (const i_end=chunk.byteLength-end_mark.byteLength; i<=i_end; i++)
 						await writer.close(); // await current write (if any) and close operations
 						return end_mark.byteLength;
 					}
-					if (!canRedo)
+					if (!canReturnZero)
 					{	i = chunk.byteLength;
 					}
 					if (i > 0)

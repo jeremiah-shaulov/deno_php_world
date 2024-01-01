@@ -87,6 +87,12 @@ const wrStream = new WrStream
 // now use `wrStream` as you would use an instance of WritableStream<Uint8Array>
 ```
 
+# Differences from ReadableStream, WritableStream and TransformStream
+
+- No controllers concept.
+- BYOB-agnostic. Data consumer can use BYOB or regular reading mode, and there's no need of handling these situations differently.
+- No transferring buffers that you pass to `reader.read(buffer)`, so the buffers remain usable after the call.
+
 # Exported classes and types
 
 ```ts
@@ -123,13 +129,14 @@ For example `Deno.stdin` implements `read()`:
 const rdStream = new RdStream(Deno.stdin);
 ```
 
-Or it can be created as wrapper on existing `ReadableStream` object:
+Or it can be created as wrapper on existing `ReadableStream` object. Here is another way of creating `RdStream` that reads from stdin:
 
 ```ts
 const rdStream = RdStream.from(Deno.stdin.readable);
 ```
 
-Wrapping can be useful to benefit from `RdStream` features that `ReadableStream` doesn't have, like `text()` function:
+Now `rdStream` and `Deno.stdin.readable` are the same by the means of `ReadableStream` (both have `getReader()`),
+but `RdStream` also has features that `ReadableStream` doesn't have. For example `text()` function:
 
 ```ts
 console.log(await rdStream.text());
@@ -154,7 +161,8 @@ const rdStream = new RdStream({read: p => Deno.stdin.read(p)});
 function RdStream.constructor(source: Source);
 
 type Source =
-{	/**	If undefined or non-positive number, will use predefined default value (like 32 KiB) when allocating buffers.
+{	/**	When auto-allocating (reading in non-byob mode) will pass to {@link Source.read} buffers of at most this size.
+		If undefined or non-positive number, a predefined default value (like 32 KiB) is used.
 	 **/
 	autoAllocateChunkSize?: number;
 
@@ -341,22 +349,12 @@ But then `pipeTo()` can be called again to continue piping the rest of the input
 
 ```ts
 function RdStream.pipeThrough<T, W extends WritableStream<Uint8Array>, R extends ReadableStream<T>>
-(	transform: Transform<W, R>,
+(	transform:
+	{	readonly writable: W;
+		readonly readable: R;
+	},
 	options?: PipeOptions
 ): R;
-
-type Transform<W extends WritableStream<Uint8Array>, R extends ReadableStream<unknown>> =
-{	readonly writable: W;
-	readonly readable: R;
-
-	/**	If this value is set to a positive integer, `rdStream.pipeThrough()` will use buffer of this size during piping.
-		(By default it uses `autoAllocateChunkSize` that is set on parent `rdStream`).
-		Practically this affects maximum chunk size in `transform(writer, chunk)` callback.
-		If that callback returns `0` indicating that it wants more bytes, it will be called again with a larger chunk, till the chunk size reaches `overrideAutoAllocateChunkSize`.
-		Then, if it still returns `0`, an error is thrown.
-	 **/
-	readonly overrideAutoAllocateChunkSize?: number;
-};
 ```
 Uses `rdStream.pipeTo()` to pipe the data to transformer's writable stream, and returns transformer's readable stream.
 
@@ -424,8 +422,16 @@ type Sink =
 	start?(): void | PromiseLike<void>;
 
 	/**	WrStream calls this callback to ask it to write a chunk of data to the destination that it's managing.
+		The callback can process the writing completely or partially, and it must return number of bytes processed
+		(how many bytes from the beginning of the chunk are written).
+		If it processed only a part, the rest of the chunk, and probably additional bytes,
+		will be passed to the next call to `write()`.
+		If `canReturnZero` is true, it's allowed to process 0 bytes, and the callback will be called again
+		with a larger chunk, or the caller will discover that this was the last chunk, and next time will call
+		`write()` with the same chunk and `!canReturnZero`.
+		If `canReturnZero` is false, and the callback returns 0, this situation is considered to be an error.
 	 **/
-	write(chunk: Uint8Array): number | PromiseLike<number>;
+	write(chunk: Uint8Array, canReturnZero: boolean): number | PromiseLike<number>;
 
 	/**	This method is called as response to `writer.close()`.
 		After that, no more callbacks are called.
@@ -527,6 +533,13 @@ finally
 }
 ```
 
+- **enqueue**
+
+```ts
+function WrStream.enqueue(chunk: Uint8Array);
+```
+Puts the chunk to queue to be written when possible. If write failed, you'll get exception when you close the stream by calling `close()`.
+
 
 ## class TrStream
 
@@ -538,9 +551,8 @@ This class extends [TransformStream](https://developer.mozilla.org/en-US/docs/We
 function TrStream.constructor(transformer: Transformer);
 
 type Transformer =
-{	overrideAutoAllocateChunkSize?: number;
-	start?(writer: Writer): void | PromiseLike<void>;
-	transform?(writer: Writer, chunk: Uint8Array, canRedo: boolean): number | PromiseLike<number>;
+{	start?(writer: Writer): void | PromiseLike<void>;
+	transform?(writer: Writer, chunk: Uint8Array, canReturnZero: boolean): number | PromiseLike<number>;
 	flush?(writer: Writer): void | PromiseLike<void>;
 };
 ```
@@ -563,12 +575,3 @@ readonly TrStream.readable: RdStream;
 ```
 
 Outputs the transformed stream.
-
-- **overrideAutoAllocateChunkSize**
-
-```ts
-readonly TrStream.overrideAutoAllocateChunkSize: number|undefined;
-```
-
-This value is copied from `Transformer.overrideAutoAllocateChunkSize` passed to the constructor.
-This property exists to inform capable users (like `RdStream.pipeThrough()`) about how many bytes to buffer. See `RdStream.pipeThrough`.
