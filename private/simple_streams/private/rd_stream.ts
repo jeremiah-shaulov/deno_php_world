@@ -373,7 +373,7 @@ export class RdStream extends ReadableStream<Uint8Array>
 
 	/**	Reads the whole stream to memory, and converts it to string, just as `TextDecoder.decode()` does.
 	 **/
-	async text(label?: string, options?: TextDecoderOptions)
+	text(label?: string, options?: TextDecoderOptions)
 	{	return this.getReader().text(label, options);
 	}
 }
