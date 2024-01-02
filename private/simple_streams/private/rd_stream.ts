@@ -313,13 +313,54 @@ export class RdStream extends ReadableStream<Uint8Array>
 	{	return this.#callbackAccessor.close(true, reason);
 	}
 
-	/**	Allows you to iterate this stream yielding `Uint8Array` data chunks.
+	/**	Allows to iterate this stream yielding `Uint8Array` data chunks.
+
+		Usually you want to use `for await...of` to iterate.
+		```ts
+		for await (const chunk of rdStream)
+		{	// ...
+		}
+		```
+		It's also possible to iterate manually. In this case you need to be "using" the iterator, or to call `releaseLock()` explicitly.
+		```ts
+		using it = rdStream.values();
+		while (true)
+		{	const {value, done} = await it.next();
+			if (done)
+			{	break;
+			}
+			// ...
+		}
+		```
+
+		If the stream is locked, this method throws error. However you can do `getReaderWhenReady()`, and call identical method on the reader.
 	 **/
 	[Symbol.asyncIterator](options?: {preventCancel?: boolean})
 	{	return new ReadableStreamIterator(this.getReader(), options?.preventCancel===true);
 	}
 
-	/**	Allows you to iterate this stream yielding `Uint8Array` data chunks.
+	/**	This function is the same as `this[Symbol.asyncIterator]`.
+		It allows to iterate this stream yielding `Uint8Array` data chunks.
+
+		Usually you want to use `for await...of` to iterate.
+		```ts
+		for await (const chunk of rdStream.values())
+		{	// ...
+		}
+		```
+		It's also possible to iterate manually. In this case you need to be "using" the iterator, or to call `releaseLock()` explicitly.
+		```ts
+		using it = rdStream.values();
+		while (true)
+		{	const {value, done} = await it.next();
+			if (done)
+			{	break;
+			}
+			// ...
+		}
+		```
+
+		If the stream is locked, this method throws error. However you can do `getReaderWhenReady()`, and call identical method on the reader.
 	 **/
 	values(options?: {preventCancel?: boolean})
 	{	return new ReadableStreamIterator(this.getReader(), options?.preventCancel===true);
@@ -334,6 +375,8 @@ export class RdStream extends ReadableStream<Uint8Array>
 		and parent stream will suspend after each item, till it's read by both of the child streams.
 		In this case if you read and await from the first stream, without previously starting reading from the second,
 		this will cause a deadlock situation.
+
+		If the stream is locked, this method throws error. However you can do `getReaderWhenReady()`, and call identical method on the reader.
 	 **/
 	tee(options?: {requireParallelRead?: boolean}): [RdStream, RdStream]
 	{	return this.getReader().tee(options);
@@ -346,6 +389,8 @@ export class RdStream extends ReadableStream<Uint8Array>
 
 		If destination closes or enters error state, then `pipeTo()` throws exception.
 		But then `pipeTo()` can be called again to continue piping the rest of the stream to another destination (including previously buffered data).
+
+		If the stream is locked, this method throws error. However you can do `getReaderWhenReady()`, and call identical method on the reader.
 	 **/
 	pipeTo(dest: WritableStream<Uint8Array>, options?: PipeOptions)
 	{	return this.getReader().pipeTo(dest, options);
@@ -354,6 +399,8 @@ export class RdStream extends ReadableStream<Uint8Array>
 	/**	Uses `rdStream.pipeTo()` to pipe the data to transformer's writable stream, and returns transformer's readable stream.
 
 		The transformer can be an instance of built-in `TransformStream<Uint8Array, unknown>`, `TrStream`, or any other `writable/readable` pair.
+
+		If the stream is locked, this method throws error. However you can do `getReaderWhenReady()`, and call identical method on the reader.
 	 **/
 	pipeThrough<T, W extends WritableStream<Uint8Array>, R extends ReadableStream<T>>
 	(	transform:
@@ -366,12 +413,16 @@ export class RdStream extends ReadableStream<Uint8Array>
 	}
 
 	/**	Reads the whole stream to memory.
+
+		If the stream is locked, this method throws error. However you can do `getReaderWhenReady()`, and call identical method on the reader.
 	 **/
 	uint8Array()
 	{	return this.getReader().uint8Array();
 	}
 
 	/**	Reads the whole stream to memory, and converts it to string, just as `TextDecoder.decode()` does.
+
+		If the stream is locked, this method throws error. However you can do `getReaderWhenReady()`, and call identical method on the reader.
 	 **/
 	text(label?: string, options?: TextDecoderOptions)
 	{	return this.getReader().text(label, options);

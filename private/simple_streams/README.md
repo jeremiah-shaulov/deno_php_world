@@ -285,7 +285,27 @@ In contrast to `ReadableStream.cancel()`, this method works even if the stream i
 function RdStream[Symbol.asyncIterator](options?: {preventCancel?: boolean});
 function RdStream.values(options?: {preventCancel?: boolean});
 ```
-Allows you to iterate this stream yielding `Uint8Array` data chunks.
+Allows to iterate this stream yielding `Uint8Array` data chunks.
+
+Usually you want to use `for await...of` to iterate.
+```ts
+for await (const chunk of rdStream)
+{	// ...
+}
+```
+It's also possible to iterate manually. In this case you need to be "using" the iterator, or to call `releaseLock()` explicitly.
+```ts
+using it = rdStream.values();
+while (true)
+{	const {value, done} = await it.next();
+	if (done)
+	{	break;
+	}
+	// ...
+}
+```
+
+If the stream is locked, this method throws error. However you can do `getReaderWhenReady()`, and call identical method on the reader.
 
 - **tee**
 
@@ -301,6 +321,8 @@ If `requireParallelRead` option is set, the buffering will be disabled,
 and parent stream will suspend after each item, till it's read by both of the child streams.
 In this case if you read and await from the first stream, without previously starting reading from the second,
 this will cause a deadlock situation.
+
+If the stream is locked, this method throws error. However you can do `getReaderWhenReady()`, and call identical method on the reader.
 
 - **pipeTo**
 
@@ -334,6 +356,8 @@ and the writable stream will be closed unless `preventClose` option is set.
 If destination closes or enters error state, then `pipeTo()` throws exception.
 But then `pipeTo()` can be called again to continue piping the rest of the input stream to another destination (including the chunk that previous `pipeTo()` failed to write).
 
+If the stream is locked, this method throws error. However you can do `getReaderWhenReady()`, and call identical method on the reader.
+
 - **pipeThrough**
 
 ```ts
@@ -349,6 +373,8 @@ Uses `rdStream.pipeTo()` to pipe the data to transformer's writable stream, and 
 
 The transformer can be an instance of built-in `TransformStream<Uint8Array, unknown>`, `TrStream`, or any other object that implements the `Transform` interface (has `writable/readable` pair).
 
+If the stream is locked, this method throws error. However you can do `getReaderWhenReady()`, and call identical method on the reader.
+
 - **uint8Array**
 
 ```ts
@@ -356,12 +382,16 @@ function RdStream.uint8Array(): Promise<Uint8Array>;
 ```
 Reads the whole stream to memory.
 
+If the stream is locked, this method throws error. However you can do `getReaderWhenReady()`, and call identical method on the reader.
+
 - **text**
 
 ```ts
 function RdStream.text(label?: string, options?: TextDecoderOptions): Promise<string>;
 ```
 Reads the whole stream to memory, and converts it to string, just as `TextDecoder.decode()` does.
+
+If the stream is locked, this method throws error. However you can do `getReaderWhenReady()`, and call identical method on the reader.
 
 ### Static methods:
 
