@@ -55,27 +55,22 @@ export type Source =
 };
 
 /**	This class extends `ReadableStream<Uint8Array>`, and can be used as it's substitutor.
-	However it removes as much of `ReadableStream` complexity as possible.
+	It has the following differences:
 
-	- It doesn't use controllers.
-	You define reader source as `Deno.Reader`-compatible object, and writer sink as `Deno.Writer`-compatible.
-	(Even when `Deno.Reader` and `Deno.Writer` will be removed from Deno, this library will continue supporting the same simple interfaces).
-	- Data consumer can use BYOB or regular reading mode, and you don't need to handle these situations differently.
-	- It doesn't transfer buffers that you pass to `reader.read(buffer)`, so they remain usable after the call.
-	- It guarantees not to buffer data for future `read()` calls.
+	- Source is defined with `Deno.Reader`-compatible object.
+	- No controllers concept.
+	- BYOB-agnostic. Data consumer can use BYOB or regular reading mode, and there's no need of handling these situations differently.
+	- No transferring buffers that you pass to `reader.read(buffer)`, so the buffers remain usable after the call.
  **/
 export class RdStream extends ReadableStream<Uint8Array>
 {	// static:
 
-	/**	Converts iterable of `Uint8Array` to `RdStream`.
-		`ReadableStream<Uint8Array>` is also iterable of `Uint8Array`, so it can be converted,
-		and the resulting `RdStream` will be wrapper on the provided readable stream.
-		This can be useful to use `RdStream` functionality that doesn't exist on `ReadableStream`.
-		Also `RdStream.pipeTo()` implementation is more efficient than in `ReadableStream` (at least in Deno `1.37.2`),
-		so can work faster and/or consume less memory, despite the fact that the data will be eventually read from the same uderlying stream object.
+	/**	Constructs `RdStream` from an iterable of `Uint8Array`.
+		Note that `ReadableStream<Uint8Array>` is also iterable of `Uint8Array`, so it can be converted to `RdStream`,
+		and the resulting `RdStream` will be a wrapper on it.
 
-		If you have data source that implements both `ReadableStream<Uint8Array>` and `Deno.Reader`, it will be more efficient to create wrapper from `Deno.Reader`
-		by calling `RdStream` constructor.
+		If you have data source that implements both `ReadableStream<Uint8Array>` and `Deno.Reader`, it's more efficient to create wrapper from `Deno.Reader`
+		by calling the `RdStream` constructor.
 
 		```ts
 		// Create from `Deno.Reader`. This is preferred.
@@ -245,12 +240,9 @@ export class RdStream extends ReadableStream<Uint8Array>
 
 	// properties:
 
-	#autoAllocateChunkSize: number;
-	#autoAllocateMin: number;
 	#callbackAccessor: ReadCallbackAccessor;
 	#locked = false;
-	#readerRequests = new Array<(reader: ReadableStreamDefaultReader<Uint8Array> | ReadableStreamBYOBReader) => void>;
-	#curPiper: Piper|undefined;
+	#readerRequests = new Array<(reader: (ReadableStreamDefaultReader<Uint8Array> | ReadableStreamBYOBReader) & Reader) => void>;
 
 	/**	When somebody wants to start reading this stream, he calls `rdStream.getReader()`, and after that call the stream becomes locked.
 		Future calls to `rdStream.getReader()` will throw error till the reader is released (`reader.releaseLock()`).
@@ -269,21 +261,19 @@ export class RdStream extends ReadableStream<Uint8Array>
 		const autoAllocateMinU = source.autoAllocateMin;
 		const autoAllocateChunkSize = autoAllocateChunkSizeU && autoAllocateChunkSizeU>0 ? autoAllocateChunkSizeU : DEFAULT_AUTO_ALLOCATE_SIZE;
 		const autoAllocateMin = Math.min(autoAllocateChunkSize, autoAllocateMinU && autoAllocateMinU>0 ? autoAllocateMinU : Math.max(256, autoAllocateChunkSize >> 3));
-		this.#autoAllocateChunkSize = autoAllocateChunkSize;
-		this.#autoAllocateMin = autoAllocateMin;
 		this.#callbackAccessor = new ReadCallbackAccessor(autoAllocateChunkSize, autoAllocateMin, source);
 	}
 
 	// methods:
 
 	/**	Returns object that allows to read data from the stream.
-		The stream becomes locked till this reader is released by calling `reader.releaseLock()`.
+		The stream becomes locked till this reader is released by calling `reader.releaseLock()` or `reader[Symbol.dispose]()`.
 
 		If the stream is already locked, this method throws error.
 	 **/
-	getReader(options?: {mode?: undefined}): ReadableStreamDefaultReader<Uint8Array>;
-	getReader(options: {mode: 'byob'}): ReadableStreamBYOBReader;
-	getReader(_options?: {mode?: 'byob'}): ReadableStreamDefaultReader<Uint8Array> | ReadableStreamBYOBReader
+	getReader(options?: {mode?: undefined}): ReadableStreamDefaultReader<Uint8Array> & Reader;
+	getReader(options: {mode: 'byob'}): ReadableStreamBYOBReader & Reader;
+	getReader(_options?: {mode?: 'byob'}): (ReadableStreamDefaultReader<Uint8Array> | ReadableStreamBYOBReader) & Reader
 	{	if (this.#locked)
 		{	throw new TypeError('ReadableStream is locked.');
 		}
@@ -301,21 +291,14 @@ export class RdStream extends ReadableStream<Uint8Array>
 	}
 
 	/**	Like `rdStream.getReader()`, but waits for the stream to become unlocked before returning the reader (and so locking it again).
-
-		If you actually don't need the reader, but just want to catch the moment when the stream unlocks, you can do:
-
-		```ts
-		(await rdStream.getReaderWhenReady()).releaseLock();
-		// here you can immediately (without awaiting any promises) call `pipeTo()`, or something else
-		```
 	 **/
-	getReaderWhenReady(options?: {mode?: undefined}): Promise<ReadableStreamDefaultReader<Uint8Array>>;
-	getReaderWhenReady(options: {mode: 'byob'}): Promise<ReadableStreamBYOBReader>;
-	getReaderWhenReady(_options?: {mode?: 'byob'}): Promise<ReadableStreamDefaultReader<Uint8Array> | ReadableStreamBYOBReader>
+	getReaderWhenReady(options?: {mode?: undefined}): Promise<ReadableStreamDefaultReader<Uint8Array> & Reader>;
+	getReaderWhenReady(options: {mode: 'byob'}): Promise<ReadableStreamBYOBReader & Reader>;
+	getReaderWhenReady(_options?: {mode?: 'byob'}): Promise<(ReadableStreamDefaultReader<Uint8Array> | ReadableStreamBYOBReader) & Reader>
 	{	if (!this.#locked)
 		{	return Promise.resolve(this.getReader());
 		}
-		return new Promise<ReadableStreamDefaultReader<Uint8Array> | ReadableStreamBYOBReader>(y => {this.#readerRequests.push(y)});
+		return new Promise<(ReadableStreamDefaultReader<Uint8Array> | ReadableStreamBYOBReader) & Reader>(y => {this.#readerRequests.push(y)});
 	}
 
 	/**	Interrupt current reading operation (reject the promise that `reader.read()` returned, if any),
@@ -333,13 +316,13 @@ export class RdStream extends ReadableStream<Uint8Array>
 	/**	Allows you to iterate this stream yielding `Uint8Array` data chunks.
 	 **/
 	[Symbol.asyncIterator](options?: {preventCancel?: boolean})
-	{	return new ReadableStreamIterator(this, options?.preventCancel===true);
+	{	return new ReadableStreamIterator(this.getReader(), options?.preventCancel===true);
 	}
 
 	/**	Allows you to iterate this stream yielding `Uint8Array` data chunks.
 	 **/
 	values(options?: {preventCancel?: boolean})
-	{	return new ReadableStreamIterator(this, options?.preventCancel===true);
+	{	return new ReadableStreamIterator(this.getReader(), options?.preventCancel===true);
 	}
 
 	/**	Splits the stream to 2, so the rest of the data can be read from both of the resulting streams.
@@ -353,21 +336,7 @@ export class RdStream extends ReadableStream<Uint8Array>
 		this will cause a deadlock situation.
 	 **/
 	tee(options?: {requireParallelRead?: boolean}): [RdStream, RdStream]
-	{	const reader = this.getReader({mode: 'byob'});
-		const tee = options?.requireParallelRead ? new TeeRequireParallelRead(reader) : new TeeRegular(reader);
-
-		return [
-			new RdStream
-			(	{	read: view => tee.read(view, -1),
-					cancel: reason => tee.cancel(reason, -1),
-				}
-			),
-			new RdStream
-			(	{	read: view => tee.read(view, +1),
-					cancel: reason => tee.cancel(reason, +1),
-				}
-			),
-		];
+	{	return this.getReader().tee(options);
 	}
 
 	/**	Pipe data from this stream to `dest` writable stream (that can be built-in `WritableStream<Uint8Array>` or `WrStream`).
@@ -379,7 +348,7 @@ export class RdStream extends ReadableStream<Uint8Array>
 		But then `pipeTo()` can be called again to continue piping the rest of the stream to another destination (including previously buffered data).
 	 **/
 	pipeTo(dest: WritableStream<Uint8Array>, options?: PipeOptions)
-	{	return this.#pipeTo(dest, options);
+	{	return this.getReader().pipeTo(dest, options);
 	}
 
 	/**	Uses `rdStream.pipeTo()` to pipe the data to transformer's writable stream, and returns transformer's readable stream.
@@ -393,159 +362,30 @@ export class RdStream extends ReadableStream<Uint8Array>
 		},
 		options?: PipeOptions
 	)
-	{	if (this.#locked)
-		{	throw new TypeError('ReadableStream is locked.');
-		}
-		this.#pipeTo(transform.writable, options).then(undefined, () => {});
-		return transform.readable;
-	}
-
-	async #pipeTo(dest: WritableStream<Uint8Array>, options?: PipeOptions)
-	{	const reader = this.getReader({mode: 'byob'});
-		try
-		{	const writer = dest.getWriter();
-			const curPiper = this.#curPiper ?? new Piper(this.#autoAllocateChunkSize, this.#autoAllocateMin);
-			this.#curPiper = curPiper;
-			try
-			{	const signal = options?.signal;
-				if (signal)
-				{	if (signal.aborted)
-					{	throw signal.reason;
-					}
-					signal.addEventListener('abort', () => {writer.abort(signal.reason)});
-				}
-				const isEof = await this.#callbackAccessor.useCallbacks
-				(	callbacksForRead =>
-					{	if (writer instanceof Writer)
-						{	return writer[_useLowLevelCallbacks]
-							(	callbacksForWrite => curPiper.pipeTo
-								(	writer.closed,
-									callbacksForRead,
-									(chunk, canReturnZero) =>
-									{	const resultOrPromise = callbacksForWrite.write!(chunk, canReturnZero);
-										if (typeof(resultOrPromise) != 'object')
-										{	return -resultOrPromise - 1;
-										}
-										return resultOrPromise.then(result => -result - 1);
-									}
-								)
-							);
-						}
-						else
-						{	return curPiper.pipeTo
-							(	writer.closed,
-								callbacksForRead,
-								async chunk =>
-								{	await writer.write(chunk);
-									return -chunk.byteLength - 1;
-								}
-							);
-						}
-					}
-				);
-				if (isEof !== false)
-				{	this.#curPiper = undefined;
-					if (options?.preventClose)
-					{	await this.#callbackAccessor.close();
-					}
-					else
-					{	await Promise.all([this.#callbackAccessor.close(), writer.close()]);
-					}
-				}
-			}
-			catch (e)
-			{	if (this.#callbackAccessor.error !== undefined)
-				{	// Read error
-					if (!options?.preventAbort)
-					{	writer.abort(e);
-					}
-				}
-				else
-				{	// Write error
-					if (!options?.preventCancel)
-					{	reader.cancel(e);
-					}
-				}
-			}
-			finally
-			{	writer.releaseLock();
-			}
-		}
-		finally
-		{	reader.releaseLock();
-		}
+	{	return this.getReader().pipeThrough(transform, options);
 	}
 
 	/**	Reads the whole stream to memory.
 	 **/
-	async uint8Array()
-	{	const reader = this.getReader({mode: 'byob'});
-		try
-		{	const result = await this.#callbackAccessor.useCallbacks
-			(	async callbacks =>
-				{	const chunks = new Array<Uint8Array>;
-					let totalLen = 0;
-					let chunkSize = this.#autoAllocateChunkSize || DEFAULT_AUTO_ALLOCATE_SIZE;
-					const autoAllocateMin = this.#autoAllocateMin;
-					while (true)
-					{	let chunk = new Uint8Array(chunkSize);
-						while (chunk.byteLength >= autoAllocateMin)
-						{	const nRead = await callbacks.read!(chunk);
-							if (!nRead)
-							{	await this.#callbackAccessor.close();
-								const {byteOffset} = chunk;
-								if (byteOffset > 0)
-								{	chunk = new Uint8Array(chunk.buffer, 0, byteOffset);
-									totalLen += byteOffset;
-									if (chunks.length == 0)
-									{	return chunk;
-									}
-									chunks.push(chunk);
-								}
-								if (chunks.length == 0)
-								{	return new Uint8Array;
-								}
-								if (chunks.length == 1)
-								{	return chunks[0];
-								}
-								const result = new Uint8Array(totalLen);
-								let pos = 0;
-								for (const chunk of chunks)
-								{	result.set(chunk, pos);
-									pos += chunk.byteLength;
-								}
-								return result;
-							}
-							chunk = chunk.subarray(nRead);
-						}
-						const {byteOffset} = chunk;
-						chunk = new Uint8Array(chunk.buffer, 0, byteOffset);
-						totalLen += byteOffset;
-						chunks.push(chunk);
-						chunkSize *= 2;
-					}
-				}
-			);
-			return result ?? new Uint8Array;
-		}
-		finally
-		{	reader.releaseLock();
-		}
+	uint8Array()
+	{	return this.getReader().uint8Array();
 	}
 
 	/**	Reads the whole stream to memory, and converts it to string, just as `TextDecoder.decode()` does.
 	 **/
 	async text(label?: string, options?: TextDecoderOptions)
-	{	return new TextDecoder(label, options).decode(await this.uint8Array());
+	{	return this.getReader().text(label, options);
 	}
 }
 
 class ReadCallbackAccessor extends CallbackAccessor
-{	#autoAllocateBuffer: Uint8Array|undefined;
+{	curPiper: Piper|undefined;
+
+	#autoAllocateBuffer: Uint8Array|undefined;
 
 	constructor
-	(	private autoAllocateChunkSize: number,
-		private autoAllocateMin: number,
+	(	public autoAllocateChunkSize: number,
+		public autoAllocateMin: number,
 		callbacks: Callbacks,
 	)
 	{	super(callbacks, false);
@@ -584,7 +424,9 @@ class ReadCallbackAccessor extends CallbackAccessor
 /**	This class plays the same role in `RdStream` as does `ReadableStreamBYOBReader` in `ReadableStream<Uint8Array>`.
  **/
 export class Reader extends ReaderOrWriter<ReadCallbackAccessor>
-{	async read<V extends ArrayBufferView>(view?: V): Promise<ReadableStreamBYOBReadResult<V>>
+{	read(): Promise<ReadableStreamDefaultReadResult<Uint8Array>>;
+	read<V extends ArrayBufferView>(view?: V): Promise<ReadableStreamBYOBReadResult<V>>;
+	async read<V extends ArrayBufferView>(view?: V): Promise<ReadableStreamBYOBReadResult<V>>
 	{	if (view && !(view instanceof Uint8Array))
 		{	throw new Error('Only Uint8Array is supported'); // i always return `Uint8Array`, and it must be also `V`
 		}
@@ -598,13 +440,216 @@ export class Reader extends ReaderOrWriter<ReadCallbackAccessor>
 	cancel(reason?: Any)
 	{	return this.getCallbackAccessor().close(true, reason);
 	}
+
+	/**	Allows you to iterate this stream yielding `Uint8Array` data chunks.
+	 **/
+	[Symbol.asyncIterator](options?: {preventCancel?: boolean})
+	{	return new ReadableStreamIterator(this, options?.preventCancel===true);
+	}
+
+	/**	Allows you to iterate this stream yielding `Uint8Array` data chunks.
+	 **/
+	values(options?: {preventCancel?: boolean})
+	{	return new ReadableStreamIterator(this, options?.preventCancel===true);
+	}
+
+	/**	Splits the stream to 2, so the rest of the data can be read from both of the resulting streams.
+
+		If you'll read from one stream faster than from another, or will not read at all from one of them,
+		the default behavior is to buffer the data.
+
+		If `requireParallelRead` option is set, the buffering will be disabled,
+		and parent stream will suspend after each item, till it's read by both of the child streams.
+		In this case if you read and await from the first stream, without previously starting reading from the second,
+		this will cause a deadlock situation.
+	 **/
+	tee(options?: {requireParallelRead?: boolean}): [RdStream, RdStream]
+	{	const tee = options?.requireParallelRead ? new TeeRequireParallelRead(this) : new TeeRegular(this);
+
+		return [
+			new RdStream
+			(	{	read: view => tee.read(view, -1),
+					cancel: reason => tee.cancel(reason, -1),
+				}
+			),
+			new RdStream
+			(	{	read: view => tee.read(view, +1),
+					cancel: reason => tee.cancel(reason, +1),
+				}
+			),
+		];
+	}
+
+	/**	Pipe data from this stream to `dest` writable stream (that can be built-in `WritableStream<Uint8Array>` or `WrStream`).
+
+		If the data is piped to EOF without error, the source readable stream is closed as usual (`close()` callback is called on `Source`),
+		and the writable stream will be closed unless `preventClose` option is set.
+
+		If destination closes or enters error state, then `pipeTo()` throws exception.
+		But then `pipeTo()` can be called again to continue piping the rest of the stream to another destination (including previously buffered data).
+
+		Finally the reader will be unlocked.
+	 **/
+	async pipeTo(dest: WritableStream<Uint8Array>, options?: PipeOptions)
+	{	try
+		{	const callbackAccessor = this.getCallbackAccessor();
+			const writer = dest.getWriter();
+			const curPiper = callbackAccessor.curPiper ?? new Piper(callbackAccessor.autoAllocateChunkSize, callbackAccessor.autoAllocateMin);
+			callbackAccessor.curPiper = curPiper;
+			try
+			{	const signal = options?.signal;
+				if (signal)
+				{	if (signal.aborted)
+					{	throw signal.reason;
+					}
+					signal.addEventListener('abort', () => {writer.abort(signal.reason)});
+				}
+				const isEof = await callbackAccessor.useCallbacks
+				(	callbacksForRead =>
+					{	if (writer instanceof Writer)
+						{	return writer[_useLowLevelCallbacks]
+							(	callbacksForWrite => curPiper.pipeTo
+								(	writer.closed,
+									callbacksForRead,
+									(chunk, canReturnZero) =>
+									{	const resultOrPromise = callbacksForWrite.write!(chunk, canReturnZero);
+										if (typeof(resultOrPromise) != 'object')
+										{	return -resultOrPromise - 1;
+										}
+										return resultOrPromise.then(result => -result - 1);
+									}
+								)
+							);
+						}
+						else
+						{	return curPiper.pipeTo
+							(	writer.closed,
+								callbacksForRead,
+								async chunk =>
+								{	await writer.write(chunk);
+									return -chunk.byteLength - 1;
+								}
+							);
+						}
+					}
+				);
+				if (isEof !== false)
+				{	callbackAccessor.curPiper = undefined;
+					if (options?.preventClose)
+					{	await callbackAccessor.close();
+					}
+					else
+					{	await Promise.all([callbackAccessor.close(), writer.close()]);
+					}
+				}
+			}
+			catch (e)
+			{	if (callbackAccessor.error !== undefined)
+				{	// Read error
+					if (!options?.preventAbort)
+					{	writer.abort(e);
+					}
+				}
+				else
+				{	// Write error
+					if (!options?.preventCancel)
+					{	this.cancel(e);
+					}
+				}
+			}
+			finally
+			{	writer.releaseLock();
+			}
+		}
+		finally
+		{	this.releaseLock();
+		}
+	}
+
+	/**	Uses `reader.pipeTo()` to pipe the data to transformer's writable stream, and returns transformer's readable stream.
+
+		The transformer can be an instance of built-in `TransformStream<Uint8Array, unknown>`, `TrStream`, or any other `writable/readable` pair.
+
+		Finally the reader will be unlocked.
+	 **/
+	pipeThrough<T, W extends WritableStream<Uint8Array>, R extends ReadableStream<T>>
+	(	transform:
+		{	readonly writable: W;
+			readonly readable: R;
+		},
+		options?: PipeOptions
+	)
+	{	this.pipeTo(transform.writable, options).then(undefined, () => {});
+		return transform.readable;
+	}
+
+	/**	Reads the whole stream to memory.
+	 **/
+	async uint8Array()
+	{	try
+		{	const callbackAccessor = this.getCallbackAccessor();
+			const result = await callbackAccessor.useCallbacks
+			(	async callbacks =>
+				{	const chunks = new Array<Uint8Array>;
+					let totalLen = 0;
+					let chunkSize = callbackAccessor.autoAllocateChunkSize || DEFAULT_AUTO_ALLOCATE_SIZE;
+					const autoAllocateMin = callbackAccessor.autoAllocateMin;
+					while (true)
+					{	let chunk = new Uint8Array(chunkSize);
+						while (chunk.byteLength >= autoAllocateMin)
+						{	const nRead = await callbacks.read!(chunk);
+							if (!nRead)
+							{	await callbackAccessor.close();
+								const {byteOffset} = chunk;
+								if (byteOffset > 0)
+								{	chunk = new Uint8Array(chunk.buffer, 0, byteOffset);
+									totalLen += byteOffset;
+									if (chunks.length == 0)
+									{	return chunk;
+									}
+									chunks.push(chunk);
+								}
+								if (chunks.length == 0)
+								{	return new Uint8Array;
+								}
+								if (chunks.length == 1)
+								{	return chunks[0];
+								}
+								const result = new Uint8Array(totalLen);
+								let pos = 0;
+								for (const chunk of chunks)
+								{	result.set(chunk, pos);
+									pos += chunk.byteLength;
+								}
+								return result;
+							}
+							chunk = chunk.subarray(nRead);
+						}
+						const {byteOffset} = chunk;
+						chunk = new Uint8Array(chunk.buffer, 0, byteOffset);
+						totalLen += byteOffset;
+						chunks.push(chunk);
+						chunkSize *= 2;
+					}
+				}
+			);
+			return result ?? new Uint8Array;
+		}
+		finally
+		{	this.releaseLock();
+		}
+	}
+
+	/**	Reads the whole stream to memory, and converts it to string, just as `TextDecoder.decode()` does.
+	 **/
+	async text(label?: string, options?: TextDecoderOptions)
+	{	return new TextDecoder(label, options).decode(await this.uint8Array());
+	}
 }
 
 class ReadableStreamIterator implements AsyncIterableIterator<Uint8Array>
-{	#reader: ReadableStreamDefaultReader<Uint8Array>;
-
-	constructor(stream: RdStream, private preventCancel: boolean)
-	{	this.#reader = stream.getReader();
+{	constructor(private reader: ReadableStreamDefaultReader<Uint8Array>, private preventCancel: boolean)
+	{
 	}
 
 	[Symbol.asyncIterator]()
@@ -612,7 +657,7 @@ class ReadableStreamIterator implements AsyncIterableIterator<Uint8Array>
 	}
 
 	async next(): Promise<IteratorResult<Uint8Array>>
-	{	const {value, done} = await this.#reader.read();
+	{	const {value, done} = await this.reader.read();
 		if (value?.byteLength || !done)
 		{	return {value, done: false};
 		}
@@ -621,15 +666,23 @@ class ReadableStreamIterator implements AsyncIterableIterator<Uint8Array>
 
 	// deno-lint-ignore require-await
 	async return(value?: Uint8Array): Promise<IteratorResult<Uint8Array>>
-	{	if (!this.preventCancel)
-		{	this.#reader.cancel();
-		}
-		this.#reader.releaseLock();
+	{	this[Symbol.dispose]();
 		return {value, done: true};
 	}
 
 	throw(): Promise<IteratorResult<Uint8Array>>
 	{	return this.return();
+	}
+
+	[Symbol.dispose]()
+	{	try
+		{	if (!this.preventCancel)
+			{	this.reader.cancel();
+			}
+		}
+		finally
+		{	this.reader.releaseLock();
+		}
 	}
 }
 
@@ -799,6 +852,7 @@ function bufferSizeFor(dataSize: number)
 
 class Piper
 {	private buffer: Uint8Array;
+	private readTo = 0; // position in buffer from where it's good to read more bytes, because there's `autoAllocateMin` space
 	private readPos = 0; // read to `buffer[readPos ..]`
 	private writePos = 0; // write from `buffer[writePos .. readPos]`
 	private readPos2 = 0; // when `readPos > readTo` read to `buffer[readPos2 .. writePos]` over already read and written part of the buffer on the left of `writePos`
@@ -807,8 +861,9 @@ class Piper
 	private readPromise: number | null | PromiseLike<number|null> | undefined; // pending read operation that reads to the buffer
 	private isEof = false; // i'll not read (i.e. create `readPromise`) if EOF reached
 
-	constructor(autoAllocateChunkSize: number, private autoAllocateMin: number)
+	constructor(autoAllocateChunkSize: number, autoAllocateMin: number)
 	{	this.buffer = new Uint8Array(autoAllocateChunkSize);
+		this.readTo = autoAllocateChunkSize - autoAllocateMin;
 	}
 
 	async pipeTo
@@ -816,13 +871,15 @@ class Piper
 		callbacksForRead: Callbacks,
 		callbackWriteInverting: (chunk: Uint8Array, canReturnZero: boolean) => number | PromiseLike<number>,
 	)
-	{	let {autoAllocateMin, buffer, readPos, writePos, readPos2, usingReadPos2, lastWriteCanReturnZero, readPromise, isEof} = this;
+	{	let {buffer, readTo, readPos, writePos, readPos2, usingReadPos2, lastWriteCanReturnZero, readPromise, isEof} = this;
 		let bufferSize = buffer.byteLength;
 		let halfBufferSize = bufferSize<2 ? bufferSize : bufferSize >> 1;
-		let readTo = bufferSize - autoAllocateMin;
 		let writePromise: number | PromiseLike<number> | undefined; // pending write operation that writes from the buffer
 		let writerClosed = false;
 		writerClosedPromise.then(() => {writerClosed = true});
+		// Assume: 0 <= readPos2 <= writePos <= readPos <= bufferSize
+		// Can read to `buffer[readPos .. bufferSize]`, and then to `buffer[readPos2 .. writePos]`
+		// Can write from `buffer[writePos .. readPos]`, and then `buffer[0 .. readPos2]` will become `buffer[writePos .. readPos]` (will set readPos to readPos2, writePos to 0, and readPos2 to 0)
 		try
 		{	while (true)
 			{	// writerClosed?
@@ -913,7 +970,6 @@ class Piper
 					}
 					else
 					{	// They want a larger chunk
-						const justReadMoreDataOrEof = !!readPromise;
 						if (readPromise)
 						{	// writerClosed?
 							if (writerClosed)
@@ -948,7 +1004,7 @@ class Piper
 								readPos2 -= copySize;
 							}
 							else if (isEof)
-							{	if (!justReadMoreDataOrEof)
+							{	if (!lastWriteCanReturnZero)
 								{	throw new Error(`write() returned 0 during pipeTo() when there're no more data`);
 								}
 								// Call write callback again with `!canReturnZero`
@@ -976,7 +1032,7 @@ class Piper
 								readPos += leftPart.byteLength;
 							}
 							else if (isEof)
-							{	if (!justReadMoreDataOrEof)
+							{	if (!lastWriteCanReturnZero)
 								{	throw new Error(`write() returned 0 during pipeTo() when there're no more data`);
 								}
 								// Call write callback again with `!canReturnZero`
@@ -997,7 +1053,7 @@ class Piper
 								}
 							}
 						}
-						else if (!justReadMoreDataOrEof || isEof)
+						else
 						{	// Assume: `readPos == bufferSize` (because `holeSize==0` above)
 							// Assume: `writePos == 0` (see above)
 							// Assume: `readPos2 == 0` (because `0 <= readPos2 <= writePos`)
@@ -1005,7 +1061,6 @@ class Piper
 							{	// The buffer is full, but not EOF, so enlarge the buffer
 								halfBufferSize = bufferSize;
 								bufferSize *= 2;
-								readTo = bufferSize - autoAllocateMin;
 								const tmp = new Uint8Array(bufferSize);
 								tmp.set(buffer);
 								buffer = tmp;

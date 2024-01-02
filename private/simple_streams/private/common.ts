@@ -176,4 +176,8 @@ export class ReaderOrWriter<SomeCallbackAccessor extends CallbackAccessor>
 	{	this.callbackAccessor = undefined;
 		this.onRelease();
 	}
+
+	[Symbol.dispose]()
+	{	this.releaseLock();
+	}
 }

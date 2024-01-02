@@ -4,8 +4,7 @@ This library introduces 3 classes: `RdStream`, `WrStream` and `TrStream`, that c
 [TransformStream](https://developer.mozilla.org/en-US/docs/Web/API/TransformStream)`<Uint8Array, Uint8Array>`.
 
 This library reimplements `ReadableStream`, `WritableStream` and `TransformStream` in the fashion that the author of this library likes.
-The style of this library is to reuse buffers, don't [transfer](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/ArrayBuffer/transfer) buffers,
-and to use efficient algorithms.
+The style of this library is to reuse buffers, and not to [transfer](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/ArrayBuffer/transfer) buffers.
 
 This library requires to implement only a simple interface to create stream of bytes.
 Here is such interface that any object can implement to provide to others a readable byte-stream:
@@ -142,9 +141,6 @@ but `RdStream` also has features that `ReadableStream` doesn't have. For example
 console.log(await rdStream.text());
 ```
 
-In many cases calling `pipeTo()` on `RdStream` that wraps `ReadableStream` is faster and/or consumes less memory, than calling `pipeTo()`
-directly on `ReadableStream` (at least in Deno `1.37.2`), because `RdStream` uses efficient algorithms.
-
 Creating `RdStream` from `read()` implementors (like `new RdStream(Deno.stdin)`) is preferrable (because it works faster) than creating from another streams (like `RdStream.from(Deno.stdin.readable)`).
 However note that `Deno.stdin` also implements `close()`, so the file descriptor will be closed after reading to the end.
 To prevent this, use:
@@ -258,7 +254,7 @@ function RdStream.getReader(options?: {mode?: undefined}): ReadableStreamDefault
 function RdStream.getReader(options: {mode: 'byob'}): ReadableStreamBYOBReader;
 ```
 Returns object that allows to read data from the stream.
-The stream becomes locked till this reader is released by calling `reader.releaseLock()`.
+The stream becomes locked till this reader is released by calling `reader.releaseLock()` or `reader[Symbol.dispose]()`.
 
 If the stream is already locked, this method throws error.
 
@@ -269,13 +265,6 @@ function RdStream.getReaderWhenReady(options?: {mode?: undefined}): Promise<Read
 function RdStream.getReaderWhenReady(options: {mode: 'byob'}): Promise<ReadableStreamBYOBReader>;
 ```
 Like `rdStream.getReader()`, but waits for the stream to become unlocked before returning the reader (and so locking it again).
-
-If you actually don't need the reader, but just want to catch the moment when the stream unlocks, you can do:
-
-```ts
-(await rdStream.getReaderWhenReady()).releaseLock();
-// here you can immediately (without awaiting any promises) call `pipeTo()`, or something else
-```
 
 - **cancel**
 
@@ -474,7 +463,7 @@ Other operations that write to the stream (like `wrStream.writeAll()`) also lock
 function WrStream.getWriter(): WritableStreamDefaultWriter<Uint8Array>;
 ```
 Returns object that allows to write data to the stream.
-The stream becomes locked till this writer is released by calling `writer.releaseLock()`.
+The stream becomes locked till this writer is released by calling `writer.releaseLock()` or `writer[Symbol.dispose]()`.
 
 If the stream is already locked, this method throws error.
 
@@ -485,13 +474,6 @@ function WrStream.getWriterWhenReady(): Promise<WritableStreamDefaultWriter<Uint
 ```
 
 Like `wrStream.getWriter()`, but waits for the stream to become unlocked before returning the writer (and so locking it again).
-
-If you actually don't need the writer, but just want to catch the moment when the stream unlocks, you can do:
-
-```ts
-(await wrStream.getWriterWhenReady()).releaseLock();
-// here you can immediately (without awaiting any promises) call `writeAll()`, or something else
-```
 
 - **abort**
 

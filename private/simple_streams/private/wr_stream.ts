@@ -84,7 +84,7 @@ export class WrStream extends WritableStream<Uint8Array>
 	}
 
 	/**	Returns object that allows to write data to the stream.
-		The stream becomes locked till this writer is released by calling `writer.releaseLock()`.
+		The stream becomes locked till this writer is released by calling `writer.releaseLock()` or `writer[Symbol.dispose]()`.
 
 		If the stream is already locked, this method throws error.
 	 **/
@@ -104,13 +104,6 @@ export class WrStream extends WritableStream<Uint8Array>
 	}
 
 	/**	Like `wrStream.getWriter()`, but waits for the stream to become unlocked before returning the writer (and so locking it again).
-
-		If you actually don't need the writer, but just want to catch the moment when the stream unlocks, you can do:
-
-		```ts
-		(await wrStream.getWriterWhenReady()).releaseLock();
-		// here you can immediately (without awaiting any promises) call `writeAll()`, or something else
-		```
 	 **/
 	getWriterWhenReady()
 	{	if (!this.#locked)

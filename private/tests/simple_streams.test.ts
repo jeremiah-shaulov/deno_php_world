@@ -1158,8 +1158,7 @@ Deno.test
 		const parts = new Array<Uint8Array>;
 		while (true)
 		{	let i2 = 0;
-			(await rs.getReaderWhenReady()).releaseLock();
-			const part = await rs.pipeThrough
+			const part = await (await rs.getReaderWhenReady()).pipeThrough
 			(	new TrStream
 				(	{	async transform(writer, chunk)
 						{	let i = 0;
@@ -1195,8 +1194,8 @@ Deno.test
 Deno.test
 (	'Transform: grow buffer',
 	async () =>
-	{	const GEN_CHUNK_SIZE = 273;
-		const CONSUME_CHUNK_SIZE = 1000;
+	{	const GEN_CHUNK_SIZE = 2733;
+		const CONSUME_CHUNK_SIZE = 64*1024;
 		const DATA = new TextEncoder().encode('Hello'.repeat(CONSUME_CHUNK_SIZE));
 		for (let a=0; a<2; a++) // ReadableStream or RdStream
 		{	using sender = createTcpServer
@@ -1238,8 +1237,10 @@ Deno.test
 				)
 			).uint8Array();
 			assertEquals(transformed, DATA);
-			assertEquals(observedSizes[0], CONSUME_CHUNK_SIZE);
-			assertEquals(observedSizes.includes(CONSUME_CHUNK_SIZE*2), true);
+			if (a == 1)
+			{	assertEquals(observedSizes[0], CONSUME_CHUNK_SIZE);
+				assertEquals(observedSizes.includes(CONSUME_CHUNK_SIZE*2), true);
+			}
 		}
 	}
 );
