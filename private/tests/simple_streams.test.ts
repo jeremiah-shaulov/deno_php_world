@@ -1203,7 +1203,7 @@ Deno.test
 				{	const ws = new WrStream(conn);
 					let data = DATA;
 					while (data.byteLength)
-					{	await ws.writeAtom(data.subarray(0, GEN_CHUNK_SIZE));
+					{	await ws.writeWhenReady(data.subarray(0, GEN_CHUNK_SIZE));
 						data = data.subarray(GEN_CHUNK_SIZE);
 						await new Promise(y => setTimeout(y, 2));
 					}

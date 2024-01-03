@@ -146,16 +146,12 @@ export class WrStreamInternal extends WritableStream<Uint8Array>
 		writes the chunk, and then releases the writer (unlocks the stream).
 		This is the same as doing:
 		```ts
-		const writer = await wrStream.getWriterWhenReady();
-		try
-		{	await writer.write(chunk);
-		}
-		finally
-		{	writer.releaseLock();
+		{	using writer = await wrStream.getWriterWhenReady();
+			await writer.write(chunk);
 		}
 		```
 	 **/
-	async writeAtom(chunk: Uint8Array)
+	async writeWhenReady(chunk: Uint8Array)
 	{	const writer = await this.getWriterWhenReady();
 		try
 		{	await this.#callbackAccessor.writeAll(chunk);

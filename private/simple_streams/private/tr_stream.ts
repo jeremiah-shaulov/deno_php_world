@@ -17,7 +17,7 @@ export type Transformer =
 	 **/
 	start?(writer: Writer): void | PromiseLike<void>;
 
-	/**	During stream transformation this callback gets called for chunks (peaces) of incoming data.
+	/**	During stream transformation this callback gets called for chunks (pieces) of incoming data.
 		This callback is expected to transform the data as needed, and to write the result to a `writer`
 		provided to it.
 		Each input chunk can be of any non-zero size.
@@ -29,6 +29,8 @@ export type Transformer =
 	 **/
 	transform(writer: Writer, chunk: Uint8Array, canReturnZero: boolean): number | PromiseLike<number>;
 
+	/**	At last, when the whole stream was transformed, this callback is called.
+	 **/
 	flush?(writer: Writer): void | PromiseLike<void>;
 };
 

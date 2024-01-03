@@ -102,9 +102,9 @@ Differences in API:
 # Exported classes and types
 
 ```ts
-import {RdStream, Source} from 'mod.ts';
-import {WrStream, Sink} from 'mod.ts';
-import {TrStream, Transformer} from 'mod.ts';
+import {RdStream, Source} from './mod.ts';
+import {WrStream, Sink} from './mod.ts';
+import {TrStream, Transformer} from './mod.ts';
 ```
 
 - [RdStream](#class-rdstream)
@@ -157,6 +157,36 @@ const rdStream = new RdStream({read: p => Deno.stdin.read(p)});
 ```
 
 `RdStream.from()` also allows to create `RdStream` instances from iterable objects that yield `Uint8Array` items (see `RdStream.from()`).
+
+### Example
+
+The following example demonstrates readable stream that generates word "Hello".
+
+```ts
+import {RdStream} from './mod.ts';
+
+const textEncoder = new TextEncoder;
+
+/**	Readable stream, compatible with `ReadableStream<Uint8Array>`, that streams the string provided to it's constructor.
+ **/
+class StringStreamer extends RdStream
+{	constructor(str='')
+	{	let hello = textEncoder.encode(str);
+		super
+		(	{	read(view)
+				{	const n = Math.min(view.byteLength, hello.byteLength);
+					view.set(hello.subarray(0, n));
+					hello = hello.subarray(n);
+					return n;
+				}
+			}
+		);
+	}
+}
+
+// Write word "Hello" to stdout
+new StringStreamer('Hello\n').pipeTo(Deno.stdout.writable);
+```
 
 ### Constructor:
 
@@ -430,6 +460,45 @@ console.log(await rdStream2.text());
 
 This class extends [WritableStream](https://developer.mozilla.org/en-US/docs/Web/API/WritableStream`<Uint8Array>`.
 
+### Example
+
+```ts
+import {WrStream} from './mod.ts';
+
+/**	Writable stream that accumulates data to string result.
+ **/
+class StringSink extends WrStream
+{	value = '';
+
+	constructor()
+	{	const decoder = new TextDecoder;
+		super
+		(	{	write: chunk =>
+				{	this.value += decoder.decode(chunk, {stream: true});
+					return chunk.byteLength;
+				}
+			}
+		);
+	}
+
+	toString()
+	{	return this.value;
+	}
+}
+
+// Create sink
+const sink = new StringSink;
+
+// Start downloading some HTML page
+const resp = await fetch('https://example.com/');
+
+// Pipe the HTML stream to the sink
+await resp.body?.pipeTo(sink);
+
+// Print the result
+console.log(sink+'');
+```
+
 ### Constructor:
 
 ```ts
@@ -531,21 +600,17 @@ function WrStream.close(): Promise<void>;
 
 Calls `sink.close()`. After that no more callbacks will be called.
 
-- **writeAtom**
+- **writeWhenReady**
 
 ```ts
-function WrStream.writeAtom(chunk: Uint8Array): Promise<void>;
+function WrStream.writeWhenReady(chunk: Uint8Array): Promise<void>;
 ```
 Waits for the stream to be unlocked, gets writer (locks the stream),
 writes the chunk, and then releases the writer (unlocks the stream).
 This is the same as doing:
 ```ts
-const writer = await wrStream.getWriterWhenReady();
-try
-{	await writer.write(chunk);
-}
-finally
-{	writer.releaseLock();
+{	using writer = await wrStream.getWriterWhenReady();
+	await writer.write(chunk);
 }
 ```
 
@@ -553,14 +618,137 @@ finally
 
 This class extends [TransformStream](https://developer.mozilla.org/en-US/docs/Web/API/TransformStream)`<Uint8Array, Uint8Array>`.
 
+### Example
+
+```ts
+import {RdStream, TrStream} from './mod.ts';
+
+// StringStreamer:
+
+const textEncoder = new TextEncoder;
+
+/**	Readable stream, compatible with `ReadableStream<Uint8Array>`, that streams the string provided to it's constructor.
+ **/
+class StringStreamer extends RdStream
+{	constructor(str='')
+	{	let hello = textEncoder.encode(str);
+		super
+		(	{	read(view)
+				{	const n = Math.min(view.byteLength, hello.byteLength);
+					view.set(hello.subarray(0, n));
+					hello = hello.subarray(n);
+					return n;
+				}
+			}
+		);
+	}
+}
+
+// Escaper:
+
+const C_SLASH = '\\'.charCodeAt(0);
+const C_QUOT = '"'.charCodeAt(0);
+const C_CR = '\r'.charCodeAt(0);
+const C_LF = '\n'.charCodeAt(0);
+const C_R = 'r'.charCodeAt(0);
+const C_N = 'n'.charCodeAt(0);
+
+/**	Transforms stream by enclosing it in `"`-quotes, and inserting `\` chars before each `"` or `\` in the input,
+	and converts ASCII CR to `\r` and LF to `\n`.
+ **/
+class Escaper extends TrStream
+{	constructor()
+	{	super
+		(	{	async start(writer)
+				{	await writer.write(new Uint8Array([C_QUOT]));
+				},
+
+				async transform(writer, chunk)
+				{	const len = chunk.byteLength;
+					let pos = 0;
+					let cAfterSlash = 0;
+					for (let i=0; i<len; i++)
+					{	switch (chunk[i])
+						{	case C_SLASH:
+								cAfterSlash = C_SLASH;
+								break;
+							case C_QUOT:
+								cAfterSlash = C_QUOT;
+								break;
+							case C_CR:
+								cAfterSlash = C_R;
+								break;
+							case C_LF:
+								cAfterSlash = C_N;
+								break;
+							default:
+								continue;
+						}
+						const iPlusOne = i + 1;
+						if (iPlusOne < len)
+						{	const tmp = chunk[iPlusOne];
+							chunk[i] = C_SLASH;
+							chunk[iPlusOne] = cAfterSlash;
+							await writer.write(chunk.subarray(pos, iPlusOne+1));
+							chunk[iPlusOne] = tmp;
+							pos = iPlusOne;
+						}
+						else
+						{	chunk[i] = C_SLASH;
+							await writer.write(chunk.subarray(pos)); // write the string with `\` in place of the last char
+							chunk[i] = cAfterSlash;
+							await writer.write(chunk.subarray(i)); // write `cAfterSlash` after the slash
+							return len;
+						}
+					}
+					await writer.write(chunk.subarray(pos));
+					return len;
+				},
+
+				async flush(writer)
+				{	await writer.write(new Uint8Array([C_QUOT]));
+				},
+			}
+		);
+	}
+}
+
+// Write escaped string to stdout
+new StringStreamer('Unquoted "quoted"\n').pipeThrough(new Escaper).pipeTo(Deno.stdout.writable);
+```
+
 ### Constructor:
 
 ```ts
 function TrStream.constructor(transformer: Transformer);
 
 type Transformer =
-{	start?(writer: Writer): void | PromiseLike<void>;
-	transform?(writer: Writer, chunk: Uint8Array, canReturnZero: boolean): number | PromiseLike<number>;
+{	// properties:
+
+	/**	This callback is called immediately during `TrStream` object creation.
+		When it's promise resolves, i start to call `transform()` to transform data chunks.
+		Only one call is active at each moment, and next calls wait for previous calls to complete.
+
+		When the whole input stream is converted without an error, `flush()` is called, as the last action.
+		If `start()` or `transform()` throw error, this error is propagated to the output stream,
+		and no more callbacks are called.
+	 **/
+	start?(writer: Writer): void | PromiseLike<void>;
+
+	/**	During stream transformation this callback gets called for chunks (pieces) of incoming data.
+		This callback is expected to transform the data as needed, and to write the result to a `writer`
+		provided to it.
+		Each input chunk can be of any non-zero size.
+		If this callback cannot decide how to transform current chunk, and `canReturnZero` is true,
+		it can return 0, and then this callback will be called again with a larger chunk,
+		or the caller will discover that this was the last chunk, and next time will call
+		`transform()` with the same chunk and `!canReturnZero`.
+		In order to provide a larger chunk, the caller of this callback may be required to reallocate (grow) it's internal buffer.
+	 **/
+	transform(writer: Writer, chunk: Uint8Array, canReturnZero: boolean): number | PromiseLike<number>;
+
+	/**	At last, when the whole stream was transformed, this callback is called.
+	 **/
 	flush?(writer: Writer): void | PromiseLike<void>;
 };
 ```
