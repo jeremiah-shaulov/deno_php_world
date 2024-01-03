@@ -164,22 +164,6 @@ export class WrStreamInternal extends WritableStream<Uint8Array>
 		{	writer.releaseLock();
 		}
 	}
-
-	/**	Puts the chunk to queue to be written when previous write requests complete.
-		The chunk that you pass must not be modified later by somebody till it gets written to the stream.
-		If write failed, you'll get exception when you close the stream by calling `writer.close()`.
-
-		```ts
-		const ws = new WrStream({write: p => Deno.stdout.write(p)});
-		ws.enqueue(new TextEncoder().encode('ABC'));
-		ws.enqueue(new TextEncoder().encode('DEF'));
-		using w = await ws.getWriterWhenReady();
-		await w.close();
-		```
-	 **/
-	enqueue(chunk: Uint8Array)
-	{	this.writeAtom(chunk).catch(() => {});
-	}
 }
 
 export class WrStream extends WrStreamInternal

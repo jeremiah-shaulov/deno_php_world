@@ -549,23 +549,6 @@ finally
 }
 ```
 
-- **enqueue**
-
-```ts
-function WrStream.enqueue(chunk: Uint8Array);
-```
-Puts the chunk to queue to be written when previous write requests complete.
-The chunk that you pass must not be modified later by somebody till it gets written to the stream.
-If write failed, you'll get exception when you close the stream by calling `writer.close()`.
-
-```ts
-const ws = new WrStream({write: p => Deno.stdout.write(p)});
-ws.enqueue(new TextEncoder().encode('ABC'));
-ws.enqueue(new TextEncoder().encode('DEF'));
-using w = await ws.getWriterWhenReady();
-await w.close();
-```
-
 ## class TrStream
 
 This class extends [TransformStream](https://developer.mozilla.org/en-US/docs/Web/API/TransformStream)`<Uint8Array, Uint8Array>`.
