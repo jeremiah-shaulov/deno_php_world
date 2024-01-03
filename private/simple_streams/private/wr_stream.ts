@@ -6,6 +6,14 @@ type Any = any;
 export const _closeEvenIfLocked = Symbol('_closeEvenIfLocked');
 export const _useLowLevelCallbacks = Symbol('_useLowLevelCallbacks');
 
+type SinkInternal =
+{	start?(): void | PromiseLike<void>;
+	write(chunk: Uint8Array, canReturnZero: boolean): number | PromiseLike<number>;
+	close?(): void | PromiseLike<void>;
+	abort?(reason: Any): void | PromiseLike<void>;
+	catch?(reason: Any): void | PromiseLike<void>;
+};
+
 export type Sink =
 {	// properties:
 
@@ -25,12 +33,9 @@ export type Sink =
 		(how many bytes from the beginning of the chunk are written).
 		If it processed only a part, the rest of the chunk, and probably additional bytes,
 		will be passed to the next call to `write()`.
-		If `canReturnZero` is true, it's allowed to process 0 bytes, and the callback will be called again
-		with a larger chunk, or the caller will discover that this was the last chunk, and next time will call
-		`write()` with the same chunk and `!canReturnZero`.
-		If `canReturnZero` is false, and the callback returns 0, this situation is considered to be an error.
+		This callback must not return 0.
 	 **/
-	write(chunk: Uint8Array, canReturnZero: boolean): number | PromiseLike<number>;
+	write(chunk: Uint8Array): number | PromiseLike<number>;
 
 	/**	This method is called as response to `writer.close()`.
 		After that, no more callbacks are called.
@@ -48,12 +53,12 @@ export type Sink =
 	catch?(reason: Any): void | PromiseLike<void>;
 };
 
-export class WrStream extends WritableStream<Uint8Array>
+export class WrStreamInternal extends WritableStream<Uint8Array>
 {	#callbackAccessor: WriteCallbackAccessor;
 	#locked = false;
-	#writerRequests = new Array<(writer: WritableStreamDefaultWriter<Uint8Array>) => void>;
+	#writerRequests = new Array<(writer: WritableStreamDefaultWriter<Uint8Array> & Writer) => void>;
 
-	constructor(sink: Sink)
+	constructor(sink: SinkInternal)
 	{	const callbackAccessor = new WriteCallbackAccessor(sink, true);
 		super
 		(	// `deno_web/06_streams.js` uses hackish way to call methods of `WritableStream` subclasses.
@@ -88,7 +93,7 @@ export class WrStream extends WritableStream<Uint8Array>
 
 		If the stream is already locked, this method throws error.
 	 **/
-	getWriter(): WritableStreamDefaultWriter<Uint8Array>
+	getWriter(): WritableStreamDefaultWriter<Uint8Array> & Writer
 	{	if (this.#locked)
 		{	throw new TypeError('WritableStream is locked.');
 		}
@@ -97,7 +102,7 @@ export class WrStream extends WritableStream<Uint8Array>
 		(	this.#callbackAccessor,
 			() =>
 			{	this.#locked = false;
-				const y = this.#writerRequests.pop();
+				const y = this.#writerRequests.shift();
 				y?.(this.getWriter());
 			}
 		);
@@ -109,7 +114,7 @@ export class WrStream extends WritableStream<Uint8Array>
 	{	if (!this.#locked)
 		{	return Promise.resolve(this.getWriter());
 		}
-		return new Promise<WritableStreamDefaultWriter<Uint8Array>>(y => {this.#writerRequests.push(y)});
+		return new Promise<WritableStreamDefaultWriter<Uint8Array> & Writer>(y => {this.#writerRequests.push(y)});
 	}
 
 	/**	Interrupt current writing operation (reject the promise that `writer.write()` returned, if any),
@@ -160,11 +165,26 @@ export class WrStream extends WritableStream<Uint8Array>
 		}
 	}
 
-	/**	Puts the chunk to queue to be written when possible.
-		If write failed, you'll get exception when you close the stream by calling `close()`.
+	/**	Puts the chunk to queue to be written when previous write requests complete.
+		The chunk that you pass must not be modified later by somebody till it gets written to the stream.
+		If write failed, you'll get exception when you close the stream by calling `writer.close()`.
+
+		```ts
+		const ws = new WrStream({write: p => Deno.stdout.write(p)});
+		ws.enqueue(new TextEncoder().encode('ABC'));
+		ws.enqueue(new TextEncoder().encode('DEF'));
+		using w = await ws.getWriterWhenReady();
+		await w.close();
+		```
 	 **/
 	enqueue(chunk: Uint8Array)
 	{	this.writeAtom(chunk).catch(() => {});
+	}
+}
+
+export class WrStream extends WrStreamInternal
+{	constructor(sink: Sink)
+	{	super(sink);
 	}
 }
 

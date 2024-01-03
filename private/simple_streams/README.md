@@ -92,6 +92,13 @@ const wrStream = new WrStream
 - BYOB-agnostic. Data consumer can use BYOB or regular reading mode, and there's no need of handling these situations differently.
 - No transferring buffers that you pass to `reader.read(buffer)`, so the buffers remain usable after the call.
 
+Differences in API:
+
+- `reader.cancel()` and `writer.abort()` work also on locked streams.
+- `getReader()` and `getWriter()` have `getReaderWhenReady()` and `getWriterWhenReady()` counterparts, that wait for reader/writer to be unlocked.
+- `values()`, `tee()`, `pipeTo()` and `pipeThrough()` are present in both `RdStream` and `Reader`.
+- `pipeTo()` and `pipeThrough()` are restartable (`transform()` can close it's writer, and then the rest of the input stream can be piped to elsewhere).
+
 # Exported classes and types
 
 ```ts
@@ -445,12 +452,9 @@ type Sink =
 		(how many bytes from the beginning of the chunk are written).
 		If it processed only a part, the rest of the chunk, and probably additional bytes,
 		will be passed to the next call to `write()`.
-		If `canReturnZero` is true, it's allowed to process 0 bytes, and the callback will be called again
-		with a larger chunk, or the caller will discover that this was the last chunk, and next time will call
-		`write()` with the same chunk and `!canReturnZero`.
-		If `canReturnZero` is false, and the callback returns 0, this situation is considered to be an error.
+		This callback must not return 0.
 	 **/
-	write(chunk: Uint8Array, canReturnZero: boolean): number | PromiseLike<number>;
+	write(chunk: Uint8Array): number | PromiseLike<number>;
 
 	/**	This method is called as response to `writer.close()`.
 		After that, no more callbacks are called.
@@ -550,8 +554,17 @@ finally
 ```ts
 function WrStream.enqueue(chunk: Uint8Array);
 ```
-Puts the chunk to queue to be written when possible. If write failed, you'll get exception when you close the stream by calling `close()`.
+Puts the chunk to queue to be written when previous write requests complete.
+The chunk that you pass must not be modified later by somebody till it gets written to the stream.
+If write failed, you'll get exception when you close the stream by calling `writer.close()`.
 
+```ts
+const ws = new WrStream({write: p => Deno.stdout.write(p)});
+ws.enqueue(new TextEncoder().encode('ABC'));
+ws.enqueue(new TextEncoder().encode('DEF'));
+using w = await ws.getWriterWhenReady();
+await w.close();
+```
 
 ## class TrStream
 

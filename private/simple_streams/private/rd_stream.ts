@@ -282,7 +282,7 @@ export class RdStream extends ReadableStream<Uint8Array>
 		(	this.#callbackAccessor,
 			() =>
 			{	this.#locked = false;
-				const y = this.#readerRequests.pop();
+				const y = this.#readerRequests.shift();
 				if (y)
 				{	y(this.getReader());
 				}
@@ -476,7 +476,7 @@ class ReadCallbackAccessor extends CallbackAccessor
  **/
 export class Reader extends ReaderOrWriter<ReadCallbackAccessor>
 {	read(): Promise<ReadableStreamDefaultReadResult<Uint8Array>>;
-	read<V extends ArrayBufferView>(view?: V): Promise<ReadableStreamBYOBReadResult<V>>;
+	read<V extends ArrayBufferView>(view: V): Promise<ReadableStreamBYOBReadResult<V>>;
 	async read<V extends ArrayBufferView>(view?: V): Promise<ReadableStreamBYOBReadResult<V>>
 	{	if (view && !(view instanceof Uint8Array))
 		{	throw new Error('Only Uint8Array is supported'); // i always return `Uint8Array`, and it must be also `V`
