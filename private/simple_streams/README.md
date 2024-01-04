@@ -34,8 +34,7 @@ interface Source
 }
 ```
 
-Actually there are some more optional properties and methods in the `Source` interface (i mentioned only the mandatory one only to show you how cool is it).
-See the full definition below.
+Implementing this interface is enough, however this is only a subset of the full `Source` interface that is shown below.
 
 Example of how you can implement it:
 
@@ -160,7 +159,7 @@ const rdStream = new RdStream({read: p => Deno.stdin.read(p)});
 
 ### Example
 
-The following example demonstrates readable stream that generates word "Hello".
+The following example demonstrates readable stream that streams the string provided to it's constructor.
 
 ```ts
 import {RdStream} from './mod.ts';
@@ -171,12 +170,12 @@ const textEncoder = new TextEncoder;
  **/
 class StringStreamer extends RdStream
 {	constructor(str='')
-	{	let hello = textEncoder.encode(str);
+	{	let data = textEncoder.encode(str);
 		super
 		(	{	read(view)
-				{	const n = Math.min(view.byteLength, hello.byteLength);
-					view.set(hello.subarray(0, n));
-					hello = hello.subarray(n);
+				{	const n = Math.min(view.byteLength, data.byteLength);
+					view.set(data.subarray(0, n));
+					data = data.subarray(n);
 					return n;
 				}
 			}
@@ -185,7 +184,7 @@ class StringStreamer extends RdStream
 }
 
 // Write word "Hello" to stdout
-new StringStreamer('Hello\n').pipeTo(Deno.stdout.writable);
+await new StringStreamer('Hello\n').pipeTo(Deno.stdout.writable);
 ```
 
 ### Constructor:
@@ -618,7 +617,10 @@ This is the same as doing:
 
 This class extends [TransformStream](https://developer.mozilla.org/en-US/docs/Web/API/TransformStream)`<Uint8Array, Uint8Array>`.
 
-### Example
+### Examples
+
+The following example demonstrates `TrStream` that encloses the input in `"`-quotes, and inserts `\` chars before each `"` or `\` in the input,
+and converts ASCII CR and LF to `\r` and `\n` respectively.
 
 ```ts
 import {RdStream, TrStream} from './mod.ts';
@@ -654,7 +656,7 @@ const C_R = 'r'.charCodeAt(0);
 const C_N = 'n'.charCodeAt(0);
 
 /**	Transforms stream by enclosing it in `"`-quotes, and inserting `\` chars before each `"` or `\` in the input,
-	and converts ASCII CR to `\r` and LF to `\n`.
+	and converts ASCII CR and LF to `\r` and `\n` respectively.
  **/
 class Escaper extends TrStream
 {	constructor()
@@ -714,7 +716,75 @@ class Escaper extends TrStream
 }
 
 // Write escaped string to stdout
-new StringStreamer('Unquoted "quoted"\n').pipeThrough(new Escaper).pipeTo(Deno.stdout.writable);
+await new StringStreamer('Unquoted "quoted"\n').pipeThrough(new Escaper).pipeTo(Deno.stdout.writable);
+```
+
+The following example demonstrates how `TrStream` can pass (or transform) only a part of its input stream, and then stop.
+The output stream that `pipeThrough()` produces will terminate, but then it's possible to pipe the rest of the input stream
+with second `pipeThrough()` or `pipeTo()`, or just to read it with `text()`.
+
+```ts
+import {RdStream, WrStream, TrStream} from './mod.ts';
+
+// StringStreamer:
+
+const textEncoder = new TextEncoder;
+
+/**	Readable stream, compatible with `ReadableStream<Uint8Array>`, that streams the string provided to it's constructor.
+ **/
+class StringStreamer extends RdStream
+{	constructor(str='')
+	{	let hello = textEncoder.encode(str);
+		super
+		(	{	read(view)
+				{	const n = Math.min(view.byteLength, hello.byteLength);
+					view.set(hello.subarray(0, n));
+					hello = hello.subarray(n);
+					return n;
+				}
+			}
+		);
+	}
+}
+
+// CopyOneToken:
+
+const C_SPACE = ' '.charCodeAt(0);
+
+/**	Passes through the input stream till first SPACE character, and closes the output.
+ **/
+class CopyOneToken extends TrStream
+{	constructor()
+	{	super
+		(	{	async transform(writer, chunk)
+				{	const len = chunk.byteLength;
+					for (let i=0; i<len; i++)
+					{	if (chunk[i] == C_SPACE)
+						{	await writer.write(chunk.subarray(0, i));
+							await writer.close();
+							return i + 1;
+						}
+					}
+					await writer.write(chunk);
+					return len;
+				}
+			}
+		);
+	}
+}
+
+// Wrap stdout
+const stdout = new WrStream(Deno.stdout);
+// Create tokens stream
+const tokens = new StringStreamer('One Two Three Four');
+// Print the first token ("One")
+console.log('Print first token:');
+await tokens.pipeThrough(new CopyOneToken).pipeTo(stdout, {preventClose: true});
+// Print the second token ("Two")
+console.log('\nPrint second token:');
+await tokens.pipeThrough(new CopyOneToken).pipeTo(stdout, {preventClose: true});
+// Print the rest of the tokens stream ("Three Four")
+console.log('\nRest: '+await tokens.text());
 ```
 
 ### Constructor:

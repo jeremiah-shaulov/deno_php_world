@@ -454,6 +454,14 @@ class ReadCallbackAccessor extends CallbackAccessor
 					this.#autoAllocateBuffer = undefined;
 					isUserSuppliedBuffer = false;
 				}
+				const {curPiper} = this;
+				if (curPiper)
+				{	const nRead = curPiper.read(view);
+					if (nRead)
+					{	return nRead;
+					}
+					this.curPiper = undefined;
+				}
 				const nRead = await callbacks.read!(view);
 				if (!isUserSuppliedBuffer)
 				{	const end = view.byteOffset + (nRead ?? 0);
@@ -642,6 +650,14 @@ export class Reader extends ReaderOrWriter<ReadCallbackAccessor>
 			const result = await callbackAccessor.useCallbacks
 			(	async callbacks =>
 				{	const chunks = new Array<Uint8Array>;
+					const {curPiper} = callbackAccessor;
+					if (curPiper)
+					{	const chunk = curPiper.uint8Array();
+						if (chunk)
+						{	chunks[0] = chunk;
+						}
+						callbackAccessor.curPiper = undefined;
+					}
 					let totalLen = 0;
 					let chunkSize = callbackAccessor.autoAllocateChunkSize || DEFAULT_AUTO_ALLOCATE_SIZE;
 					const autoAllocateMin = callbackAccessor.autoAllocateMin;
@@ -1150,6 +1166,32 @@ class Piper
 			this.lastWriteCanReturnZero = lastWriteCanReturnZero;
 			this.readPromise = readPromise;
 			this.isEof = isEof;
+		}
+	}
+
+	read(view: Uint8Array)
+	{	const {buffer, readPos, writePos, readPos2} = this;
+		if (writePos < readPos)
+		{	const n = Math.min(view.byteLength, readPos-writePos);
+			const nextWritePos = writePos + n;
+			view.set(buffer.subarray(writePos, nextWritePos));
+			if (nextWritePos == readPos)
+			{	this.readPos = readPos2;
+				this.readPos2 = 0;
+				this.writePos = 0;
+			}
+			else
+			{	this.writePos = nextWritePos;
+			}
+			return n;
+		}
+		return 0;
+	}
+
+	uint8Array()
+	{	const {buffer, readPos, writePos} = this;
+		if (writePos < readPos)
+		{	return buffer.subarray(writePos, readPos);
 		}
 	}
 }
