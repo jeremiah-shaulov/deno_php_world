@@ -3,8 +3,7 @@ import {PHP_BOOT_CLI, get_interpreter_script_filename} from './interpreter_scrip
 import {create_proxy} from './proxy_object.ts';
 import {ReaderMux} from './reader_mux.ts';
 import {get_random_key, get_weak_random_bytes, writeAll} from './util.ts';
-import {fcgi, ResponseWithCookies} from './deps.ts';
-import {WrStream} from './simple_streams/mod.ts';
+import {WrStream, fcgi, ResponseWithCookies} from './deps.ts';
 
 // deno-lint-ignore no-explicit-any
 type Any = any;

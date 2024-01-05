@@ -1,4 +1,4 @@
-import {RdStream, TrStream} from './simple_streams/mod.ts';
+import {RdStream, TrStream} from './deps.ts';
 
 export class ReaderMux
 {	#inner_stream_promise: Promise<RdStream>;
@@ -60,6 +60,10 @@ L:					for (const i_end=chunk.byteLength-end_mark.byteLength; i<=i_end; i++)
 						writer.write(chunk.subarray(0, i)); // start new write
 					}
 					return i;
+				},
+
+				flush(writer)
+				{	return writer.ready;
 				}
 			}
 		);
