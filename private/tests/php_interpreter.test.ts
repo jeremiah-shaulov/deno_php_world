@@ -103,9 +103,9 @@ async function tests(_image_name: string, container_name: string, port: number)
 		const since = Date.now();
 		let error;
 		try
-		{	const before = Object.assign({}, Deno.resources());
+		{	const before = 'resources' in Deno ? Object.assign({}, (Deno as Any).resources()) : {};
 			await t(['docker', 'exec', '-i', container_name, 'php'], port+'', '0.0.0.0', 'host.docker.internal', '/usr/src/app/deno-php-world.php');
-			const after = Object.assign({}, Deno.resources());
+			const after = 'resources' in Deno ? Object.assign({}, (Deno as Any).resources()) : {};
 			assertEquals(before, after);
 		}
 		catch (e)
@@ -791,12 +791,12 @@ async function test_async_errors(php_cli_name: string|string[], php_fpm_listen: 
 		C.failure("Failure 1");
 		C.failure("Failure 2");
 		C.failure("Failure 3");
-		let error = null;
+		let error: Error|undefined;
 		try
 		{	console.log(await g.$argc);
 		}
 		catch (e)
-		{	error = e;
+		{	error = e instanceof Error ? e : new Error(e+'');
 		}
 		assert(error?.message, 'Failure 1');
 		assertEquals(await C.$n, 1);
@@ -806,34 +806,34 @@ async function test_async_errors(php_cli_name: string|string[], php_fpm_listen: 
 		C.failure("Failure 2");
 		await new Promise(y => setTimeout(y, 0));
 		C.failure("Failure 3");
-		error = null;
+		error = undefined;
 		try
 		{	console.log(await g.$argc);
 		}
 		catch (e)
-		{	error = e;
+		{	error = e instanceof Error ? e : new Error(e+'');
 		}
 		assert(error?.message, 'Failure 3');
 		assertEquals(await C.$n, 3);
 
 		// await 1
-		error = null;
+		error = undefined;
 		try
 		{	await C.failure("Second failure 1");
 		}
 		catch (e)
-		{	error = e;
+		{	error = e instanceof Error ? e : new Error(e+'');
 		}
 		assertEquals(error?.message, 'Second failure 1');
 		assertEquals(await C.$n, 4);
 
 		// await 2
-		error = null;
+		error = undefined;
 		try
 		{	await C.failure("Second failure 2");
 		}
 		catch (e)
-		{	error = e;
+		{	error = e instanceof Error ? e : new Error(e+'');
 		}
 		assertEquals(error?.message, 'Second failure 2');
 		assertEquals(await C.$n, 5);
@@ -849,12 +849,12 @@ async function test_async_errors_nested(php_cli_name: string|string[], php_fpm_l
 		php.c.C.failure("Failure 1");
 		php.c.C.failure("Failure 2");
 		php.c.C.failure("Failure 3");
-		let error = null;
+		let error: Error|undefined;
 		try
 		{	console.log(await php.g.$argc);
 		}
 		catch (e)
-		{	error = e;
+		{	error = e instanceof Error ? e : new Error(e+'');
 		}
 		assert(error?.message, 'Failure 1');
 		assertEquals(await php.c.C.$n, 1);
@@ -864,34 +864,34 @@ async function test_async_errors_nested(php_cli_name: string|string[], php_fpm_l
 		php.c.C.failure("Failure 2");
 		await new Promise(y => setTimeout(y, 0));
 		php.c.C.failure("Failure 3");
-		error = null;
+		error = undefined;
 		try
 		{	console.log(await php.g.$argc);
 		}
 		catch (e)
-		{	error = e;
+		{	error = e instanceof Error ? e : new Error(e+'');
 		}
 		assert(error?.message, 'Failure 3');
 		assertEquals(await php.c.C.$n, 3);
 
 		// await 1
-		error = null;
+		error = undefined;
 		try
 		{	await php.c.C.failure("Second failure 1");
 		}
 		catch (e)
-		{	error = e;
+		{	error = e instanceof Error ? e : new Error(e+'');
 		}
 		assertEquals(error?.message, 'Second failure 1');
 		assertEquals(await php.c.C.$n, 4);
 
 		// await 2
-		error = null;
+		error = undefined;
 		try
 		{	await php.c.C.failure("Second failure 2");
 		}
 		catch (e)
-		{	error = e;
+		{	error = e instanceof Error ? e : new Error(e+'');
 		}
 		assertEquals(error?.message, 'Second failure 2');
 		assertEquals(await php.c.C.$n, 5);
@@ -1169,13 +1169,13 @@ async function test_push_frame(php_cli_name: string|string[], php_fpm_listen: st
 			php.pop_frame();
 			assertEquals(await php.n_objects(), 0);
 
-			let error;
+			let error: Error|undefined;
 			try
 			{	php.pop_frame();
 				await php.ready();
 			}
 			catch (e)
-			{	error = e;
+			{	error = e instanceof Error ? e : new Error(e+'');
 			}
 			assertEquals(error?.message, 'No frames to pop');
 		}
@@ -1292,12 +1292,12 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	);
 	const obj = await new C;
 
-	let error;
+	let error: Error|undefined;
 	try
 	{	await obj['inva prop'];
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Property name must not contain spaces: $inva prop');
 
@@ -1306,7 +1306,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	obj['inva prop'] = 10;
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Property name must not contain spaces: inva prop');
 
@@ -1315,7 +1315,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	await obj.var['inva func']();
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Function name must not contain spaces: inva func');
 
@@ -1324,7 +1324,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	await new obj.var();
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Cannot construct such object');
 
@@ -1333,7 +1333,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	await php.g[''];
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Invalid object name');
 
@@ -1342,7 +1342,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	await g['$inva var']['one'];
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Variable name must not contain spaces: $inva var');
 
@@ -1351,7 +1351,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	await c['Inva class']['one'];
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Class/namespace names must not contain spaces: Inva class');
 
@@ -1360,7 +1360,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	await c.C.D['$inva var'];
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Variable name must not contain spaces: C\\D::$inva var');
 
@@ -1369,7 +1369,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	await c.$var.val;
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Invalid object usage: $var');
 
@@ -1378,7 +1378,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	await c['inva ns'].$var.val;
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Class/namespace names must not contain spaces: inva ns');
 
@@ -1387,7 +1387,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	await c.C['$inva var'].val;
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Variable name must not contain spaces: $inva var');
 
@@ -1396,7 +1396,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	g.ns1.const1 = 1;
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Cannot set this object: ns1');
 
@@ -1405,7 +1405,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	g['$inva var'].a = 1;
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Variable name must not contain spaces: $inva var');
 
@@ -1414,7 +1414,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	c.$var.a = 1;
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Cannot set this object: $var');
 
@@ -1423,7 +1423,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	c.NsA['inca class'].$var = 1;
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Cannot use such class name: NsA\\inca class');
 
@@ -1432,7 +1432,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	c.NsA.C['$inva var'] = 1;
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Variable name must not contain spaces: $inva var');
 
@@ -1441,7 +1441,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	c.NsA.C.a = 1;
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Cannot set this object: NsA.C.a');
 
@@ -1450,7 +1450,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	c['inva ns'].$var.a = 1;
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Cannot use such class name: inva ns');
 
@@ -1459,7 +1459,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	c.C['$inva var'].a = 1;
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Variable name must not contain spaces: $inva var');
 
@@ -1468,7 +1468,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	delete g.const1.a;
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Cannot set this object: const1');
 
@@ -1477,7 +1477,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	delete g['$inva var'].a;
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Variable name must not contain spaces: $inva var');
 
@@ -1486,7 +1486,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	delete c.C.a;
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Cannot unset this object: C');
 
@@ -1495,7 +1495,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	delete c['inva class'].$var.a;
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Cannot use such class name: inva class');
 
@@ -1504,7 +1504,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	delete c.C['$inva var'].a;
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Variable name must not contain spaces: $inva var');
 
@@ -1513,7 +1513,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	g.eval('1', '2');
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Invalid number of arguments to eval()');
 
@@ -1522,7 +1522,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	g.include('1', '2');
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Invalid number of arguments to include()');
 
@@ -1531,7 +1531,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	g.include_once('1', '2');
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Invalid number of arguments to include_once()');
 
@@ -1540,7 +1540,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	g.require('1', '2');
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Invalid number of arguments to require()');
 
@@ -1549,7 +1549,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	g.require_once('1', '2');
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Invalid number of arguments to require_once()');
 
@@ -1558,7 +1558,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	await c.C();
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Invalid class name usage: C');
 
@@ -1569,7 +1569,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 		}
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Object is not iterable');
 
@@ -1578,7 +1578,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	c[Symbol()] = 10;
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Cannot assign to this object');
 
@@ -1587,7 +1587,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	c.C = 10;
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Cannot assign to class: C');
 
@@ -1596,7 +1596,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	g.const1 = 10;
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Invalid global variable name: const1');
 
@@ -1605,7 +1605,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	g['$inva var'] = 10;
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Variable name must not contain spaces: $inva var');
 
@@ -1614,7 +1614,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	delete g[Symbol()];
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Cannot delete this object');
 
@@ -1623,7 +1623,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	delete c.C;
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Cannot delete a class: C');
 
@@ -1632,7 +1632,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	delete g.const1;
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Invalid global variable name: const1');
 
@@ -1641,7 +1641,7 @@ async function test_invalid(php_cli_name: string|string[], _php_fpm_listen: stri
 	{	delete g['$inva var'];
 	}
 	catch (e)
-	{	error = e;
+	{	error = e instanceof Error ? e : new Error(e+'');
 	}
 	assertEquals(error?.message, 'Variable name must not contain spaces: $inva var');
 
@@ -1721,7 +1721,7 @@ async function test_access_deno_from_php(php_cli_name: string|string[], _php_fpm
 	await g.eval
 	(	`	global $window, $a, $val;
 
-			$window->eval("window.User = class User {name = 'Default name'; email = ''}");
+			$window->eval("globalThis.User = class User {name = 'Default name'; email = ''}");
 			$a = new DenoWorld\\User;
 			$a->phone = 111;
 			$a['zip'] = 222;

@@ -836,7 +836,7 @@ This object will contain headers and body reader, that you can use to read every
 
 If you want to read the response body in the callback, you need not return till you read all the response body. After returning from the callback, the response can be destroyed (it will be destroyed if you called `g.exit()` earlier).
 
-The body can be read in regular way, as you do with `fetch()`, or it can be read as `Deno.Reader`, because `response.body` object extends regular `ReadableStream<Uint8Array>` by adding `Deno.Reader` implementation.
+The body can be read in regular way, as you do with `fetch()`.
 
 ```ts
 import {g, c, php, settings} from 'https://deno.land/x/php_world@v0.0.34/mod.ts';
@@ -929,7 +929,7 @@ The `onrequest()` callback gets 1 argument of type `PhpRequest` that extends `Ph
 1. `script_filename: string` - requested script file. It's the same as `this.request.params.get('SCRIPT_FILENAME')`, but cannot be undefined.
 2. `request: ServerRequest` - contains information about incoming request: it's headers, GET and POST parameters, cookies and uploaded files.
 
-To handle incoming request, you need to call `await request.respond()` with optional `status: number`, `headers: Headers`, `setCookies: SetCookies` and `body: Uint8Array | Deno.Reader | string`.
+To handle incoming request, you need to call `await request.respond()` with optional `status: number`, `headers: Headers`, `setCookies: SetCookies` and `body: Uint8Array | ReadableStream<Uint8Array> | string`.
 
 For more information on `ServerRequest` object see [x/fcgi](https://deno.land/x/fcgi) library.
 
@@ -960,7 +960,7 @@ await g.exit();
 ```
 But this is not good for large outputs, because the whole output will be stored in RAM.
 
-Setting `settings.stdout` to `piped` allows to catch PHP output. Initially the output will be passed to Deno, as in the `inherit` case, but you'll be able to call `php.get_stdout_reader()` to get `Deno.Reader` object from which the output can be read. To stop reading the output from that reader, and to redirect it back to `Deno.stdout`, call `php.drop_stdout_reader()`. This will cause the reader stream to end (`EOF`).
+Setting `settings.stdout` to `piped` allows to catch PHP output. Initially the output will be passed to Deno, as in the `inherit` case, but you'll be able to call `php.get_stdout_reader()` to get `ReadableStream<Uint8Array>` object from which the output can be read. To stop reading the output from that reader, and to redirect it back to `Deno.stdout`, call `php.drop_stdout_reader()`. This will cause the reader stream to end (`EOF`).
 
 ```ts
 import {php, settings} from 'https://deno.land/x/php_world@v0.0.34/mod.ts';

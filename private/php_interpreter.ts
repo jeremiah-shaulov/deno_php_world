@@ -2,7 +2,7 @@ import {debug_assert} from './debug_assert.ts';
 import {PHP_BOOT_CLI, get_interpreter_script_filename} from './interpreter_script.ts';
 import {create_proxy} from './proxy_object.ts';
 import {ReaderMux} from './reader_mux.ts';
-import {get_random_key, get_weak_random_bytes, writeAll} from './util.ts';
+import {get_random_key, get_weak_random_bytes} from './util.ts';
 import {WrStream, fcgi, ResponseWithCookies} from './deps.ts';
 
 // deno-lint-ignore no-explicit-any
@@ -154,7 +154,7 @@ function dispose_inst(inst: Any)
 }
 
 export class InterpreterError extends Error
-{	constructor(public message: string, public fileName: string, public lineNumber: number, public phpStack: string, for_stack?: Error)
+{	constructor(public override message: string, public fileName: string, public lineNumber: number, public phpStack: string, for_stack?: Error)
 	{	super(message);
 		let stack = this.stack + '';
 		if (phpStack)
@@ -249,7 +249,7 @@ export class InterpreterError extends Error
 }
 
 export class InterpreterExitError extends Error
-{	constructor(public message: string, public code: number)
+{	constructor(public override message: string, public code: number)
 	{	super(message);
 	}
 }
@@ -267,14 +267,13 @@ export interface PhpFpmSettings
 	keep_alive_max: number;
 	params: Map<string, string>;
 	request: string|Request|URL;
-	request_init?: RequestInit & {bodyIter?: AsyncIterable<Uint8Array>};
+	request_init?: RequestInit;
 
 	/**	Callback that will be called as soon as PHP-FPM response is ready - usually after first echo from the remote PHP script, and maybe after a few more echoes, or at the end of the script (when `g.exit()` called).
 		The callback receives a `ResponseWithCookies` object that extends built-in `Response`.
 		The response contains headers and body reader, that will read everything echoed from the script.
 		In this callback you need to await till you finished working with the response object, as it will be destroyed after this callback ends.
 		The returned `ResponseWithCookies` object extends built-in `Response` (that `fetch()` returns) by adding `cookies` property, that contains all `Set-Cookie` headers.
-		Also `response.body` object extends regular `ReadableStream<Uint8Array>` by adding `Deno.Reader` implementation.
 	 **/
 	onresponse?: (response: ResponseWithCookies) => Promise<unknown>;
 
@@ -379,7 +378,6 @@ export class PhpInterpreter
 	private using_unix_socket = '';
 	private ongoing: Promise<unknown>[] = [];
 	private ongoing_level = 0;
-	private ongoing_stderr: Promise<unknown> = Promise.resolve();
 	private stdout_mux: ReaderMux|undefined;
 	private last_inst_id = -1;
 	private stack_frames: number[] = [];
@@ -1117,7 +1115,7 @@ export class PhpInterpreter
 					keepAliveMax: this.settings.php_fpm.keep_alive_max,
 					onLogError: this.settings.php_fpm.onlogerror ||
 					(	msg =>
-						{	this.ongoing_stderr = this.ongoing_stderr.then(() => writeAll(Deno.stderr, encoder.encode(msg+'\n')));
+						{	console.error(msg);
 						}
 					)
 				},
@@ -1211,7 +1209,10 @@ export class PhpInterpreter
 			new_body.set(body);
 			body = new_body;
 		}
-		await writeAll(this.commands_io!, body);
+		while (body.length > 0)
+		{	const n = await this.commands_io!.write(body);
+			body = body.subarray(n);
+		}
 	}
 
 	private async do_read(for_stack?: Error): Promise<Any>
@@ -1367,7 +1368,7 @@ export class PhpInterpreter
 			}
 			catch (e)
 			{	result_type = RESTYPE.IS_ERROR;
-				data = e.message;
+				data = e instanceof Error ? e.message : e+'';
 			}
 			finally
 			{	this.ongoing_level--;
@@ -1478,15 +1479,13 @@ export class PhpInterpreter
 			{	await Deno.remove(this.using_unix_socket);
 			}
 			catch (e)
-			{	if (e.name != 'NotFound')
+			{	if (!(e instanceof Error) || e.name!='NotFound')
 				{	console.error(e);
 				}
 			}
 		}
 		debug_assert(this.ongoing.length <= 1);
 		this.ongoing.length = 0;
-		await this.ongoing_stderr;
-		this.ongoing_stderr = Promise.resolve();
 		this.stdout_mux = undefined;
 		this.php_cli_proc = undefined;
 		this.php_fpm_response = undefined;
