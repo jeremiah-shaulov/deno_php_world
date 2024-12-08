@@ -62,7 +62,12 @@ export class PhpRequest extends PhpInterpreter
 			);
 		};
 		this.settings.init_php_file = this.script_filename;
-		await this.g.exit();
+		try
+		{	await this.g.exit();
+		}
+		finally
+		{	this.settings.init_php_file = ''; // otherwise following call to `g.exit()` will execute the file again
+		}
 		return status;
 	}
 }
