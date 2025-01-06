@@ -18,7 +18,9 @@ export function create_proxy
 	get_constructor: (path: string[]) => ProxyApplierForPath,
 	get_has_instance: (path: string[]) => ProxyHasInstanceForPath,
 	get_iterator: (path: string[]) => ProxyIteratorForPath,
-	alt_symbol_for_string_tag?: symbol
+	alt_symbol_for_string_tag?: symbol,
+	dispose?: VoidFunction,
+	async_dispose?: () => Promise<void>,
 )
 {	return inst(path, {getter: undefined});
 	function inst
@@ -52,6 +54,18 @@ export function create_proxy
 							{	iterator = get_iterator(path);
 							}
 							return iterator;
+						}
+						else if (path.length == 0)
+						{	if (prop_name == Symbol.dispose)
+							{	if (dispose)
+								{	return dispose;
+								}
+							}
+							else if (prop_name == Symbol.asyncDispose)
+							{	if (async_dispose)
+								{	return async_dispose;
+								}
+							}
 						}
 						throw new Error(`Value must be awaited-for`);
 					}

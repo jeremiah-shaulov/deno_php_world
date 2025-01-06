@@ -946,7 +946,7 @@ export class PhpInterpreter
 				{	if (path.length == 0)
 					{	const path_str = php_inst_id+'';
 						return function(prop_name)
-						{	if (prop_name == 'this')
+						{	if (prop_name == 'this') // DEPRECATED. TODO: remove
 							{	php.write(REC.DESTRUCT, path_str);
 								return true;
 							}
@@ -1021,9 +1021,23 @@ export class PhpInterpreter
 					};
 				},
 
-				symbol_php_object
+				symbol_php_object,
+
+				// dispose
+				() =>
+				{	php.write(REC.DESTRUCT, php_inst_id+'');
+				},
+
+				// asyncDispose
+				() =>
+				{	return php.write(REC.DESTRUCT, php_inst_id+'');
+				},
 			);
 		}
+	}
+
+	async [Symbol.asyncDispose]()
+	{	await this.exit();
 	}
 
 	private async do_init()
@@ -1578,12 +1592,14 @@ export class PhpInterpreter
 	}
 
 	/**	 All objects allocated after this call, can be freed at once.
+		@deprecated
 	 **/
 	push_frame()
 	{	this.schedule(() => this.do_push_frame());
 	}
 
 	/**	Free at once all the objects allocated after last `php.push_frame()` call.
+		@deprecated
 	 **/
 	pop_frame()
 	{	this.schedule(() => this.do_pop_frame());
