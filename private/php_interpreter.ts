@@ -1153,7 +1153,9 @@ export class PhpInterpreter
 						{	await onresponse(r);
 						}
 						catch (e)
-						{	console.error(e);
+						{	const {request} = this.settings.php_fpm;
+							const url = request instanceof Request ? `${request.method} ${request.url}` : `GET ${request}`;
+							console.error(`Error in PHP-FPM request to ${url}`, e);
 						}
 						return r;
 					}
