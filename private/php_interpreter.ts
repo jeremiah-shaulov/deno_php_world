@@ -1201,10 +1201,9 @@ export class PhpInterpreter
 			this.is_inited = true;
 		}
 		catch (e)
-		{	this.is_inited = true; // set to true to avoid re-initialization
-			await this.do_exit();
-			this.init_error = e instanceof Error ? e : new Error(e+'');
-			throw this.init_error; // rethrow
+		{	this.init_error = e instanceof Error ? e : new Error(e+'');
+			await this.do_exit(true);
+			throw e; // rethrow
 		}
 	}
 
@@ -1464,7 +1463,7 @@ export class PhpInterpreter
 		}
 	}
 
-	private async do_exit(): Promise<Deno.CommandStatus>
+	private async do_exit(no_reset_error=false): Promise<Deno.CommandStatus>
 	{	if (!this.is_inited && !this.init_error && this.settings.init_php_file)
 		{	// Didn't call any functions, just called exit(), so `init_php_file` was not executed.
 			await this.do_init();
@@ -1520,7 +1519,9 @@ export class PhpInterpreter
 		this.listener = undefined;
 		this.commands_io = undefined;
 		this.is_inited = false;
-		this.init_error = undefined;
+		if (!no_reset_error)
+		{	this.init_error = undefined;
+		}
 		this.last_inst_id = -1;
 		this.stack_frames.length = 0;
 		for (const v of this.deno_insts.values())
