@@ -837,15 +837,14 @@ If you want to read the response body in the callback, you need not return till 
 The body can be read in regular way, as you do with `fetch()`.
 
 ```ts
-import {g, c, php, settings} from 'https://deno.land/x/php_world@v0.0.40/mod.ts';
-import {readAll} from 'https://deno.land/std@0.203.0/streams/mod.ts';
+import {g, php, settings} from 'https://deno.land/x/php_world@v0.0.40/mod.ts';
 
-settings.php_fpm.listen = '/run/php/php-fpm.jeremiah.sock';
+settings.php_fpm.listen = '[::1]:8989';
 settings.php_fpm.onresponse = async response =>
 {	console.log(response.headers);
 	if (response.body)
-	{	let body = await readAll(response.body);
-		console.log('BODY: ' + new TextDecoder().decode(body));
+	{	const body = await response.body.text();
+		console.log('BODY: ' + body);
 	}
 };
 
@@ -962,16 +961,15 @@ Setting `settings.stdout` to `piped` allows to catch PHP output. Initially the o
 
 ```ts
 import {php, settings} from 'https://deno.land/x/php_world@v0.0.40/mod.ts';
-import {readAll} from 'https://deno.land/std@0.203.0/streams/mod.ts';
 
 settings.stdout = 'piped';
 
-let stdout = await php.get_stdout_reader();
+const stdout = await php.get_stdout_reader();
 php.g.echo("*".repeat(10)); // no await
 php.g.echo("."); // queue another function call
 php.drop_stdout_reader(); // reader stream will end here
 
-let data = new TextDecoder().decode(await readAll(stdout));
+const data = await stdout.text();
 console.log(data == "*".repeat(10)+"."); // prints "true"
 
 await php.g.exit();
