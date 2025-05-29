@@ -1204,6 +1204,7 @@ export class PhpInterpreter
 		{	this.is_inited = true; // set to true to avoid re-initialization
 			await this.do_exit();
 			this.init_error = e instanceof Error ? e : new Error(e+'');
+			throw this.init_error; // rethrow
 		}
 	}
 
