@@ -375,6 +375,7 @@ export class PhpInterpreter
 	private commands_io: Deno.Conn|undefined;
 	private buffer = new Uint8Array;
 	private is_inited = false;
+	private init_error: Error|undefined;
 	private using_unix_socket = '';
 	private ongoing: Promise<unknown>[] = [];
 	private ongoing_level = 0;
@@ -1041,158 +1042,167 @@ export class PhpInterpreter
 	}
 
 	private async do_init()
-	{	// 1. Set is_inited flag, to avoid entering this function recursively
+	{	if (this.init_error)
+		{	throw this.init_error;
+		}
+		// 1. Set is_inited flag, to avoid entering this function recursively
 		debug_assert(!this.is_inited);
 		debug_assert(!this.php_cli_proc && !this.php_fpm_response && !this.stdout_mux && !this.commands_io);
-		this.is_inited = true;
-		if (this.buffer.length == 0)
-		{	this.buffer = new Uint8Array(BUFFER_LEN);
-		}
-		// 2. Open a listener, and start listening
-		let php_socket;
-		if (this.settings.unix_socket_name)
-		{	this.using_unix_socket = this.settings.unix_socket_name;
-			this.listener = Deno.listen({transport: 'unix', path: this.using_unix_socket});
-			php_socket = 'unix://'+this.using_unix_socket;
-		}
-		else
-		{	this.using_unix_socket = '';
-			const {localhost_name_bind, localhost_name} = this.settings;
-			this.listener = Deno.listen({transport: 'tcp', hostname: localhost_name_bind, port: 0});
-			const {addr} = this.listener;
-			php_socket = `tcp://${localhost_name.indexOf(':')==-1 ? localhost_name : '['+localhost_name+']'}:${addr.transport=='tcp' ? addr.port : 0}`;
-		}
-		// 3. HELO (generate random key)
-		const key = await get_random_key(this.buffer.subarray(0, KEY_LEN));
-		const end_mark = get_weak_random_bytes(this.buffer.subarray(0, READER_MUX_END_MARK_LEN));
-		const {init_php_file, override_args, interpreter_script, stdout} = this.settings;
-		const rec_helo = key+' '+btoa(String.fromCharCode(...end_mark))+' '+btoa(php_socket)+' '+btoa(init_php_file);
-		let php_boot_file = '';
-		// 4. Run the PHP interpreter or connect to PHP-FPM service
-		if (!this.settings.php_fpm.listen)
-		{	// Run the PHP interpreter
-			const cmd = Array.isArray(this.settings.php_cli_name) ? this.settings.php_cli_name[0] : this.settings.php_cli_name;
-			const args = Array.isArray(this.settings.php_cli_name) ? this.settings.php_cli_name.slice(1) : [];
-			if (interpreter_script || DEBUG_PHP_BOOT)
-			{	args.push('-f', interpreter_script || await get_interpreter_script_filename(DEBUG_PHP_BOOT));
+		try
+		{	if (this.buffer.length == 0)
+			{	this.buffer = new Uint8Array(BUFFER_LEN);
+			}
+			// 2. Open a listener, and start listening
+			let php_socket;
+			if (this.settings.unix_socket_name)
+			{	this.using_unix_socket = this.settings.unix_socket_name;
+				this.listener = Deno.listen({transport: 'unix', path: this.using_unix_socket});
+				php_socket = 'unix://'+this.using_unix_socket;
 			}
 			else
-			{	args.push('-r', PHP_BOOT_CLI);
+			{	this.using_unix_socket = '';
+				const {localhost_name_bind, localhost_name} = this.settings;
+				this.listener = Deno.listen({transport: 'tcp', hostname: localhost_name_bind, port: 0});
+				const {addr} = this.listener;
+				php_socket = `tcp://${localhost_name.indexOf(':')==-1 ? localhost_name : '['+localhost_name+']'}:${addr.transport=='tcp' ? addr.port : 0}`;
 			}
-			const addArgs = override_args ?? Deno.args;
-			if (addArgs.length)
-			{	args.push('--', ...addArgs);
-			}
-			this.php_cli_proc = new Deno.Command(cmd, {args, stdin: 'piped', stdout, stderr: 'inherit'}).spawn();
-			// Send the HELO packet with opened listener address and the key
-			const stdin_writer = this.php_cli_proc.stdin.getWriter();
-			try
-			{	await stdin_writer.write(encoder.encode(rec_helo));
-			}
-			finally
-			{	await stdin_writer.close();
-			}
-			// Mux stdout
-			if (stdout == 'piped')
-			{	this.stdout_mux = new ReaderMux(Promise.resolve(this.php_cli_proc.stdout), end_mark.slice());
-				this.stdout_mux.get_readable_stream().then(r => r.pipeTo(new WrStream(Deno.stdout), {preventClose: true})); // Begin with piping to stdout. Then the output can be switched.
-			}
-		}
-		else
-		{	// Connect to PHP-FPM service
-			// First create php file with init script
-			php_boot_file = interpreter_script || await get_interpreter_script_filename(DEBUG_PHP_BOOT);
-			// Prepare params
-			let {params} = this.settings.php_fpm;
-			if (params.has('DENO_WORLD_HELO'))
-			{	// looks like object shared between requests
-				const params_clone = new Map;
-				for (const [k, v] of params)
-				{	params_clone.set(k, v);
+			// 3. HELO (generate random key)
+			const key = await get_random_key(this.buffer.subarray(0, KEY_LEN));
+			const end_mark = get_weak_random_bytes(this.buffer.subarray(0, READER_MUX_END_MARK_LEN));
+			const {init_php_file, override_args, interpreter_script, stdout} = this.settings;
+			const rec_helo = key+' '+btoa(String.fromCharCode(...end_mark))+' '+btoa(php_socket)+' '+btoa(init_php_file);
+			let php_boot_file = '';
+			// 4. Run the PHP interpreter or connect to PHP-FPM service
+			if (!this.settings.php_fpm.listen)
+			{	// Run the PHP interpreter
+				const cmd = Array.isArray(this.settings.php_cli_name) ? this.settings.php_cli_name[0] : this.settings.php_cli_name;
+				const args = Array.isArray(this.settings.php_cli_name) ? this.settings.php_cli_name.slice(1) : [];
+				if (interpreter_script || DEBUG_PHP_BOOT)
+				{	args.push('-f', interpreter_script || await get_interpreter_script_filename(DEBUG_PHP_BOOT));
 				}
-				params = params_clone;
+				else
+				{	args.push('-r', PHP_BOOT_CLI);
+				}
+				const addArgs = override_args ?? Deno.args;
+				if (addArgs.length)
+				{	args.push('--', ...addArgs);
+				}
+				this.php_cli_proc = new Deno.Command(cmd, {args, stdin: 'piped', stdout, stderr: 'inherit'}).spawn();
+				// Send the HELO packet with opened listener address and the key
+				const stdin_writer = this.php_cli_proc.stdin.getWriter();
+				try
+				{	await stdin_writer.write(encoder.encode(rec_helo));
+				}
+				finally
+				{	await stdin_writer.close();
+				}
+				// Mux stdout
+				if (stdout == 'piped')
+				{	this.stdout_mux = new ReaderMux(Promise.resolve(this.php_cli_proc.stdout), end_mark.slice());
+					this.stdout_mux.get_readable_stream().then(r => r.pipeTo(new WrStream(Deno.stdout), {preventClose: true})); // Begin with piping to stdout. Then the output can be switched.
+				}
 			}
-			params.set('DENO_WORLD_HELO', rec_helo);
-			params.set('SCRIPT_FILENAME', php_boot_file);
-			// max_conns
-			fcgi.options({maxConns: this.settings.php_fpm.max_conns});
-			// FCGI fetch
-			if (!fcgi.canFetch())
-			{	await fcgi.waitCanFetch();
-			}
-			this.php_fpm_response = fcgi.fetch
-			(	{	addr: this.settings.php_fpm.listen,
-					params,
-					connectTimeout: this.settings.php_fpm.connect_timeout,
-					timeout: Number.MAX_SAFE_INTEGER,
-					keepAliveTimeout: this.settings.php_fpm.keep_alive_timeout,
-					keepAliveMax: this.settings.php_fpm.keep_alive_max,
-					onLogError: this.settings.php_fpm.onlogerror ||
-					(	msg =>
-						{	console.error(msg);
-						}
-					)
-				},
-				this.settings.php_fpm.request,
-				this.settings.php_fpm.request_init
-			);
-			// Mux stdout
-			if (stdout == 'null')
-			{	this.php_fpm_response.then(r => r.body?.cancel());
-			}
-			else if (stdout == 'piped')
-			{	this.stdout_mux = new ReaderMux(this.php_fpm_response.then(r => r.body), end_mark.slice());
-				this.stdout_mux.get_readable_stream().then(r => r.pipeTo(new WrStream(Deno.stdout), {preventClose: true}));
-			}
-			// onresponse
-			if (this.settings.php_fpm.onresponse)
-			{	const {onresponse} = this.settings.php_fpm;
-				this.php_fpm_response = this.php_fpm_response.then
-				(	async r =>
-					{	try
-						{	await onresponse(r);
-						}
-						catch (e)
-						{	const {request} = this.settings.php_fpm;
-							const url = request instanceof Request ? `${request.method} ${request.url}` : `GET ${request}`;
-							console.error(`Error in PHP-FPM request to ${url}`, e);
-						}
-						return r;
+			else
+			{	// Connect to PHP-FPM service
+				// First create php file with init script
+				php_boot_file = interpreter_script || await get_interpreter_script_filename(DEBUG_PHP_BOOT);
+				// Prepare params
+				let {params} = this.settings.php_fpm;
+				if (params.has('DENO_WORLD_HELO'))
+				{	// looks like object shared between requests
+					const params_clone = new Map;
+					for (const [k, v] of params)
+					{	params_clone.set(k, v);
 					}
+					params = params_clone;
+				}
+				params.set('DENO_WORLD_HELO', rec_helo);
+				params.set('SCRIPT_FILENAME', php_boot_file);
+				// max_conns
+				fcgi.options({maxConns: this.settings.php_fpm.max_conns});
+				// FCGI fetch
+				if (!fcgi.canFetch())
+				{	await fcgi.waitCanFetch();
+				}
+				this.php_fpm_response = fcgi.fetch
+				(	{	addr: this.settings.php_fpm.listen,
+						params,
+						connectTimeout: this.settings.php_fpm.connect_timeout,
+						timeout: Number.MAX_SAFE_INTEGER,
+						keepAliveTimeout: this.settings.php_fpm.keep_alive_timeout,
+						keepAliveMax: this.settings.php_fpm.keep_alive_max,
+						onLogError: this.settings.php_fpm.onlogerror ||
+						(	msg =>
+							{	console.error(msg);
+							}
+						)
+					},
+					this.settings.php_fpm.request,
+					this.settings.php_fpm.request_init
 				);
-			}
-		}
-		// 5. Accept connection from the interpreter. Identify it by the key.
-		while (true)
-		{	const accept = this.listener.accept();
-			if (!this.php_fpm_response)
-			{	this.commands_io = await accept;
-			}
-			else
-			{	const result = await Promise.race([accept, this.php_fpm_response]);
-				if (result instanceof ResponseWithCookies)
-				{	// response came earlier than accept (script didn't connect to me)
-					accept.then(s => s.close()).catch(() => {});
-					throw new Error(`Failed to execute PHP-FPM script "${php_boot_file}" through socket "${this.settings.php_fpm.listen}": status ${result.status}, ${await result.text()}`);
+				// Mux stdout
+				if (stdout == 'null')
+				{	this.php_fpm_response.then(r => r.body?.cancel());
 				}
-				this.commands_io = result;
-			}
-			try
-			{	const helo = await this.do_read();
-				if (helo == key)
-				{	break;
+				else if (stdout == 'piped')
+				{	this.stdout_mux = new ReaderMux(this.php_fpm_response.then(r => r.body), end_mark.slice());
+					this.stdout_mux.get_readable_stream().then(r => r.pipeTo(new WrStream(Deno.stdout), {preventClose: true}));
+				}
+				// onresponse
+				if (this.settings.php_fpm.onresponse)
+				{	const {onresponse} = this.settings.php_fpm;
+					this.php_fpm_response = this.php_fpm_response.then
+					(	async r =>
+						{	try
+							{	await onresponse(r);
+							}
+							catch (e)
+							{	const {request} = this.settings.php_fpm;
+								const url = request instanceof Request ? `${request.method} ${request.url}` : `GET ${request}`;
+								console.error(`Error in PHP-FPM request to ${url}`, e);
+							}
+							return r;
+						}
+					);
 				}
 			}
-			catch (e)
-			{	console.error(e);
+			// 5. Accept connection from the interpreter. Identify it by the key.
+			while (true)
+			{	const accept = this.listener.accept();
+				if (!this.php_fpm_response)
+				{	this.commands_io = await accept;
+				}
+				else
+				{	const result = await Promise.race([accept, this.php_fpm_response]);
+					if (result instanceof ResponseWithCookies)
+					{	// response came earlier than accept (script didn't connect to me)
+						accept.then(s => s.close()).catch(() => {});
+						throw new Error(`Failed to execute PHP-FPM script "${php_boot_file}" through socket "${this.settings.php_fpm.listen}": status ${result.status}, ${await result.text()}`);
+					}
+					this.commands_io = result;
+				}
+				try
+				{	const helo = await this.do_read();
+					if (helo == key)
+					{	break;
+					}
+				}
+				catch (e)
+				{	console.error(e);
+				}
+				this.commands_io.close();
 			}
-			this.commands_io.close();
+			// 6. init_php_file
+			if (init_php_file)
+			{	// i executed init_php_file that produced result (and maybe deno calls)
+				const result = await this.do_read();
+				debug_assert(result == null);
+			}
+			this.is_inited = true;
 		}
-		// 6. init_php_file
-		if (init_php_file)
-		{	// i executed init_php_file that produced result (and maybe deno calls)
-			const result = await this.do_read();
-			debug_assert(result == null);
+		catch (e)
+		{	await this.do_exit();
+			this.init_error = e instanceof Error ? e : new Error(e+'');
 		}
 	}
 
@@ -1453,7 +1463,7 @@ export class PhpInterpreter
 	}
 
 	private async do_exit(): Promise<Deno.CommandStatus>
-	{	if (!this.is_inited && this.settings.init_php_file)
+	{	if (!this.is_inited && !this.init_error && this.settings.init_php_file)
 		{	// Didn't call any functions, just called exit(), so `init_php_file` was not executed.
 			await this.do_init();
 		}
@@ -1508,6 +1518,7 @@ export class PhpInterpreter
 		this.listener = undefined;
 		this.commands_io = undefined;
 		this.is_inited = false;
+		this.init_error = undefined;
 		this.last_inst_id = -1;
 		this.stack_frames.length = 0;
 		for (const v of this.deno_insts.values())
