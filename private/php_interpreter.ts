@@ -385,6 +385,13 @@ export class PhpInterpreter
 	private deno_insts: Map<number, Any> = new Map; // php has handles to these objects
 	private deno_inst_id_enum = 2; // later will do: deno_insts.set(0, this); deno_insts.set(1, globalThis);
 
+	/**	The PHP interpreter is running.
+		It starts running after first function call or variable set, and stops running after `g.exit()` is called.
+	 **/
+	get is_active()
+	{	return this.is_inited;
+	}
+
 	/**	For accessing remote global PHP objects, except classes (functions, variables, constants).
 	 **/
 	g: Any;
