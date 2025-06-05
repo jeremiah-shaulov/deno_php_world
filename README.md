@@ -16,7 +16,7 @@ PHP-CLI or PHP-FPM at least version 8.0 must be installed on your system.
 ### Usage
 
 ```ts
-import {g, c} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 // ...
 // and at last, terminate the interpreter
 await g.exit();
@@ -33,7 +33,7 @@ If in your system PHP appears under different name, you need to set `settings.ph
 If you wish to use PHP-FPM instead, set `settings.php_fpm.listen`.
 
 ```ts
-import {g, c, settings} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c, settings} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 settings.php_cli_name = 'php7.4';
 // now access php_world interfaces
@@ -70,7 +70,7 @@ There are several configurable settings:
 Each function becomes async, because calling it involves IPC (interprocess communication) with the background PHP interpreter.
 
 ```ts
-import {g} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 const {eval: php_eval, phpversion, class_exists, exit} = g;
 
 console.log(await phpversion());
@@ -86,7 +86,7 @@ It's important to call `exit()` at the end of Deno script. This function termina
 Constant's value must be awaited-for.
 
 ```ts
-import {g, c} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 console.log(await g.PHP_VERSION);
 console.log((await g.FAKE) === undefined); // unexisting constants have "undefined" value
@@ -99,7 +99,7 @@ Like constants, variables are present in the `g` namespace, but their names begi
 Variable's value must be awaited-for. But setting new value returns immediately (and doesn't imply synchronous operations - the value will be set in the background, and there's no result that we need to await for).
 
 ```ts
-import {g, c} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 console.log((await g.$ten) === undefined); // unexisting variables have "undefined" value
 g.$ten = 10;
@@ -109,7 +109,7 @@ console.log(await g.$ten);
 Individual keys can be accessed.
 
 ```ts
-import {g, c} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 g.$_SERVER['hello']['world'] = true;
 console.log(await g.$_SERVER['hello']);
@@ -118,7 +118,7 @@ console.log(await g.$_SERVER['hello']);
 It's possible to unset a key.
 
 ```ts
-import {g, c} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 console.log(await g.$_SERVER['argc']); // likely to print '1'
 delete g.$_SERVER['argc'];
@@ -132,7 +132,7 @@ Classes are present in the `c` namespace.
 ### Class-static constants
 
 ```ts
-import {g, c} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 const {eval: php_eval} = g;
 const {Value} = c;
 
@@ -144,7 +144,7 @@ console.log(await Value.TEN);
 ### Class-static variables
 
 ```ts
-import {g, c} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 const {eval: php_eval} = g;
 const {Value} = c;
 
@@ -156,7 +156,7 @@ console.log(await Value.$ten);
 ### Class-static methods
 
 ```ts
-import {g, c} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 const {eval: php_eval} = g;
 const {Value} = c;
 
@@ -176,7 +176,7 @@ console.log(await Value.get_ten());
 To create a class instance, call class constructor, and await for the result. It returns handle to remote PHP object.
 
 ```ts
-import {g, c} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 const {eval: php_eval} = g;
 const {Value} = c;
 
@@ -193,7 +193,7 @@ value[Symbol.dispose]();
 Or bind the created object to a "using" variable.
 
 ```ts
-import {g, c} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 const {eval: php_eval} = g;
 const {Value} = c;
 
@@ -204,7 +204,7 @@ using value = await new Value;
 For debugging purposes it's possible to query number of currently allocated objects. This number must reach 0 at the end of the script.
 
 ```ts
-import {g, c, php} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c, php} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 console.log(await php.n_objects()); // prints 0
 {	using obj = await new c.Exception('Test');
@@ -217,7 +217,7 @@ await php.g.exit();
 ### Instance variables
 
 ```ts
-import {g, c} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 const {eval: php_eval} = g;
 const {Value} = c;
 
@@ -233,7 +233,7 @@ await php.g.exit();
 ### Instance methods
 
 ```ts
-import {g, c} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 const {eval: php_eval} = g;
 const {Value} = c;
 
@@ -260,7 +260,7 @@ Objects returned from functions are dumb default objects, without methods.
 However it's possible to get object handle as in example with instance construction. To do so you need to get special property called `this` from the object, before awaiting for the result.
 
 ```ts
-import {g, c} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 {	await g.eval
 	(	`	function get_ex($msg)
@@ -283,7 +283,7 @@ At last, the object must be disposed (with `Symbol.asyncDispose` or `Symbol.disp
 In the same fashion, it's possible to get object-handle to a variable.
 
 ```ts
-import {g, c} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 {	await g.eval
 	(	`	global $e;
@@ -309,7 +309,7 @@ Remote PHP objects are represented in Deno as opaque `Proxy` objects, and they d
 Example:
 
 ```ts
-import {g, c} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 {	using obj = await new c.ArrayObject(['a', 'b', 'c']);
 	console.log(obj instanceof c.ArrayObject); // prints "true"
@@ -324,7 +324,7 @@ await php.g.exit();
 ### Namespaces
 
 ```ts
-import {g, c} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 {	await g.eval
 	(	`	namespace MainNs;
@@ -358,7 +358,7 @@ await php.g.exit();
 When you pass an object from Deno to PHP, and this object is not a plain `Object` or `Array` (`obj.constructor!=Object && obj.constructor!=Array`), a handler to remote Deno object is created on PHP side.
 
 ```ts
-import {g, c} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 class FirstClass
 {	get_value()
@@ -380,7 +380,7 @@ await g.exit();
 Also on PHP side 2 global variables get automatically defined at the beginning of the script: `$globalThis` and `$window`. They are identical, so you can use whatever you prefer.
 
 ```ts
-import {g, c} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 await g.eval
 (	`	global $window;
@@ -400,7 +400,7 @@ await g.exit();
 When accessing async values, they're automatically awaited.
 
 ```ts
-import {g, c} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 await g.eval
 (	`	global $window;
@@ -414,7 +414,7 @@ await g.exit();
 Javascript functions and classes are not distinguishable entities (functions can be used as classes). They both can be referred to from PHP through `DenoWorld` namespace.
 
 ```ts
-import {g, c} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 await g.eval
 (	`	global $keys_func;
@@ -439,7 +439,7 @@ await g.exit();
 Some class names are invalid in PHP, and cause errors. Classes called "Array" and "Object" are such.
 
 ```ts
-import {g, c} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 try
 {	await g.eval
@@ -457,7 +457,7 @@ await g.exit();
 But you can rename them.
 
 ```ts
-import {g, c} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 await g.eval
 (	`	global $window;
@@ -486,7 +486,7 @@ The following object features are supported:
 If a requested Deno class doesn't exist, you can handle this situation, and maybe load it before accessing.
 
 ```ts
-import {g, c, settings} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c, settings} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 settings.onsymbol = name =>
 {	if (name == 'Scientific')
@@ -517,7 +517,7 @@ await g.exit();
 To access toplevel functions that are not in `globalThis`, but must be handled by `onsymbol()`, you can call them as static functions of `DenoWorld` class.
 
 ```ts
-import {g, c, settings} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c, settings} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 settings.onsymbol = name =>
 {	if (name == 'hello')
@@ -539,7 +539,7 @@ await g.exit();
 If a Deno object has method called `dispose()`, it will be called once this object becomes not in use on PHP side.
 
 ```ts
-import {php} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {php} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 class MyFile
 {	protected fh: Deno.File | undefined;
@@ -580,7 +580,7 @@ Third and the last PHP global variable that this library defines is called `$php
 You can pass it to Deno functions, if they want to use current PHP interpreter that called them.
 
 ```ts
-import {g, c, settings, PhpInterpreter} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c, settings, PhpInterpreter} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 settings.onsymbol = name =>
 {	if (name == 'get_rating')
@@ -609,7 +609,7 @@ Initially there're 2: $php and $globalThis ($window === $globalThis).
 As you request Deno objects, this number will grow, and once you free references, this number will be decreased.
 
 ```ts
-import {g, php} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, php} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 console.log(await php.n_deno_objects()); // prints 2
 await g.eval
@@ -648,7 +648,7 @@ await g.exit();
 When you call PHP functions, if function's result is not awaited-for, the function will work in background. You can continue calling functions, and they all will be executed in the same sequence they requested. If a function threw exception, all subsequent operations will be skipped till the end of current microtask iteration.
 
 ```ts
-import {g, c, php} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c, php} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 await g.eval
 (	`	function failure($msg)
@@ -676,7 +676,7 @@ console.log(await g.$n); // prints 1
 If you don't await any operation within current microtask iteration, the exception will be lost.
 
 ```ts
-import {g, c, php} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c, php} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 await g.eval
 (	`	function failure($msg)
@@ -706,7 +706,7 @@ queueMicrotask
 PHP exceptions are propagated to Deno as instances of InterpreterError class.
 
 ```ts
-import {g, c, InterpreterError} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c, InterpreterError} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 await g.eval
 (	`	function failure($msg)
@@ -730,7 +730,7 @@ Also `stack` field is modified to contain traces from PHP.
 If PHP interpreter exits (not as result of calling `g.exit()`), `InterpreterExitError` exception is thrown.
 
 ```ts
-import {g, InterpreterExitError} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, InterpreterExitError} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 try
 {	await g.eval('exit(100);');
@@ -749,7 +749,7 @@ The InterpreterExitError class has the following fields: `message`, `code` (proc
 Exported `php` symbol is a default instance of `PhpInterpreter` class that created by calling `export const php = new PhpInterpreter` inside the library. `PhpInterpreter` class allows you to run more instances of PHP interpreter, either PHP-CLI, or PHP-FPM.
 
 ```ts
-import {g, c, PhpInterpreter} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c, PhpInterpreter} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 await using int_1 = new PhpInterpreter; // binding to "await using" calls `int_1.g.exit()` automatically at the end of the block
 await using int_2 = new PhpInterpreter;
@@ -797,7 +797,7 @@ pm.max_spare_servers = 3
 ```
 
 ```ts
-import {g, c, php, settings} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c, php, settings} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 settings.php_fpm.listen = '[::1]:8989';
 console.log(await g.php_sapi_name());
@@ -813,7 +813,7 @@ Common problems:
 If `settings.stdout` is set to `inherit` (default value), echo output, together with headers set with `header()` or `setcookie()` can be taken as `Response` object.
 
 ```ts
-import {g, c, php, settings} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, c, php, settings} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 settings.php_fpm.listen = '[::1]:8989';
 
@@ -837,7 +837,7 @@ If you want to read the response body in the callback, you need not return till 
 The body can be read in regular way, as you do with `fetch()`.
 
 ```ts
-import {g, php, settings} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g, php, settings} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 settings.php_fpm.listen = '[::1]:8989';
 settings.php_fpm.onresponse = async response =>
@@ -869,7 +869,7 @@ If you have Apache (or Nginx) + PHP-FPM setup, you can create Deno node in the m
 And by default this will work as there was no Deno at all. But PHP scrips will be able to access Deno world, and vise versa.
 
 ```ts
-import {start_proxy, PhpRequest} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {start_proxy, PhpRequest} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 console.log(`Server started`);
 
@@ -944,7 +944,7 @@ It's default value is `inherit`. For PHP-CLI this value means to pass PHP output
 As usual, it's possible to use PHP output buffering to catch the output.
 
 ```ts
-import {g} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 g.ob_start();
 g.echo("A");
@@ -960,7 +960,7 @@ But this is not good for large outputs, because the whole output will be stored 
 Setting `settings.stdout` to `piped` allows to catch PHP output. Initially the output will be passed to Deno, as in the `inherit` case, but you'll be able to call `php.get_stdout_reader()` to get `ReadableStream<Uint8Array>` object from which the output can be read. To stop reading the output from that reader, and to redirect it back to `Deno.stdout`, call `php.drop_stdout_reader()`. This will cause the reader stream to end (`EOF`).
 
 ```ts
-import {php, settings} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {php, settings} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 settings.stdout = 'piped';
 
@@ -988,7 +988,7 @@ If using PHP-CLI, the default behavior is to pass the whole contents of the inte
 If using PHP-FPM, the default behavior is to create temporary file in system temporary directory, write the interpreter script to this file, and pass it's filename to PHP-FPM service.
 
 In certain circumstances such default behavior is not wanted.
-Another option is to download the interpreter script [from here](https://deno.land/x/php_world@v0.0.44/php/deno-php-world.php),
+Another option is to download the interpreter script [from here](https://deno.land/x/php_world@v0.0.45/php/deno-php-world.php),
 install it to your system together with the application, and set `settings.interpreter_script` setting to the path of this file.
 This file must be accessible by PHP.
 
@@ -1019,7 +1019,7 @@ function dec()
 Let's use this time as a measuring unit, and measure how slower is `deno_world` over native PHP.
 
 ```ts
-import {g} from 'https://deno.land/x/php_world@v0.0.44/mod.ts';
+import {g} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 await g.eval
 (	`	function dec()
