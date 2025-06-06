@@ -136,9 +136,9 @@ function get_inst_features(value: Any)
 }
 
 function dispose_inst(inst: Any)
-{	if (typeof(inst.dispose) == 'function')
-	{	try
-		{	const v = inst.dispose();
+{	try
+	{	if (typeof(inst[Symbol.asyncDispose]) == 'function')
+		{	const v = inst[Symbol.asyncDispose]();
 			if (v instanceof Promise)
 			{	v.catch
 				(	e =>
@@ -147,9 +147,15 @@ function dispose_inst(inst: Any)
 				);
 			}
 		}
-		catch (e)
-		{	console.error(e);
+		else if (typeof(inst[Symbol.dispose]) == 'function')
+		{	inst[Symbol.dispose]();
 		}
+		else if (typeof(inst.dispose) == 'function')
+		{	inst.dispose();
+		}
+	}
+	catch (e)
+	{	console.error(e);
 	}
 }
 

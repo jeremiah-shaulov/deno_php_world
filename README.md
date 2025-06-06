@@ -536,23 +536,24 @@ await g.eval
 await g.exit();
 ```
 
-If a Deno object has method called `dispose()`, it will be called once this object becomes not in use on PHP side.
+If a Deno object has method called `Symbol.asyncDispose`, `Symbol.dispose` or `dispose`, it will be called once this object becomes not in use on PHP side.
 
 ```ts
 import {php} from 'https://deno.land/x/php_world@v0.0.45/mod.ts';
 
 class MyFile
-{	protected fh: Deno.File | undefined;
+{	protected fh: Deno.FsFile | undefined;
 	private buffer = new Uint8Array(8*1024);
 
 	static async open(path: string, options?: Deno.OpenOptions)
-	{	let self = new MyFile;
+	{	const self = new MyFile;
 		self.fh = await Deno.open(path, options);
 		return self;
 	}
 
-	dispose()
-	{	this.fh?.close();
+	[Symbol.dispose]()
+	{	console.log('(disposing MyFile)');
+		this.fh?.close();
 	}
 
 	async read()
