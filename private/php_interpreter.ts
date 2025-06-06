@@ -151,7 +151,14 @@ function dispose_inst(inst: Any)
 		{	inst[Symbol.dispose]();
 		}
 		else if (typeof(inst.dispose) == 'function')
-		{	inst.dispose();
+		{	const v = inst.dispose();
+			if (v instanceof Promise)
+			{	v.catch
+				(	e =>
+					{	console.error(e);
+					}
+				);
+			}
 		}
 	}
 	catch (e)
@@ -1321,7 +1328,10 @@ export class PhpInterpreter
 						break;
 					}
 					case RES.DESTRUCT:
-					{	dispose_inst(this.deno_insts.get(deno_inst_id));
+					{	const inst = this.deno_insts.get(deno_inst_id);
+						if (inst != this)
+						{	dispose_inst(inst);
+						}
 						this.deno_insts.delete(deno_inst_id);
 						continue;
 					}
@@ -1538,7 +1548,9 @@ export class PhpInterpreter
 		this.last_inst_id = -1;
 		this.stack_frames.length = 0;
 		for (const v of this.deno_insts.values())
-		{	dispose_inst(v);
+		{	if (v != this)
+			{	dispose_inst(v);
+			}
 		}
 		this.deno_insts.clear();
 		this.deno_insts.set(0, this);
