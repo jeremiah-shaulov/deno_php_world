@@ -330,7 +330,11 @@ class DenoWorldMain extends DenoWorld
 			$padding = (8 - ($len + 4)%8) % 8;
 			$data = $padding===0 ? pack("l", $len).$data : pack("lx{$padding}", $len).$data;
 		}
-		if (strlen(self::$php_insts_destroyed))
+		self::write_data($data);
+	}
+
+	private static function write_data($data)
+	{	if (strlen(self::$php_insts_destroyed))
 		{	$data = self::$php_insts_destroyed.$data;
 			self::$php_insts_destroyed = '';
 		}
@@ -341,13 +345,15 @@ class DenoWorldMain extends DenoWorld
 	{	$data = self::json_encode([$e->getFile(), $e->getLine(), $e->getMessage(), $e->getTraceAsString()]);
 		$len = strlen($data);
 		$padding = (8 - ($len + 4)%8) % 8;
-		fwrite(self::$commands_io, $padding===0 ? pack("lll", -8-$len, self::RES_ERROR, 0).$data : pack("lllx{$padding}", -8-$len, self::RES_ERROR, 0).$data);
+		$data = $padding===0 ? pack("lll", -8-$len, self::RES_ERROR, 0).$data : pack("lllx{$padding}", -8-$len, self::RES_ERROR, 0).$data;
+		self::write_data($data);
 	}
 
 	public static function write_read($type, $deno_inst_id, $data='')
 	{	$len = strlen($data);
 		$padding = (8 - ($len + 4)%8) % 8;
-		fwrite(self::$commands_io, $padding===0 ? pack("llN", -8-$len, $type, $deno_inst_id).$data : pack("llNx{$padding}", -8-$len, $type, $deno_inst_id).$data);
+		$data = $padding===0 ? pack("llN", -8-$len, $type, $deno_inst_id).$data : pack("llNx{$padding}", -8-$len, $type, $deno_inst_id).$data;
+		self::write_data($data);
 		$data = self::events_q();
 		$pos = strpos($data, ' ');
 		$type = (int)substr($data, 0, $pos);
