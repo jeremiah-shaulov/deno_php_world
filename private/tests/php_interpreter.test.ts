@@ -1,7 +1,7 @@
 import {with_docker, system} from './with_docker.ts';
-import {g, c, php, settings, PhpInterpreter, InterpreterExitError} from '../../mod.ts';
+import {g, c, php, settings, PhpInterpreter, InterpreterExitError, PhpSettings} from '../../mod.ts';
 import {assert, assertEquals, fcgi, path} from "../deps.ts";
-import {PhpSettings, DEBUG_PHP_BOOT} from '../php_interpreter.ts';
+import {DEBUG_PHP_BOOT} from '../php_interpreter.ts';
 import {start_proxy, PhpRequest} from '../start_proxy.ts';
 
 // deno-lint-ignore no-explicit-any

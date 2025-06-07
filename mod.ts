@@ -1,8 +1,10 @@
 import {PhpInterpreter} from './private/php_interpreter.ts';
 
-export {PhpInterpreter, PhpSettings, type PhpFpmSettings} from './private/php_interpreter.ts';
+export {PhpInterpreter} from './private/php_interpreter.ts';
 
 export {InterpreterError, InterpreterExitError} from './private/errors.ts';
+
+export {PhpSettings, type PhpFpmSettings} from './private/php_settings.ts';
 
 /**	Default instance of `PhpInterpreter` class for general purposes.
  **/
