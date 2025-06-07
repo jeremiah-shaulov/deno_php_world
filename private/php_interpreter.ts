@@ -1208,10 +1208,10 @@ export class PhpInterpreter
 				data = e instanceof Error ? e.message : e+'';
 			}
 			finally
-			{	this.ongoing_level--;
-				if (this.ongoing.length > this.ongoing_level+1)
-				{	this.ongoing.length = this.ongoing_level+1;
+			{	if (this.ongoing.length > this.ongoing_level)
+				{	this.ongoing.length = this.ongoing_level;
 				}
+				this.ongoing_level--;
 			}
 			if (result_type == RESTYPE.IS_JSON)
 			{	if (typeof(data) == 'string')
