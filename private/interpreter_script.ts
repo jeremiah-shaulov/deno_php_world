@@ -113,12 +113,14 @@ class DenoWorld implements ArrayAccess, JsonSerializable
 }
 
 class DenoWorldDefaultIterator implements Iterator
-{	private int $deno_inst_id;
+{	private DenoWorld $subj; // hold reference to the subject object to prevent it from being destroyed while iterating
+	private int $deno_inst_id;
 	private DenoWorld $it;
 	private $result;
 
-	public function __construct(int $deno_inst_id)
-	{	$this->deno_inst_id = $deno_inst_id;
+	public function __construct(DenoWorld $subj, int $deno_inst_id)
+	{	$this->subj = $subj;
+		$this->deno_inst_id = $deno_inst_id;
 	}
 
 	public function rewind(): void
@@ -146,28 +148,33 @@ class DenoWorldDefaultIterator implements Iterator
 }
 
 class DenoWorldIterator implements Iterator
-{	private int $deno_inst_id;
+{	private DenoWorld $subj; // hold reference to the subject object to prevent it from being destroyed while iterating
+	private int $deno_inst_id;
 	private DenoWorld $it;
-	private $result;
+	private $value;
+	private bool $done = true;
 	private int $key = 0;
 
-	public function __construct(int $deno_inst_id)
-	{	$this->deno_inst_id = $deno_inst_id;
+	public function __construct(DenoWorld $subj, int $deno_inst_id)
+	{	$this->subj = $subj;
+		$this->deno_inst_id = $deno_inst_id;
 	}
 
 	public function rewind(): void
 	{	$this->it = DenoWorldMain::write_read(DenoWorldMain::RES_CLASS_GET_ITERATOR, $this->deno_inst_id);
-		$this->result = $this->it->next();
+		$result = $this->it->next();
+		$this->value = $result->value ?? null;
+		$this->done = !!($result->done ?? true);
 		$this->key = 0;
 	}
 
 	public function valid(): bool
-	{	return !($this->result->done ?? true);
+	{	return !$this->done;
 	}
 
 	#[\ReturnTypeWillChange]
 	public function current()
-	{	return $this->result->value ?? null;
+	{	return $this->value;
 	}
 
 	#[\ReturnTypeWillChange]
@@ -176,16 +183,18 @@ class DenoWorldIterator implements Iterator
 	}
 
 	public function next(): void
-	{	$this->result = $this->it->next();
+	{	$result = $this->it->next();
+		$this->value = $result->value ?? null;
+		$this->done = !!($result->done ?? true);
 		$this->key++;
 	}
 }
 
 trait DenoWorldHasDefaultIterator
-{	public function getIterator(): Traversable {return new DenoWorldDefaultIterator($this->deno_inst_id);}
+{	public function getIterator(): Traversable {return new DenoWorldDefaultIterator($this, $this->deno_inst_id);}
 }
 trait DenoWorldHasIterator
-{	public function getIterator(): Traversable {return new DenoWorldIterator($this->deno_inst_id);}
+{	public function getIterator(): Traversable {return new DenoWorldIterator($this, $this->deno_inst_id);}
 }
 trait DenoWorldHasLength
 {	public function count(): int {return $this->length;}
