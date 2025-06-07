@@ -101,11 +101,13 @@ class DenoWorld implements ArrayAccess, JsonSerializable
 	{	DenoWorldMain::write_read(DenoWorldMain::RES_CLASS_UNSET, $this->deno_inst_id, $offset);
 	}
 
-	public function offsetGet($offset): mixed
+	#[\ReturnTypeWillChange]
+	public function offsetGet($offset)
 	{	return DenoWorldMain::write_read(DenoWorldMain::RES_CLASS_GET, $this->deno_inst_id, $offset);
 	}
 
-	public function jsonSerialize(): mixed
+	#[\ReturnTypeWillChange]
+	public function jsonSerialize()
 	{	return json_decode(DenoWorldMain::write_read(DenoWorldMain::RES_JSON_ENCODE, $this->deno_inst_id));
 	}
 }
@@ -128,11 +130,13 @@ class DenoWorldDefaultIterator implements Iterator
 	{	return !($this->result->done ?? true);
 	}
 
-	public function current(): mixed
+	#[\ReturnTypeWillChange]
+	public function current()
 	{	return $this->result->value[1] ?? null;
 	}
 
-	public function key(): mixed
+	#[\ReturnTypeWillChange]
+	public function key()
 	{	return $this->result->value[0] ?? null;
 	}
 
@@ -161,11 +165,13 @@ class DenoWorldIterator implements Iterator
 	{	return !($this->result->done ?? true);
 	}
 
-	public function current(): mixed
+	#[\ReturnTypeWillChange]
+	public function current()
 	{	return $this->result->value ?? null;
 	}
 
-	public function key(): mixed
+	#[\ReturnTypeWillChange]
+	public function key()
 	{	return $this->key;
 	}
 
