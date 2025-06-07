@@ -38,7 +38,6 @@ const TESTS =
 	test_instance_of,
 	test_assign_object,
 	test_iterators,
-	test_push_frame,
 	test_stdout,
 	test_binary_data,
 	test_php_fpm,
@@ -1135,53 +1134,6 @@ async function test_iterators(php_cli_name: string|string[], php_fpm_listen: str
 		}
 		assertEquals(arr, ['a', 'b', 'c']);
 
-		await g.exit();
-	}
-	php.close_idle();
-}
-
-async function test_push_frame(php_cli_name: string|string[], php_fpm_listen: string, localhost_name_bind: string, localhost_name: string, interpreter_script: string)
-{	for (const _ of settings_iter(settings, php_cli_name, php_fpm_listen, localhost_name_bind, localhost_name, interpreter_script))
-	{	for (let i=0; i<3; i++)
-		{	assertEquals(await php.n_objects(), 0);
-			php.push_frame();
-			const _obj = await new c.ArrayObject([]);
-			assertEquals(await php.n_objects(), 1);
-
-			php.push_frame();
-			const obj2 = await new c.ArrayObject([]);
-			assertEquals(await php.n_objects(), 2);
-
-			php.push_frame();
-			const obj3 = await new c.ArrayObject([]);
-			assertEquals(await php.n_objects(), 3);
-
-			php.pop_frame();
-			assertEquals(await php.n_objects(), 2);
-			delete obj3.this;
-			assertEquals(await php.n_objects(), 2);
-
-			delete obj2.this;
-			assertEquals(await php.n_objects(), 1);
-			php.pop_frame();
-			assertEquals(await php.n_objects(), 1);
-
-			php.pop_frame();
-			assertEquals(await php.n_objects(), 0);
-
-			let error: Error|undefined;
-			try
-			{	php.pop_frame();
-				await php.ready();
-			}
-			catch (e)
-			{	error = e instanceof Error ? e : new Error(e+'');
-			}
-			assertEquals(error?.message, 'No frames to pop');
-		}
-
-		await g.exit();
-		php.push_frame();
 		await g.exit();
 	}
 	php.close_idle();

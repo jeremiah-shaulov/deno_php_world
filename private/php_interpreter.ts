@@ -49,7 +49,6 @@ const enum REC
 	CLASS_INVOKE,
 	CLASS_ITERATE_BEGIN,
 	CLASS_ITERATE,
-	POP_FRAME,
 	N_OBJECTS,
 	END_STDOUT,
 	CALL,
@@ -182,7 +181,6 @@ export class PhpInterpreter
 	private ongoing: Promise<unknown>[] = [];
 	private ongoing_level = 0;
 	private stdout_mux: ReaderMux|undefined;
-	private last_inst_id = -1;
 	private stack_frames: number[] = [];
 	private deno_insts: Map<number, Any> = new Map; // php has handles to these objects
 	private deno_inst_id_enum = 2; // later will do: deno_insts.set(0, this); deno_insts.set(1, globalThis);
@@ -674,7 +672,6 @@ export class PhpInterpreter
 				}
 			}
 			const php_inst_id = Number(result);
-			php.last_inst_id = php_inst_id;
 			return create_proxy
 			(	[],
 				class_name,
@@ -1335,7 +1332,6 @@ export class PhpInterpreter
 		if (!no_reset_error)
 		{	this.init_error = undefined;
 		}
-		this.last_inst_id = -1;
 		this.stack_frames.length = 0;
 		for (const v of this.deno_insts.values())
 		{	if (v != this)
@@ -1353,22 +1349,6 @@ export class PhpInterpreter
 	{	const code = status?.code ?? -1;
 		const message = code==-1 ? 'PHP interpreter died' : code!=0 ? `PHP interpreter died with error code ${code}` : 'PHP interpreter exited';
 		throw new InterpreterExitError(message, code);
-	}
-
-	private async do_push_frame()
-	{	if (!this.is_inited)
-		{	await this.do_init();
-		}
-		this.stack_frames.push(this.last_inst_id);
-	}
-
-	private async do_pop_frame()
-	{	const last_inst_id = this.stack_frames.pop();
-		if (last_inst_id == undefined)
-		{	throw new Error('No frames to pop');
-		}
-		await this.do_write(REC.POP_FRAME, last_inst_id+'');
-		this.last_inst_id = last_inst_id;
 	}
 
 	private async do_n_objects()
@@ -1420,20 +1400,6 @@ export class PhpInterpreter
 
 	private exit()
 	{	return this.schedule(() => this.do_exit());
-	}
-
-	/**	 All objects allocated after this call, can be freed at once.
-		@deprecated
-	 **/
-	push_frame()
-	{	this.schedule(() => this.do_push_frame());
-	}
-
-	/**	Free at once all the objects allocated after last `php.push_frame()` call.
-		@deprecated
-	 **/
-	pop_frame()
-	{	this.schedule(() => this.do_pop_frame());
 	}
 
 	/**	Number of allocated handles to remote PHP objects, that must be explicitly freed when not in use anymore.

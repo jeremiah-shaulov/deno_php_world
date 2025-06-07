@@ -245,18 +245,17 @@ class DenoWorldMain extends DenoWorld
 	private const REC_CLASS_INVOKE = 29;
 	private const REC_CLASS_ITERATE_BEGIN = 30;
 	private const REC_CLASS_ITERATE = 31;
-	private const REC_POP_FRAME = 32;
-	private const REC_N_OBJECTS = 33;
-	private const REC_END_STDOUT = 34;
-	private const REC_CALL = 35;
-	private const REC_CALL_THIS = 36;
-	private const REC_CALL_EVAL = 37;
-	private const REC_CALL_EVAL_THIS = 38;
-	private const REC_CALL_ECHO = 39;
-	private const REC_CALL_INCLUDE = 40;
-	private const REC_CALL_INCLUDE_ONCE = 41;
-	private const REC_CALL_REQUIRE = 42;
-	private const REC_CALL_REQUIRE_ONCE = 43;
+	private const REC_N_OBJECTS = 32;
+	private const REC_END_STDOUT = 33;
+	private const REC_CALL = 34;
+	private const REC_CALL_THIS = 35;
+	private const REC_CALL_EVAL = 36;
+	private const REC_CALL_EVAL_THIS = 37;
+	private const REC_CALL_ECHO = 38;
+	private const REC_CALL_INCLUDE = 39;
+	private const REC_CALL_INCLUDE_ONCE = 40;
+	private const REC_CALL_REQUIRE = 41;
+	private const REC_CALL_REQUIRE_ONCE = 42;
 
 	public const RES_ERROR = 1;
 	public const RES_GET_CLASS = 2;
@@ -833,15 +832,6 @@ class DenoWorldMain extends DenoWorld
 						$result = self::iterate($data);
 						$result_is_set = true;
 						break;
-					case self::REC_POP_FRAME:
-						foreach (self::$php_insts as $php_inst_id => $result)
-						{	if ($php_inst_id > $data)
-							{	unset(self::$php_insts[$php_inst_id]);
-								unset(self::$php_insts_iters[$php_inst_id]);
-							}
-						}
-						self::$php_inst_id_enum = $data + 1;
-						continue 2;
 					case self::REC_N_OBJECTS:
 						$result = count(self::$php_insts);
 						$result_is_set = true;
