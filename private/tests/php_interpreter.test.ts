@@ -43,6 +43,7 @@ const TESTS =
 	test_php_fpm,
 	test_invalid,
 	test_access_deno_from_php,
+	test_foreach,
 	test_variables_from_php,
 	test_include,
 	test_proxy,
@@ -1862,6 +1863,51 @@ async function test_access_deno_from_php(php_cli_name: string|string[], _php_fpm
 	);
 	assert(await g.$err);
 	assert(await g.$err2);
+
+	await g.exit();
+	php.close_idle();
+}
+
+async function test_foreach(php_cli_name: string|string[], _php_fpm_listen: string, localhost_name_bind: string, localhost_name: string, interpreter_script: string)
+{	settings.php_cli_name = php_cli_name;
+	settings.php_fpm.listen = '';
+	settings.localhost_name_bind = localhost_name_bind;
+	settings.localhost_name = localhost_name;
+	settings.interpreter_script = interpreter_script;
+	settings.unix_socket_name = '';
+	settings.stdout = 'inherit';
+
+	const events = new Array<string>;
+
+	function *gen()
+	{	events.push('BEGIN');
+		try
+		{	for (let i=0; i<10; i++)
+			{	yield i;
+			}
+		}
+		finally
+		{	events.push('END');
+		}
+	}
+
+	(globalThis as any).gen = gen;
+
+	await php.g.eval
+	(	`	global $window, $res;
+
+			foreach ($window->gen() as $i)
+			{	if ($i > 5)
+				{	break;
+				}
+				$res[] = $i;
+			}
+		`
+	);
+
+	const res = await php.g.$res;
+	assertEquals(res, [0, 1, 2, 3, 4, 5]);
+	assertEquals(events, ['BEGIN', 'END']);
 
 	await g.exit();
 	php.close_idle();
