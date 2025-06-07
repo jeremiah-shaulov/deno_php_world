@@ -2,7 +2,6 @@ import {debug_assert} from './debug_assert.ts';
 import {PHP_BOOT_CLI, get_interpreter_script_filename} from './interpreter_script.ts';
 import {create_proxy} from './proxy_object.ts';
 import {ReaderMux} from './reader_mux.ts';
-import {get_random_key, get_weak_random_bytes} from './util.ts';
 import {WrStream, fcgi, ResponseWithCookies} from './deps.ts';
 
 // deno-lint-ignore no-explicit-any
@@ -12,11 +11,11 @@ const PHP_CLI_NAME_DEFAULT = 'php';
 export const DEBUG_PHP_BOOT = false;
 const KEY_LEN = 32;
 const READER_MUX_END_MARK_LEN = 32;
-const BUFFER_LEN = 1024; // so small packets will not need allocation
+const BUFFER_LEN = 8*1024; // so small packets will not need allocation
 const DEFAULT_CONNECT_TIMEOUT = 4_000;
 const DEFAULT_KEEP_ALIVE_TIMEOUT = 10_000;
 
-debug_assert(BUFFER_LEN>=8 && BUFFER_LEN>=KEY_LEN && BUFFER_LEN>=READER_MUX_END_MARK_LEN);
+debug_assert(BUFFER_LEN>=8 && BUFFER_LEN>=KEY_LEN+READER_MUX_END_MARK_LEN);
 
 const enum REC
 {	DATA,
@@ -1087,8 +1086,9 @@ export class PhpInterpreter
 				php_socket = `tcp://${localhost_name.indexOf(':')==-1 ? localhost_name : '['+localhost_name+']'}:${addr.transport=='tcp' ? addr.port : 0}`;
 			}
 			// 3. HELO (generate random key)
-			const key = await get_random_key(this.buffer.subarray(0, KEY_LEN));
-			const end_mark = get_weak_random_bytes(this.buffer.subarray(0, READER_MUX_END_MARK_LEN));
+			crypto.getRandomValues(this.buffer.subarray(0, KEY_LEN + READER_MUX_END_MARK_LEN));
+			const key = btoa(String.fromCharCode(...this.buffer.subarray(0, KEY_LEN)));
+			const end_mark = this.buffer.subarray(KEY_LEN, KEY_LEN + READER_MUX_END_MARK_LEN).slice();
 			const {init_php_file, override_args, interpreter_script, stdout} = this.settings;
 			const rec_helo = key+' '+btoa(String.fromCharCode(...end_mark))+' '+btoa(php_socket)+' '+btoa(init_php_file);
 			let php_boot_file = '';
@@ -1118,7 +1118,7 @@ export class PhpInterpreter
 				}
 				// Mux stdout
 				if (stdout == 'piped')
-				{	this.stdout_mux = new ReaderMux(Promise.resolve(this.php_cli_proc.stdout), end_mark.slice());
+				{	this.stdout_mux = new ReaderMux(Promise.resolve(this.php_cli_proc.stdout), end_mark);
 					this.stdout_mux.get_readable_stream().then(r => r.pipeTo(new WrStream(Deno.stdout), {preventClose: true})); // Begin with piping to stdout. Then the output can be switched.
 				}
 			}
@@ -1165,7 +1165,7 @@ export class PhpInterpreter
 				{	this.php_fpm_response.then(r => r.body?.cancel());
 				}
 				else if (stdout == 'piped')
-				{	this.stdout_mux = new ReaderMux(this.php_fpm_response.then(r => r.body), end_mark.slice());
+				{	this.stdout_mux = new ReaderMux(this.php_fpm_response.then(r => r.body), end_mark);
 					this.stdout_mux.get_readable_stream().then(r => r.pipeTo(new WrStream(Deno.stdout), {preventClose: true}));
 				}
 				// onresponse
