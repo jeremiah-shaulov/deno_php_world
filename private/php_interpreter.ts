@@ -1000,12 +1000,12 @@ export class PhpInterpreter
 				this.commands_io.close();
 			}
 			// 6. init_php_file
+			this.is_inited = true;
 			if (init_php_file)
 			{	// i executed init_php_file that produced result (and maybe deno calls)
 				const result = await this.do_read();
 				debug_assert(result == null);
 			}
-			this.is_inited = true;
 		}
 		catch (e)
 		{	this.init_error = e instanceof Error ? e : new Error(e+'');
