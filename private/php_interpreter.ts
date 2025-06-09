@@ -137,7 +137,7 @@ function dispose_inst(inst: Any)
 	{	if (typeof(inst[Symbol.asyncDispose]) == 'function')
 		{	const v = inst[Symbol.asyncDispose]();
 			if (v instanceof Promise)
-			{	v.catch
+			{	return v.catch
 				(	e =>
 					{	console.error(e);
 					}
@@ -150,7 +150,7 @@ function dispose_inst(inst: Any)
 		else if (typeof(inst.dispose) == 'function')
 		{	const v = inst.dispose();
 			if (v instanceof Promise)
-			{	v.catch
+			{	return v.catch
 				(	e =>
 					{	console.error(e);
 					}
@@ -181,9 +181,9 @@ export class PhpInterpreter
 	private ongoing: Promise<unknown>[] = [];
 	private ongoing_level = 0;
 	private stdout_mux: ReaderMux|undefined;
-	private stack_frames: number[] = [];
 	private deno_insts: Map<number, Any> = new Map; // php has handles to these objects
 	private deno_inst_id_enum = 2; // later will do: deno_insts.set(0, this); deno_insts.set(1, globalThis);
+	private pending_promise: Promise<unknown> | undefined;
 
 	/**	The PHP interpreter is running.
 		It starts running after first function call or variable set, and stops running after `g.exit()` is called.
@@ -1098,6 +1098,10 @@ export class PhpInterpreter
 			let data: Any;
 			let result_type = RESTYPE.IS_JSON;
 			const g: Any = globalThis;
+			if (this.pending_promise)
+			{	await this.pending_promise;
+				this.pending_promise = undefined;
+			}
 			try
 			{	this.ongoing_level++;
 				switch (type)
@@ -1117,7 +1121,7 @@ export class PhpInterpreter
 					case RES.DESTRUCT:
 					{	const inst = this.deno_insts.get(deno_inst_id);
 						if (inst != this)
-						{	dispose_inst(inst);
+						{	this.pending_promise = dispose_inst(inst);
 						}
 						this.deno_insts.delete(deno_inst_id);
 						continue;
@@ -1332,10 +1336,13 @@ export class PhpInterpreter
 		if (!no_reset_error)
 		{	this.init_error = undefined;
 		}
-		this.stack_frames.length = 0;
+		if (this.pending_promise)
+		{	await this.pending_promise;
+			this.pending_promise = undefined;
+		}
 		for (const v of this.deno_insts.values())
 		{	if (v != this)
-			{	dispose_inst(v);
+			{	await dispose_inst(v);
 			}
 		}
 		this.deno_insts.clear();
