@@ -992,7 +992,7 @@ export async function get_interpreter_script_filename(is_debug=false, tmp_dirnam
 		}
 		php_boot_filename = path.join(tmp_dirname, is_debug ? `${TMP_SCRIPT_FILENAME_PREFIX}.php` : `${TMP_SCRIPT_FILENAME_PREFIX}-${suffix}-pid${Deno.pid}.php`);
 		// find files left from previous runs
-		const unowned_filenames = [];
+		const unowned_filenames = new Array<string>;
 		try
 		{	if (await exists(`/proc`))
 			{	for await (const {isFile, name} of Deno.readDir(tmp_dirname))

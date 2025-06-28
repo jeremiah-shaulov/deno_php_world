@@ -2,9 +2,11 @@ import {RdStream, TrStream} from './deps.ts';
 
 export class ReaderMux
 {	#inner_stream_promise: Promise<RdStream>;
+	#end_mark;
 
-	constructor(private inner_stream_promise: Promise<ReadableStream<Uint8Array> | null>, private end_mark: Uint8Array)
-	{	this.#inner_stream_promise = this.inner_stream_promise.then(inner_stream => inner_stream ? RdStream.from(inner_stream) : new RdStream({read() {return 0}}));
+	constructor(inner_stream_promise: Promise<ReadableStream<Uint8Array> | null>, end_mark: Uint8Array)
+	{	this.#inner_stream_promise = inner_stream_promise.then(inner_stream => inner_stream ? RdStream.from(inner_stream) : new RdStream({read() {return 0}}));
+		this.#end_mark = end_mark;
 	}
 
 	async get_readable_stream(): Promise<RdStream>
@@ -13,7 +15,7 @@ export class ReaderMux
 		let pn: (error: Error) => void;
 		this.#inner_stream_promise = new Promise((y, n) => {py=y; pn=n});
 		const inner_stream = await inner_stream_promise;
-		const mux = new ReadToMark(this.end_mark);
+		const mux = new ReadToMark(this.#end_mark);
 		const readable_stream = inner_stream.pipeThrough(mux);
 		mux.writable.getWriterWhenReady().then
 		(	writer => writer.closed.then
