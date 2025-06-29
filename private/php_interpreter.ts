@@ -163,6 +163,10 @@ function dispose_inst(inst: Any)
 	}
 }
 
+function nop()
+{	// do nothing
+}
+
 /**	Each instance of this class represents a PHP interpreter. It can be spawned CLI process that runs in background, or it can be a FastCGI request to a PHP-FPM service.
 	The interpreter will be actually spawned on first remote call.
 	Calling `this.g.exit()` terminates the interpreter (or a FastCGI connection).
@@ -983,7 +987,7 @@ export class PhpInterpreter
 				{	const result = await Promise.race([accept, this.#php_fpm_response]);
 					if (result instanceof ResponseWithCookies)
 					{	// response came earlier than accept (script didn't connect to me)
-						accept.then(s => s.close()).catch(() => {});
+						accept.then(s => s.close()).catch(nop);
 						throw new Error(`Failed to execute PHP-FPM script "${php_boot_file}" through socket "${this.settings.php_fpm.listen}": status ${result.status}, ${await result.text()}`);
 					}
 					this.#commands_io = result;
@@ -1383,7 +1387,7 @@ export class PhpInterpreter
 		(	() =>
 			{	const ongoing = this.#ongoing[ongoing_level];
 				if (ongoing)
-				{	this.#ongoing[ongoing_level] = ongoing.catch(() => {});
+				{	this.#ongoing[ongoing_level] = ongoing.catch(nop);
 				}
 			}
 		);
