@@ -1027,12 +1027,12 @@ export class PhpInterpreter
 		while (true)
 		{	const {read, written} = encoder.encodeInto(str, body.subarray(offset));
 			offset += written;
-			if (read == str.length)
+			if (read >= str.length)
 			{	break;
 			}
 			str = str.slice(read);
 			const new_body = new Uint8Array(offset + str.length*2);
-			new_body.set(body);
+			new_body.set(body.subarray(0, offset));
 			body = new_body;
 		}
 		const header = new DataView(body.buffer);
