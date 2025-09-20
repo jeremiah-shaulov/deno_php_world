@@ -313,7 +313,12 @@ class DenoWorldMain extends DenoWorld
 	public static function load_class($class_name)
 	{	if (strpos($class_name, 'DenoWorld\\') === 0)
 		{	$class_name_2 = substr($class_name, 10);
-			$type = self::write_read(self::RES_GET_CLASS, 0, $class_name_2);
+			try
+			{	$type = self::write_read(self::RES_GET_CLASS, 0, $class_name_2);
+			}
+			catch (Throwable $e)
+			{	return; // class not found
+			}
 			if (!($type & self::RESTYPE_IS_ERROR))
 			{	$pos = strrpos($class_name, '\\');
 				$ns = substr($class_name, 0, $pos);
@@ -607,9 +612,15 @@ class DenoWorldMain extends DenoWorld
 		return [$value, false];
 	}
 
-	private static function events_q()
-	{	while (!feof(self::$commands_io))
-		{	try
+	private static function events_q(bool $can_eof=false)
+	{	while (true)
+		{	if (feof(self::$commands_io))
+			{	if ($can_eof)
+				{	break;
+				}
+				throw new Exception("Connection closed");
+			}
+			try
 			{	// 1. Read the request
 				$len = fread(self::$commands_io, 8);
 				if (strlen($len) != 8)
@@ -963,7 +974,7 @@ class DenoWorldMain extends DenoWorld
 		}
 
 		// Proceed
-		self::events_q();
+		self::events_q(true);
 	}
 }
 
