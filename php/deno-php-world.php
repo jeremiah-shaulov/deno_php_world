@@ -311,15 +311,18 @@ class DenoWorldMain extends DenoWorld
 	}
 
 	public static function load_class($class_name)
-	{	if (strpos($class_name, 'DenoWorld\\') === 0)
-		{	$class_name_2 = substr($class_name, 10);
-			try
-			{	$type = self::write_read(self::RES_GET_CLASS, 0, $class_name_2);
+	{	static $missing = [];
+		if (strpos($class_name, 'DenoWorld\\')===0 and !isset($missing[$class_name]))
+		{	try
+			{	$type = self::write_read(self::RES_GET_CLASS, 0, substr($class_name, 10));
 			}
 			catch (Throwable $e)
 			{	return; // class not found
 			}
-			if (!($type & self::RESTYPE_IS_ERROR))
+			if ($type & self::RESTYPE_IS_ERROR)
+			{	$missing[$class_name] = true;
+			}
+			else
 			{	$pos = strrpos($class_name, '\\');
 				$ns = substr($class_name, 0, $pos);
 				$basename = substr($class_name, $pos+1);
