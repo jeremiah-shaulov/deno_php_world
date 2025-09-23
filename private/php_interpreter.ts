@@ -1200,7 +1200,7 @@ export class PhpInterpreter
 					}
 					case RES.JSON_ENCODE:
 					{	const deno_inst = this.#deno_insts.get(deno_inst_id);
-						data = JSON.stringify(deno_inst); // can throw error
+						data = JSON.stringify(deno_inst, (_key, value) => typeof(value)=='bigint' ? value+'' : value); // can throw error
 						break;
 					}
 					default:
@@ -1225,8 +1225,12 @@ export class PhpInterpreter
 			{	if (typeof(data) == 'string')
 				{	result_type = RESTYPE.IS_STRING;
 				}
+				else if (typeof(data) == 'bigint')
+				{	result_type = RESTYPE.IS_STRING;
+					data = data+'';
+				}
 				else
-				{	data = JSON.stringify(data);
+				{	data = JSON.stringify(data, (_key, value) => typeof(value)=='bigint' ? value+'' : value);
 				}
 			}
 			await this.#do_write(REC.DATA, result_type+' '+data);
